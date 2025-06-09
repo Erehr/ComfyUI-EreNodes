@@ -130,7 +130,11 @@ app.registerExtension({
 
             // Creating pills
             for (const tag of tagData) {
-                if (tag.type === "separator") continue; // we don't use separator for multiselect
+                if (tag.type === "separator") {
+                    currentX = pillX + pillPadding;
+                    currentY += 20 + 10 + 4;
+                    continue; 
+                }
                 if (!tag.active) continue; // we don't render inactive tags
 
                 let label = tag.name;

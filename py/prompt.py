@@ -17,10 +17,15 @@ class ErePrompt:
     CATEGORY = "utils"
 
     def process(self, text, prefix=""):
-        # Treat input as a simple comma-separated list
-        tags = [t.strip() for t in text.split(",") if t.strip()]
-        result = ", ".join(filter(None, [prefix] + tags))
-        return (result,)
+        clean_prefix = prefix.strip() if prefix else ""
+        clean_text = text.strip() if text else ""
+        
+        if clean_prefix and clean_text:
+            return (f"{clean_prefix}\n\n{clean_text}",)
+        elif clean_prefix:
+            return (clean_prefix,)
+        else:
+            return (clean_text,)
 
 
 class ErePromptMultiSelect(ErePrompt): pass

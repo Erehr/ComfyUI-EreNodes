@@ -113,8 +113,26 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         const textWidget = node.widgets.find(w => w.name === "text");
         if (!textWidget) return;
         const tagData = parseTags(node.properties._tagDataJSON || "[]");
-        const activeTags = tagData.filter(t => t.active && t.name);
-        textWidget.value = activeTags.map(formatTag).join(", ");
+        const activeTagsAndSeparators = tagData.filter(t => (t.active && t.name) || t.type === 'separator');
+
+        const lines = activeTagsAndSeparators.reduce((acc, tag) => {
+            if (tag.type === 'separator') {
+                // Only add a new line if the current line isn't empty, to collapse multiple separators
+                if (acc.length === 0 || acc[acc.length - 1].length > 0) {
+                    acc.push([]);
+                }
+            } else {
+                if (acc.length === 0) {
+                    acc.push([]);
+                }
+                acc[acc.length - 1].push(formatTag(tag));
+            }
+            return acc;
+        }, []);
+
+        textWidget.value = lines
+            .map(line => line.join(", "))
+            .join("\n");
     };
 
     node.onClipboardReplace = () => {
@@ -704,11 +722,14 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
                 return [0, -4]; 
             }
 
-            if (node.type === "ErePromptCloud") {
-                if (node.renderTagDisplay) node.renderTagDisplay();
-            } else {
-                node.onUpdateTextWidget(node);
+            // For all nodes, update the text widget for output first.
+            node.onUpdateTextWidget(node);
+
+            // Rerender display
+            if (node.renderTagDisplay) {
+                node.renderTagDisplay();
             }
+            
             app.graph.setDirtyCanvas(true);
         }
     }
