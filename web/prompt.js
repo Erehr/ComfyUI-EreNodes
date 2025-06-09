@@ -1,6 +1,5 @@
 import { app } from "../../scripts/app.js";
 
-// --- Helper Functions ---
 const parseTags = value => {
     try {
         const parsed = JSON.parse(value || "[]");
@@ -13,7 +12,6 @@ function parseTag(tagString) {
     let originalString = (tagString || "").trim();
     if (!originalString) return null;
 
-    // LORA parsing
     const loraMatch = originalString.match(/^<lora:([^:]+)(?::([\d.-]+))?>$/);
     if (loraMatch) {
         const name = loraMatch[1];
@@ -23,7 +21,6 @@ function parseTag(tagString) {
         return { name: name, type: 'lora', strength, active: true };
     }
 
-    // General tag parsing (handles normal tags, tags with strength, and embeddings)
     let name = originalString;
     let strength;
 
@@ -36,7 +33,6 @@ function parseTag(tagString) {
         }
     }
 
-    // Now determine type
     let type = 'tag';
     if (name.startsWith('embedding:')) {
         type = 'embedding';
@@ -56,36 +52,167 @@ function formatTag(tag) {
         return `<lora:${tag.name}>`;
     }
 
-    // For 'tag' and 'embedding'
     if (tag.strength && tag.strength !== 1.0) {
         return `(${tag.name}:${tag.strength})`;
     }
     return tag.name;
 }
 
+function parseTextToTagData(text, oldTagData = []) {
+    const oldTagsByName = new Map(oldTagData.map(t => [t.name, t]));
+    const lines = (text || "").split('\n');
+    const tagData = [];
+    let lastLineWasEmpty = false;
+
+    for (const line of lines) {
+        const trimmedLine = line.trim();
+        if (trimmedLine === "") {
+            if (!lastLineWasEmpty) {
+                tagData.push({ name: "", type: 'separator', active: false });
+                lastLineWasEmpty = true;
+            }
+        } else {
+            const tagStrings = (trimmedLine.split(/,(?![^()]*\))/g) || [])
+                .map(s => s.trim())
+                .filter(s => s);
+            
+            const newTags = tagStrings.map(parseTag).filter(Boolean);
+
+            if (newTags.length > 0) {
+                for (const tag of newTags) {
+                    const oldTag = oldTagsByName.get(tag.name);
+                    if (oldTag) {
+                        tag.active = oldTag.active;
+                    } else {
+                        tag.active = true; 
+                    }
+                }
+                tagData.push(...newTags);
+                lastLineWasEmpty = false;
+            }
+        }
+    }
+    
+    const finalTagData = [];
+    const seenNames = new Set();
+    for (const tag of tagData) {
+        if (tag.type === 'separator') {
+            finalTagData.push(tag);
+            continue;
+        }
+        if (tag.name && !seenNames.has(tag.name)) {
+            finalTagData.push(tag);
+            seenNames.add(tag.name);
+        }
+    }
+    
+    if (finalTagData.length > 0 && finalTagData[finalTagData.length - 1].type === 'separator') {
+        finalTagData.pop();
+    }
+    return finalTagData;
+}
+
 const getTextInput = async (title, promptMessage, defaultValue = "") => {
     const value = prompt(promptMessage, defaultValue);
-    if (value === null) return false; // User cancelled
+    if (value === null) return false; 
     return value;
 };
 
 export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
+    node.convertTo = function(targetNodeType) {
+        if (this.type === "ErePromptMultiline") {
+            const textWidget = this.widgets.find(w => w.name === "text");
+            if (textWidget) {
+                const tagData = parseTextToTagData(textWidget.value);
+                this.properties._tagDataJSON = JSON.stringify(tagData, null, 2);
+            }
+        }
+
+        const newNode = LiteGraph.createNode(targetNodeType);
+        if (!newNode) {
+            console.error(`[EreNodes] Unknown node type: ${targetNodeType}`);
+            return;
+        }
+    
+        if(this.properties) {
+            newNode.properties = JSON.parse(JSON.stringify(this.properties));
+        }
+    
+        app.graph.add(newNode);
+    
+        const sourceTextWidget = this.widgets.find(w => w.name === "text");
+        const targetTextWidget = newNode.widgets.find(w => w.name === "text");
+        if (sourceTextWidget && targetTextWidget) {
+            targetTextWidget.value = sourceTextWidget.value;
+        }
+    
+        if (targetNodeType === "ErePromptMultiline") {
+            if (newNode.properties) delete newNode.properties._tagDataJSON;
+        }
+        
+        newNode.pos = [this.pos[0], this.pos[1]]; 
+        newNode.size = [this.size[0], this.size[1]]; 
+        newNode.color = this.color;
+        newNode.bgcolor = this.bgcolor;
+
+        if (this.inputs) {
+            for (let i = 0; i < this.inputs.length; i++) {
+                if (this.inputs[i] && this.inputs[i].link !== null) {
+                    const link = app.graph.links[this.inputs[i].link];
+                    if (link) {
+                        const originNode = app.graph.getNodeById(link.origin_id);
+                        if (originNode) originNode.connect(link.origin_slot, newNode, i);
+                    }
+                }
+            }
+        }
+    
+        if (this.outputs) {
+            for (let i = 0; i < this.outputs.length; i++) {
+                const output = this.outputs[i];
+                if (output.links && output.links.length) {
+                    const linksToReconnect = [...output.links];
+                    for (const linkId of linksToReconnect) {
+                        const link = app.graph.links[linkId];
+                        if (link) {
+                            const targetNode = app.graph.getNodeById(link.target_id);
+                            if (targetNode) newNode.connect(i, targetNode, link.target_slot);
+                        }
+                    }
+                }
+            }
+        }
+    
+        app.graph.remove(this);
+        app.graph.setDirtyCanvas(true, true);
+    };
+
     node.onActionMenu = function(actionEvent) { 
-        const options = [
+        let options = [
             { content: "Replace Tags from Clipboard", callback: () => node.onClipboardReplace?.() },
             { content: "Add Tags from Clipboard", callback: () => node.onClipboardAppend?.() },
-            null, // separator
+            null, 
             { content: "Edit Tags", callback: () => node.onEdit?.() },
             { content: "Toggle All Tags", callback: () => node.onToggleTags?.() },
             { content: "Remove all tags", callback: () => node.onRemoveTags?.() },
-            null, // separator
+            null, 
             { content: "Load Tag Group...", callback: () => node.onLoadTagGroup?.(actionEvent, "")  },
             { content: "Save Tag Group...", callback: () => node.onSaveTagGroup?.(actionEvent, "")  },
-            null, // separator
+            null, 
             { content: "Export Tags (.json)...", callback: () => node.onExportTags?.() },
             { content: "Import Tags (.json)...", callback: () => node.onImportTags?.() },
+            null, 
+            { content: "Convert to Prompt Cloud", callback: () => node.convertTo("ErePromptCloud") },
+            { content: "Convert to Prompt MultiSelect", callback: () => node.convertTo("ErePromptMultiSelect") },
+            { content: "Convert to Prompt Toggle", callback: () => node.convertTo("ErePromptToggle") },
+            { content: "Convert to Prompt Multiline", callback: () => node.convertTo("ErePromptMultiline") },
         ];
-        
+
+        if (node.type === "ErePromptMultiline") {
+            options = options.filter(option => !option || option.content !== "Edit Tags");
+        }
+        options = options.filter(option => !option || option.content !== "Convert to " + node.title);
+
         new LiteGraph.ContextMenu(options, { event: actionEvent, className: "dark", node }, window);
     };
 
@@ -94,7 +221,6 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         saveButton.hidden = false;
         textWidget.hidden = false;
 
-        // Reset height (set to 0, 0 onNodeCreated)
         textWidget.computeSize = null;
         
         const minEditorHeight = 256;
@@ -103,7 +229,26 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         }
 
         const tagData = parseTags(node.properties._tagDataJSON || "[]");
-        const lines = tagData.map(formatTag);
+        
+        let lines = [];
+        let currentLine = [];
+
+        for (const tag of tagData) {
+            if (tag.type === 'separator') {
+                if (currentLine.length > 0) {
+                    lines.push(currentLine.join(", "));
+                }
+                lines.push(""); 
+                currentLine = [];
+            } else if (tag.name) {
+                currentLine.push(formatTag(tag));
+            }
+        }
+        
+        if (currentLine.length > 0) {
+            lines.push(currentLine.join(", "));
+        }
+
         textWidget.value = lines.join("\n");
 
         app.graph.setDirtyCanvas(true);
@@ -117,7 +262,6 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
 
         const lines = activeTagsAndSeparators.reduce((acc, tag) => {
             if (tag.type === 'separator') {
-                // Only add a new line if the current line isn't empty, to collapse multiple separators
                 if (acc.length === 0 || acc[acc.length - 1].length > 0) {
                     acc.push([]);
                 }
@@ -137,49 +281,52 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
 
     node.onClipboardReplace = () => {
         navigator.clipboard.readText().then(text => {
-            const tagStrings = (text.match(/<lora:[^>]+>|\((?:[^()]|\([^()]*\))*\)|[^,\n]+/g) || [])
-                .map(s => s.trim())
-                .filter(s => s);
+            if (node.type !== "ErePromptMultiline") {
+                const tagStrings = (text.replace(/\n/g, ',').split(/,(?![^()]*\))/g) || [])
+                    .map(s => s.trim())
+                    .filter(s => s);
 
-            const tagData = tagStrings.map(parseTag).filter(Boolean);
-            const json = JSON.stringify(tagData, null, 2);
-            node.properties._tagDataJSON = json;
-
-            const activeTags = tagData.filter(t => t.active).map(formatTag).join(", ");
-            textWidget.value = activeTags;
-
-            app.graph.setDirtyCanvas(true);
+                const tagData = tagStrings.map(parseTag).filter(Boolean);
+                const json = JSON.stringify(tagData, null, 2);
+                node.properties._tagDataJSON = json;
+                node.onUpdateTextWidget(node);
+                app.graph.setDirtyCanvas(true);
+            } else {
+                const textWidget = node.widgets.find(w => w.name === "text");
+                if (textWidget) {
+                    textWidget.value = text;
+                }
+            }
         });
     };
 
     node.onClipboardAppend = () => {
         navigator.clipboard.readText().then(text => {
-            const newTagStrings = (text.match(/<lora:[^>]+>|\((?:[^()]|\([^()]*\))*\)|[^,\n]+/g) || [])
-                .map(s => s.trim())
-                .filter(s => s);
-            if (!newTagStrings.length) return;
+            if (node.type !== "ErePromptMultiline") {
+                const newTagStrings = (text.replace(/\n/g, ',').split(/,(?![^()]*\))/g) || [])
+                    .map(s => s.trim())
+                    .filter(s => s);
+                if (!newTagStrings.length) return;
+                const existingTagData = parseTags(node.properties._tagDataJSON || "[]");
+                const existingTagNames = new Set(existingTagData.map(t => t.name));
 
-            const existingTagData = parseTags(node.properties._tagDataJSON || "[]");
-            const existingTagNames = new Set(existingTagData.map(t => t.name));
+                const uniqueNewTags = newTagStrings
+                    .map(parseTag)
+                    .filter(Boolean)
+                    .filter(tagObj => tagObj.name && !existingTagNames.has(tagObj.name));
 
-            const uniqueNewTags = newTagStrings
-                .map(parseTag)
-                .filter(Boolean)
-                .filter(tagObj => tagObj.name && !existingTagNames.has(tagObj.name));
-
-            if (!uniqueNewTags.length) return;
-            
-            const combinedTagData = existingTagData.concat(uniqueNewTags);
-
-            node.properties._tagDataJSON = JSON.stringify(combinedTagData, null, 2);
-            
-            if (!node.isEditMode) {
-                 const activeTags = combinedTagData.filter(t => t.active && t.name);
-                 textWidget.value = activeTags.map(formatTag).join(", ");
+                if (!uniqueNewTags.length) return;
+                
+                const combinedTagData = existingTagData.concat(uniqueNewTags);
+                node.properties._tagDataJSON = JSON.stringify(combinedTagData, null, 2);
+                node.onUpdateTextWidget(node);
+                app.graph.setDirtyCanvas(true);
             } else {
-                 textWidget.value = combinedTagData.map(formatTag).join("\n");
+                const textWidget = node.widgets.find(w => w.name === "text");
+                if (textWidget) {
+                    textWidget.value += (textWidget.value ? "\n" : "") + text;
+                }
             }
-            app.graph.setDirtyCanvas(true);
         });
     };
 
@@ -193,19 +340,25 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         const updatedTagData = tagData.map(tag => ({ ...tag, active: tag.name ? allTargetState : tag.active }));
 
         node.properties._tagDataJSON = JSON.stringify(updatedTagData, null, 2);
-            const activeTags = updatedTagData.filter(t => t.active && t.name);
-            textWidget.value = activeTags.map(t => t.name).join(", ");
+        node.onUpdateTextWidget(node);
         app.graph.setDirtyCanvas(true);
     };
 
     node.onExportTags = async () => {
         let fileName = await getTextInput("Export Tags", "Enter filename for export (e.g., my_tags.json):", "");
-        if (fileName === false || fileName === null) return; // User cancelled or closed prompt
+        if (fileName === false || fileName === null) return; 
 
         fileName = String(fileName).trim();
         if (!fileName.toLowerCase().endsWith('.json')) fileName += '.json';
 
-        const jsonString = node.properties._tagDataJSON || "[]";
+        let jsonString;
+        if (node.properties._tagDataJSON !== undefined) {
+            jsonString = node.properties._tagDataJSON || "[]";
+        } else {
+            const tagData = parseTextToTagData(textWidget.value);
+            jsonString = JSON.stringify(tagData, null, 2);
+        }
+ 
         const blob = new Blob([jsonString], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -216,44 +369,11 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
     };
-
-    node.onLoadTagGroupFile = async (fileName, filePath = "") => {
-        const fullPath = filePath ? `${filePath}/${fileName}` : fileName;
-        try {
-            const response = await fetch(`/erenodes/get_tag_group?filename=${encodeURIComponent(fullPath)}`);
-            if (!response.ok) {
-                const errorResult = await response.json().catch(() => ({ error: 'Failed to fetch tag group details.' }));
-                throw new Error(errorResult.error || `HTTP error! status: ${response.status}`);
-            }
-            const newTagData = await response.json();
-            if (!Array.isArray(newTagData)) {
-                throw new Error('Loaded tag group is not a valid array.');
-            }
-
-            const existingTagData = parseTags(node.properties._tagDataJSON || "[]");
-            const existingTagNames = new Set(existingTagData.map(t => t.name));
-            const uniqueNewTagObjects = newTagData.filter(tagObj => tagObj.name && !existingTagNames.has(tagObj.name));
-
-            if (!uniqueNewTagObjects.length) return;
-
-            const combinedTagData = existingTagData.concat(uniqueNewTagObjects);
-            node.properties._tagDataJSON = JSON.stringify(combinedTagData, null, 2);
-                const activeTags = combinedTagData.filter(t => t.active && t.name);
-            if (textWidget) {
-                textWidget.value = activeTags.map(t => t.name).join(", ");
-            }
-            if (node.renderTagDisplay) {
-                node.renderTagDisplay();
-            }
-            node.setDirtyCanvas(true);
-            app.graph.setDirtyCanvas(true);
-        } catch (error) {
-            // Silent error handling
-        }
-    };
     
     node.onRemoveTags = () => {
-        node.properties._tagDataJSON = "[]"; 
+        if(node.properties._tagDataJSON !== undefined) {
+            node.properties._tagDataJSON = "[]"; 
+        }
         if (textWidget) {
             textWidget.value = ""; 
         }
@@ -290,19 +410,16 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
 
                         if (uniqueValidTags.length === 0 && importedData.length > 0) return;
 
-                        node.properties._tagDataJSON = JSON.stringify(uniqueValidTags, null, 2);
-                            const activeTags = uniqueValidTags.filter(t => t.active && t.name);
-                        if (textWidget) {
-                            textWidget.value = activeTags.map(t => t.name).join(", ");
-                        }
-                        if (node.renderTagDisplay) {
-                           node.renderTagDisplay();
+                        if (node.properties._tagDataJSON !== undefined) {
+                            node.properties._tagDataJSON = JSON.stringify(uniqueValidTags, null, 2);
+                            node.onUpdateTextWidget(node);
+                        } else {
+                            const lines = uniqueValidTags.map(formatTag).join("\n");
+                            if(textWidget) textWidget.value = lines;
                         }
                         app.graph.setDirtyCanvas(true);
-                        node.setDirtyCanvas(true);
                     }
                 } catch (err) {
-                    // Silent error handling
                 }
             };
             reader.readAsText(file);
@@ -335,7 +452,7 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
                     } else if (item.type === "file") {
                         loadSubMenu.push({
                             content: "📄 " + item.name,
-                            callback: () => node.onLoadTagGroupFile(item.name, currentPath) // Pass currentPath as filePath
+                            callback: () => node.onLoadTagGroupFile(item.name, currentPath)
                         });
                     }
                 });
@@ -353,7 +470,7 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
             left: actionEvent.clientX - 10, 
             top: actionEvent.clientY - 10,    
             className: "dark",
-            node: node, // Use the passed 'node' object
+            node: node, 
         }, window);
     };
 
@@ -445,7 +562,7 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
             left: actionEvent.clientX - 10,
             top: actionEvent.clientY - 10,
             className: "dark",
-            node: node, // Use the passed 'node' object
+            node: node, 
         }, window);
     };
     
@@ -453,8 +570,6 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         const folderName = await getTextInput("Create New Folder", "Enter new folder name:", "New Folder");
         if (!folderName || folderName.trim() === "") return;
 
-        // This endpoint doesn't exist yet, we'll need to create it.
-        // For now, let's just log it.
         try {
             const response = await fetch('/erenodes/create_folder', {
                 method: 'POST',
@@ -465,7 +580,6 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
                 }),
             });
             if (response.ok) {
-                // Refresh the save menu to show the new folder
                 node.onSaveTagGroup(actionEvent, currentPath);
             } else {
                 const error = await response.json();
@@ -480,18 +594,24 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         let fileName;
         try {
             fileName = await getTextInput("Save Tag Group", "Enter filename (e.g., my_tags.json):", "");
-            if (fileName === false || fileName === null) return; // User cancelled or closed prompt
+            if (fileName === false || fileName === null) return; 
             fileName = String(fileName).trim();
-            if (!fileName) fileName = ""; // Default if empty
+            if (!fileName) fileName = ""; 
             if (!fileName.toLowerCase().endsWith('.json')) fileName += '.json';
 
-            const jsonString = node.properties._tagDataJSON || "[]";
+            let jsonString;
+            if (node.properties._tagDataJSON !== undefined) {
+                jsonString = node.properties._tagDataJSON || "[]";
+            } else {
+                const tagData = parseTextToTagData(textWidget.value);
+                jsonString = JSON.stringify(tagData, null, 2);
+            }
 
             const response = await fetch('/erenodes/save_tag_group', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    path: savePath, // Use the passed savePath
+                    path: savePath, 
                     filename: fileName,
                     tags_json: jsonString,
                 }),
@@ -503,9 +623,7 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
     };
 
     node.onTagPillClick = (e, pos, clickedPill) => {
-
         if (!clickedPill) return;
-        console.log('click');
         
         if (clickedPill.label === "button_menu") {
             return node.onActionMenu?.(e, clickedPill);
@@ -519,13 +637,10 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         node.properties._tagDataJSON = JSON.stringify(tagData, null, 2);
         node.onUpdateTextWidget(node);
         app.graph.setDirtyCanvas(true);
-  
-
     };
     
     node.onTagQuickEdit = (e, pos, clickedPill) => {
         if (!clickedPill) return;
-        // we are not limiting it to shift click here, to maybe reuse later or fix right click
 
         const tagData = parseTags(node.properties._tagDataJSON || "[]");
         const clickedTag = tagData.find(t => t.name === clickedPill.label);
@@ -601,8 +716,6 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         strengthInput.style.fieldSizing = "content";
         strengthInput.style.padding = "5px";
         strengthInput.style.border = "none";
-        // TODO: Force strength to be 2 decimal places, ensure it's saved in json and parsed correctly
-        // strengthInput.addEventListener("input", () => { strengthInput.value = parseFloat(strengthInput.value).toFixed(2) });
         strengthInput.addEventListener('focus', () => {
             strengthInput.style.outline = "1px solid #666";
             strengthInput.style.background = LiteGraph.WIDGET_BGCOLOR;
@@ -660,57 +773,7 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
 
     if (saveButton) {
         saveButton.callback = () => {
-            const oldTagData = parseTags(node.properties._tagDataJSON || "[]");
-            const oldTagsByName = new Map(oldTagData.map(t => [t.name, t]));
-
-            const text = textWidget.value || "";
-            const lines = text.split('\n');
-            const tagData = [];
-            let lastLineWasEmpty = false;
-
-            for (const line of lines) {
-                const trimmedLine = line.trim();
-                if (trimmedLine === "") {
-                    if (!lastLineWasEmpty) {
-                        tagData.push({ name: "", type: 'separator', active: false });
-                        lastLineWasEmpty = true;
-                    }
-                } else {
-                    const tagStrings = (trimmedLine.match(/<lora:[^>]+>|\((?:[^()]|\([^()]*\))*\)|[^,\n]+/g) || [])
-                        .map(s => s.trim())
-                        .filter(s => s);
-                    
-                    const newTags = tagStrings.map(parseTag).filter(Boolean);
-
-                    if (newTags.length > 0) {
-                        for (const tag of newTags) {
-                            const oldTag = oldTagsByName.get(tag.name);
-                            if (oldTag) {
-                                tag.active = oldTag.active;
-                            }
-                        }
-                        tagData.push(...newTags);
-                        lastLineWasEmpty = false;
-                    }
-                }
-            }
-            
-            const finalTagData = [];
-            const seenNames = new Set();
-            for (const tag of tagData) {
-                if (tag.type === 'separator') {
-                    finalTagData.push(tag);
-                    continue;
-                }
-                if (tag.name && !seenNames.has(tag.name)) {
-                    finalTagData.push(tag);
-                    seenNames.add(tag.name);
-                }
-            }
-            
-            if (finalTagData.length > 0 && finalTagData[finalTagData.length - 1].type === 'separator') {
-                finalTagData.pop();
-            }
+            const finalTagData = parseTextToTagData(textWidget.value, parseTags(node.properties._tagDataJSON || "[]"));
             
             node.properties._tagDataJSON = JSON.stringify(finalTagData, null, 2);
 
@@ -722,10 +785,8 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
                 return [0, -4]; 
             }
 
-            // For all nodes, update the text widget for output first.
             node.onUpdateTextWidget(node);
 
-            // Rerender display
             if (node.renderTagDisplay) {
                 node.renderTagDisplay();
             }
