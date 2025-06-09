@@ -119,7 +119,7 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
 
     node.onClipboardReplace = () => {
         navigator.clipboard.readText().then(text => {
-            const tagStrings = (text.match(/<lora:[^>]+>|\([^)]+\)|[^,\n]+/g) || [])
+            const tagStrings = (text.match(/<lora:[^>]+>|\((?:[^()]|\([^()]*\))*\)|[^,\n]+/g) || [])
                 .map(s => s.trim())
                 .filter(s => s);
 
@@ -136,7 +136,7 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
 
     node.onClipboardAppend = () => {
         navigator.clipboard.readText().then(text => {
-            const newTagStrings = (text.match(/<lora:[^>]+>|\([^)]+\)|[^,\n]+/g) || [])
+            const newTagStrings = (text.match(/<lora:[^>]+>|\((?:[^()]|\([^()]*\))*\)|[^,\n]+/g) || [])
                 .map(s => s.trim())
                 .filter(s => s);
             if (!newTagStrings.length) return;
@@ -642,6 +642,9 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
 
     if (saveButton) {
         saveButton.callback = () => {
+            const oldTagData = parseTags(node.properties._tagDataJSON || "[]");
+            const oldTagsByName = new Map(oldTagData.map(t => [t.name, t]));
+
             const text = textWidget.value || "";
             const lines = text.split('\n');
             const tagData = [];
@@ -655,13 +658,19 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
                         lastLineWasEmpty = true;
                     }
                 } else {
-                    const tagStrings = (trimmedLine.match(/<lora:[^>]+>|\([^)]+\)|[^,\n]+/g) || [])
+                    const tagStrings = (trimmedLine.match(/<lora:[^>]+>|\((?:[^()]|\([^()]*\))*\)|[^,\n]+/g) || [])
                         .map(s => s.trim())
                         .filter(s => s);
                     
                     const newTags = tagStrings.map(parseTag).filter(Boolean);
 
                     if (newTags.length > 0) {
+                        for (const tag of newTags) {
+                            const oldTag = oldTagsByName.get(tag.name);
+                            if (oldTag) {
+                                tag.active = oldTag.active;
+                            }
+                        }
                         tagData.push(...newTags);
                         lastLineWasEmpty = false;
                     }
