@@ -410,21 +410,65 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
 
                         if (uniqueValidTags.length === 0 && importedData.length > 0) return;
 
-                        if (node.properties._tagDataJSON !== undefined) {
+                        if (node.type !== "ErePromptMultiline") {
                             node.properties._tagDataJSON = JSON.stringify(uniqueValidTags, null, 2);
                             node.onUpdateTextWidget(node);
                         } else {
-                            const lines = uniqueValidTags.map(formatTag).join("\n");
-                            if(textWidget) textWidget.value = lines;
+                            const textWidget = node.widgets.find(w => w.name === "text");
+                            if(textWidget) {
+                                const lines = uniqueValidTags.map(formatTag).join("\n");
+                                textWidget.value = lines;
+                            }
                         }
                         app.graph.setDirtyCanvas(true);
                     }
                 } catch (err) {
+                     console.error('[EreNodes] Error importing tags:', err);
                 }
             };
             reader.readAsText(file);
         };
         input.click();
+    };
+
+    node.onLoadTagGroupFile = async (fileName, filePath = "") => {
+        const fullPath = filePath ? `${filePath}/${fileName}` : fileName;
+        try {
+            const response = await fetch(`/erenodes/get_tag_group?filename=${encodeURIComponent(fullPath)}`);
+            if (!response.ok) {
+                const errorResult = await response.json().catch(() => ({ error: 'Failed to fetch tag group details.' }));
+                throw new Error(errorResult.error || `HTTP error! status: ${response.status}`);
+            }
+            const newTagData = await response.json();
+            if (!Array.isArray(newTagData)) {
+                throw new Error('Loaded tag group is not a valid array.');
+            }
+
+            if (node.type !== "ErePromptMultiline") {
+                const existingTagData = parseTags(node.properties._tagDataJSON || "[]");
+                const existingTagNames = new Set(existingTagData.map(t => t.name));
+                const uniqueNewTagObjects = newTagData.filter(tagObj => tagObj.name && !existingTagNames.has(tagObj.name));
+
+                if (!uniqueNewTagObjects.length) return;
+
+                const combinedTagData = existingTagData.concat(uniqueNewTagObjects);
+                node.properties._tagDataJSON = JSON.stringify(combinedTagData, null, 2);
+                node.onUpdateTextWidget(node);
+            } else {
+                const textWidget = node.widgets.find(w => w.name === "text");
+                if (textWidget) {
+                    const newText = newTagData.map(formatTag).join("\n");
+                    if (textWidget.value) {
+                        textWidget.value += `\n\n${newText}`;
+                    } else {
+                        textWidget.value = newText;
+                    }
+                }
+            }
+            app.graph.setDirtyCanvas(true);
+        } catch (error) {
+            console.error('[EreNodes] Error loading tag group file:', error);
+        }
     };
 
     node.onLoadTagGroup = async (actionEvent, currentPath = "") => {
