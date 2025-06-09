@@ -210,6 +210,7 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
 
         if (node.type === "ErePromptMultiline") {
             options = options.filter(option => !option || option.content !== "Edit Tags");
+            options = options.filter(option => !option || option.content !== "Toggle All Tags");
         }
         options = options.filter(option => !option || option.content !== "Convert to " + node.title);
 
