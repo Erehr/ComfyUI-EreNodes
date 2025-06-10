@@ -24,6 +24,8 @@ A powerful node that filters your prompts through a provided CSV file containing
 
 ## Installation
 
+Install from ComfyUI Manager or:
+
 1. Navigate to your ComfyUI custom nodes directory:
 ```bash
 cd ComfyUI/custom_nodes/
