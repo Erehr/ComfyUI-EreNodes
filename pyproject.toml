@@ -10,5 +10,5 @@ Repository = "https://github.com/Erehr/ComfyUI-EreNodes"
 
 [tool.comfy]
 PublisherId = "erehr"
-DisplayName = "Erehr" 
+DisplayName = "ComfyUI-EreNodes" 
 Icon = ""
