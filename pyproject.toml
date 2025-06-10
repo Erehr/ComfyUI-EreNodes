@@ -1,0 +1,14 @@
+[project]
+name = "comfyui-erenodes"
+description = "A collection of personal nodes mainly for prompt management."
+version = "1.0.0"
+license = { file = "LICENSE.txt" }
+dependencies  = []
+
+[project.urls]
+Repository = "https://github.com/Erehr/ComfyUI-EreNodes"
+
+[tool.comfy]
+PublisherId = "erehr"
+DisplayName = "Erehr" 
+Icon = ""
