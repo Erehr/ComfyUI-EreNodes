@@ -45,6 +45,7 @@ git clone https://github.com/erehr/ComfyUI-EreNodes.git
 
 ### Autocomplete
 Enhance your workflow with intelligent autocompletion. Suggestions are provided globally as you type, and can also be triggered via a dedicated button on each prompt node. 
+**Note:**  Disabled by default. Enable in settings panel under erenodes. 
 
 ### Advanced Tag Parsing
 All prompt nodes are compatible with LoRAs, and embeddings. The parsers correctly handle complex prompts containing a mix of syntaxes.
