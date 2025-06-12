@@ -1,3 +1,4 @@
 {
-    "active_csv": "danbooru.csv"
+    "active_csv": "booru_complete.csv",
+    "other_settings": {}
 }

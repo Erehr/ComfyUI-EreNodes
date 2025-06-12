@@ -42,7 +42,8 @@ async def set_active_csv_handler(request):
     except Exception as e:
         # Log this error on the server, but don't fail the entire operation
         # as setting active_csv was successful.
-        print(f"[EreNodes API] Error refreshing autocomplete for {csv_file} after setting active: {e}")
+        # Consider a more robust logging mechanism if this becomes a common issue.
+        pass
     
     return web.json_response({"status": "ok"})
     

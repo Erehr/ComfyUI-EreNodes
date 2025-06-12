@@ -816,20 +816,18 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         };
 
         const updateTag = () => {
-
-            const newTagName = input.value;
+            const newTagName = input.value.trim().replace(/,\s*$/, ''); // Remove trailing comma and space from autocomplete
             const newStrength = strengthInput.value;
             let strength = 1.0;
             if (newStrength && newStrength.trim() !== "" && !isNaN(newStrength)) {
                 strength = parseFloat(newStrength);
             }
             
-            if (newTagName && newTagName.trim()) {
-                const trimmedNewName = newTagName.trim();
-                if (trimmedNewName !== clickedTag.name && tagData.some(t => t.name === trimmedNewName)) {
+            if (newTagName) {
+                if (newTagName !== clickedTag.name && tagData.some(t => t.name === newTagName)) {
                     return;
                 }
-                clickedTag.name = trimmedNewName;
+                clickedTag.name = newTagName;
                 
                 if (strength === 1.0) {
                     delete clickedTag.strength;

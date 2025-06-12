@@ -55,10 +55,10 @@ class ErePromptFilter:
                                 alias = alias.strip().lower().replace('_', ' ')
                                 alias_map[alias] = tag
             except Exception as e:
-                print(f"[ErePromptFilter] Failed to read CSV: {e}")
+                # Consider logging this error if it's critical for debugging
                 return (prompt,)
         else:
-            print(f"[ErePromptFilter] CSV not found or invalid: {selected_csv}")
+            # Consider logging this error if it's critical for debugging
             return (prompt,)
 
         result_tags = []

@@ -12,10 +12,10 @@ def get_erenodes_settings():
             return json.load(f)
     except json.JSONDecodeError:
         # Return default structure if JSON is invalid
-        print(f"[EreNodes Settings] Error decoding {SETTINGS_FILE}. Returning default settings.")
+        # Consider logging this error if it's critical for debugging
         return {'active_csv': None, 'other_settings': {}}
     except Exception as e:
-        print(f"[EreNodes Settings] Error reading {SETTINGS_FILE}: {e}. Returning default settings.")
+        # Consider logging this error if it's critical for debugging
         return {'active_csv': None, 'other_settings': {}}
 
 def save_erenodes_settings(data):
@@ -23,4 +23,5 @@ def save_erenodes_settings(data):
         with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=4)
     except Exception as e:
-        print(f"[EreNodes Settings] Error writing to {SETTINGS_FILE}: {e}")
+        # Consider logging this error if it's critical for debugging
+        pass
