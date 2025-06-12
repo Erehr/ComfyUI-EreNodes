@@ -1,12 +1,12 @@
 # ComfyUI EreNodes
 
-A collection of custom nodes for ComfyUI that enhance prompt management and organization. These nodes provide various ways to handle and manipulate prompts in your ComfyUI workflows and are designed to be chained together. 
+A collection of custom nodes for ComfyUI that enhance prompt management and organization. These nodes provide various ways to handle and manipulate prompts in your ComfyUI workflows and are designed to be used together. 
 
 ## Nodes
 ![Image](https://github.com/user-attachments/assets/0dee5980-c730-42ea-b649-61b1fb80099d)
 
 ### Prompt Cloud
-A tag cloud visualization node that displays your prompts as interactive tags. Click on tags to toggle them on/off. Perfect for managing large sets of prompts in a visual way.
+A tag cloud visualization node that displays your prompts as interactive tags. Click on tags to toggle them on/off. Perfect for quickly managing prompts in a visual way.
 
 ### Prompt Toggle
 A simple list of toggleable tags that can be easily enabled or disabled. Great for managing a smaller set of frequently used prompts.
@@ -14,13 +14,16 @@ A simple list of toggleable tags that can be easily enabled or disabled. Great f
 ### Prompt MultiSelect
 A multi-select field implementation that allows you to select multiple tags from a list. Ideal for when you need to choose from a larger predefined set of prompts.
 
+### Prompt Randomizer
+A node that allows you to randomize your prompt tags. It includes a manual randomize button and an option to automatically randomize after each generation, giving you more control over creative exploration.
+
 ### Prompt Multiline
 A complementary standard text edit node that includes all prompt managing features from other nodes. 
 
 ### Prompt Filter
-A powerful node that filters your prompts through a provided CSV file containing tags. Supports danbooru / e621 / merged or custom csv (path or URL). 
-> **Note:**  CSV files are not included in this repository. They will be automatically downloaded from their source on first use and cached locally.
+A powerful node that filters your prompts through a CSV file.
 
+> **Note:**  CSV files are located in __autocomplete__ folder in node directory. Adding additional CSV there will make them avaliable for both autocomplete setting and filter node.
 
 ## Installation
 
@@ -39,6 +42,9 @@ git clone https://github.com/erehr/ComfyUI-EreNodes.git
 3. Restart ComfyUI
 
 ## Features
+
+### Autocomplete
+Enhance your workflow with intelligent autocompletion. Suggestions are provided globally as you type, and can also be triggered via a dedicated button on each node prompt where the text area is not avaliable.
 
 ### Advanced Tag Parsing
 All prompt nodes are compatible with LoRAs, and embeddings. The parsers correctly handle complex prompts containing a mix of syntaxes.

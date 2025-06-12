@@ -1,4 +1,5 @@
 import { app } from "../../scripts/app.js";
+import { TagContextMenuInsert } from "./prompt_autocomplete.js";
 
 const parseTags = value => {
     try {
@@ -187,7 +188,7 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         app.graph.setDirtyCanvas(true, true);
     };
 
-    node.onActionMenu = function(actionEvent) { 
+    node.onActionMenu = (actionEvent, node) => { 
         let options = [
             { content: "Replace Tags from Clipboard", callback: () => node.onClipboardReplace?.() },
             { content: "Add Tags from Clipboard", callback: () => node.onClipboardAppend?.() },
@@ -206,6 +207,7 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
             { content: "Convert to Prompt MultiSelect", callback: () => node.convertTo("ErePromptMultiSelect") },
             { content: "Convert to Prompt Toggle", callback: () => node.convertTo("ErePromptToggle") },
             { content: "Convert to Prompt Multiline", callback: () => node.convertTo("ErePromptMultiline") },
+            { content: "Convert to Prompt Randomizer", callback: () => node.convertTo("ErePromptRandomizer") },
         ];
 
         if (node.type === "ErePromptMultiline") {
@@ -214,7 +216,7 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         }
         options = options.filter(option => !option || option.content !== "Convert to " + node.title);
 
-        new LiteGraph.ContextMenu(options, { event: actionEvent, className: "dark", node }, window);
+                new LiteGraph.ContextMenu(options, { event: actionEvent, className: "dark", node }, window);
     };
 
     node.onEdit = () => {
@@ -378,9 +380,6 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         if (textWidget) {
             textWidget.value = ""; 
         }
-        if (node.renderTagDisplay) {
-            node.renderTagDisplay(); 
-        }
         node.setDirtyCanvas(true);
         app.graph.setDirtyCanvas(true);
     };
@@ -512,8 +511,7 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         }
 
         new LiteGraph.ContextMenu(loadSubMenu, {
-            left: actionEvent.clientX - 10, 
-            top: actionEvent.clientY - 10,    
+            event: actionEvent,
             className: "dark",
             node: node, 
         }, window);
@@ -604,8 +602,7 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         }
 
         new LiteGraph.ContextMenu(saveSubMenu, {
-            left: actionEvent.clientX - 10,
-            top: actionEvent.clientY - 10,
+            event: actionEvent,
             className: "dark",
             node: node, 
         }, window);
@@ -667,11 +664,130 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         }
     };
 
+    node.onRandomize = (e, pos) => {
+        const tagData = parseTags(node.properties._tagDataJSON || "[]");
+        if (!tagData.length) return;
+
+        const allTags = tagData.filter(t => t.type !== 'separator' && t.name);
+        if (!allTags.length) return;
+
+        const activeCount = allTags.filter(t => t.active).length;
+
+        allTags.forEach(t => t.active = false);
+
+        for (let i = allTags.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [allTags[i], allTags[j]] = [allTags[j], allTags[i]];
+        }
+
+        for (let i = 0; i < activeCount; i++) {
+            if (allTags[i]) {
+                allTags[i].active = true;
+            }
+        }
+        
+        node.properties._tagDataJSON = JSON.stringify(tagData, null, 2);
+        node.onUpdateTextWidget(node);
+        app.graph.setDirtyCanvas(true);
+    };
+
+    const shiftActiveTags = (node, shift) => {
+        const tagData = parseTags(node.properties._tagDataJSON || "[]");
+        if (!tagData.length) return;
+
+        const usableTags = tagData.filter(t => t.type !== 'separator' && t.name);
+        if (!usableTags.length) return;
+        
+        const activeIndices = [];
+        usableTags.forEach((tag, index) => {
+            if (tag.active) {
+                activeIndices.push(index);
+            }
+        });
+
+        if (activeIndices.length === 0) return;
+
+        usableTags.forEach(t => t.active = false);
+
+        const newActiveIndices = activeIndices.map(index => (index + shift + usableTags.length) % usableTags.length);
+        
+        newActiveIndices.forEach(newIndex => {
+            if (usableTags[newIndex]) {
+                usableTags[newIndex].active = true;
+            }
+        });
+
+        node.properties._tagDataJSON = JSON.stringify(tagData, null, 2);
+        node.onUpdateTextWidget(node);
+        app.graph.setDirtyCanvas(true);
+    };
+
+    node.onIncrement = () => {
+        shiftActiveTags(node, 1);
+    };
+
+    node.onDecrement = () => {
+        shiftActiveTags(node, -1);
+    };
+
+    node.onAddTag = (e, pos) => {
+        const addTags = (textToAdd) => {
+            if (!textToAdd || !textToAdd.trim()) return;
+
+            if (node.type !== "ErePromptMultiline") {
+                const newTagStrings = (textToAdd.replace(/\n/g, ',').split(/,(?![^()]*\))/g) || [])
+                    .map(s => s.trim())
+                    .filter(s => s);
+                if (!newTagStrings.length) return;
+                const existingTagData = parseTags(node.properties._tagDataJSON || "[]");
+                const existingTagNames = new Set(existingTagData.map(t => t.name));
+
+                const uniqueNewTags = newTagStrings
+                    .map(parseTag)
+                    .filter(Boolean)
+                    .filter(tagObj => tagObj.name && !existingTagNames.has(tagObj.name));
+
+                if (!uniqueNewTags.length) return;
+                
+                const combinedTagData = existingTagData.concat(uniqueNewTags);
+                node.properties._tagDataJSON = JSON.stringify(combinedTagData, null, 2);
+                node.onUpdateTextWidget(node);
+            } else {
+                const textWidget = node.widgets.find(w => w.name === "text");
+                if (textWidget) {
+                    textWidget.value += (textWidget.value ? "\n" : "") + textToAdd;
+                }
+            }
+            app.graph.setDirtyCanvas(true);
+        };
+        
+        let existingTagNames = [];
+        if (node.type !== "ErePromptMultiline") {
+            const existingTagData = parseTags(node.properties._tagDataJSON || "[]");
+            existingTagNames = existingTagData.map(t => t.name).filter(Boolean);
+        } else {
+            const textWidget = node.widgets.find(w => w.name === "text");
+            if (textWidget && textWidget.value) {
+                existingTagNames = textWidget.value.split(/[,\n]/).map(tag => tag.trim()).filter(Boolean);
+            }
+        }
+        
+        new TagContextMenuInsert(e, addTags, existingTagNames);
+    };
+
     node.onTagPillClick = (e, pos, clickedPill) => {
         if (!clickedPill) return;
         
         if (clickedPill.label === "button_menu") {
-            return node.onActionMenu?.(e, clickedPill);
+            return node.onActionMenu?.(e, node);
+        }        
+        
+        if (clickedPill.label === "button_add_tag") {
+            return node.onAddTag?.(e, pos);
+        }
+        
+        if (clickedPill.label === "button_randomize") {
+            return node.onRandomize?.(e, clickedPill);
         }
 
         const tagData = parseTags(node.properties._tagDataJSON || "[]");
@@ -825,18 +941,11 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
             node.isEditMode = false;
             saveButton.hidden = true;
             textWidget.hidden = true;
-            
-            textWidget.computeSize = function() {
-                return [0, -4]; 
-            }
 
             node.onUpdateTextWidget(node);
 
-            if (node.renderTagDisplay) {
-                node.renderTagDisplay();
-            }
-            
-            app.graph.setDirtyCanvas(true);
+            node.setDirtyCanvas(true);
+            node.onResize();
         }
     }
 }

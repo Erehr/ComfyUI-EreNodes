@@ -14,7 +14,7 @@ class ErePrompt:
 
     RETURN_TYPES = ("STRING",)
     FUNCTION = "process"
-    CATEGORY = "utils"
+    CATEGORY = "EreNodes"
 
     def process(self, text, prefix=""):
         clean_prefix = prefix.strip() if prefix else ""
@@ -32,12 +32,14 @@ class ErePromptMultiSelect(ErePrompt): pass
 class ErePromptToggle(ErePrompt): pass
 class ErePromptCloud(ErePrompt): pass
 class ErePromptMultiline(ErePrompt): pass
+class ErePromptRandomizer(ErePrompt): pass
 
 NODE_CLASS_MAPPINGS = {
     "ErePromptMultiSelect": ErePromptMultiSelect,
     "ErePromptToggle": ErePromptToggle,
     "ErePromptCloud": ErePromptCloud,
     "ErePromptMultiline": ErePromptMultiline,
+    "ErePromptRandomizer": ErePromptRandomizer,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -45,6 +47,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ErePromptToggle": "Prompt Toggle",
     "ErePromptCloud": "Prompt Cloud",
     "ErePromptMultiline": "Prompt Multiline",
+    "ErePromptRandomizer": "Prompt Randomizer",
 }
 
 def scripts():
@@ -53,6 +56,7 @@ def scripts():
         "ErePromptToggle": "prompt_toggle.js",
         "ErePromptCloud": "prompt_cloud.js",
         "ErePromptMultiline": "prompt_multiline.js",
+        "ErePromptRandomizer": "prompt_randomizer.js",
     }
 
 __all__ = [

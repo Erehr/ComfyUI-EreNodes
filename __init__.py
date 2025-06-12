@@ -1,6 +1,7 @@
+from .py import prompt_api
+from .py import prompt_csv
 from .py import prompt
 from .py import prompt_filter
-from .py import prompt_api
 
 NODE_CLASS_MAPPINGS = {}
 NODE_CLASS_MAPPINGS.update(prompt.NODE_CLASS_MAPPINGS)
