@@ -1,28 +1,20 @@
 import os
 import csv
 import re
-import hashlib
-import urllib.request
+from .prompt_api import get_erenodes_settings
+from .prompt_csv import get_tag_data
 
 class ErePromptFilter:
     @classmethod
-
     def INPUT_TYPES(cls):
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        autocomplete_dir = os.path.join(base_dir, "..", "__autocomplete__")
+        csv_files = [f for f in os.listdir(autocomplete_dir) if f.endswith(".csv")] if os.path.exists(autocomplete_dir) else []
+        
         return {
             "required": {
                 "prompt": ("STRING", {"forceInput": True}),
-
-                "csv_source": (
-                    [
-                        "e621",
-                        "danbooru",
-                        "danbooru_e621_merged",
-                        "custom"
-                    ],
-                    {"default": "danbooru_e621_merged"}
-                ),
-                "csv_custom": ("STRING", {"default": "", "multiline": False}),
-
+                "csv_file": (csv_files, {"default": csv_files[0] if csv_files else None}),
                 "alias_handling": (
                     ["Use alias", "Use main", "Use both"],
                     {"default": "Use alias"},
@@ -32,32 +24,15 @@ class ErePromptFilter:
 
     RETURN_TYPES = ("STRING",)
     FUNCTION = "process"
-    CATEGORY = "utils"
+    CATEGORY = "EreNodes"
 
-    def process(self, prompt: str, csv_source: str, csv_custom: str, alias_handling: str):
+    def process(self, prompt: str, csv_file: str, alias_handling: str):
         prompt = prompt.lower().replace("_", " ")
         tokens = [t.strip() for t in re.split(r'[,\n]', prompt) if t.strip()]
 
-        csv_urls = {
-            "e621": "https://raw.githubusercontent.com/DraconicDragon/dbr-e621-lists-archive/refs/heads/main/tag-lists/e621/e621_2025-05-01_pt25-ia-ed.csv",
-            "danbooru": "https://raw.githubusercontent.com/DraconicDragon/dbr-e621-lists-archive/refs/heads/main/tag-lists/danbooru/danbooru_2025-05-01_pt25-ia-dd.csv",
-            "danbooru_e621_merged": "https://raw.githubusercontent.com/DraconicDragon/dbr-e621-lists-archive/refs/heads/main/tag-lists/danbooru_e621_merged/danbooru_e621_merged_2025-05-01_pt25-ia-dd-ed-spc.csv",
-        }
-
-        selected_csv = csv_custom if csv_source == "custom" else csv_urls.get(csv_source, "")
-        is_url = selected_csv.lower().startswith(("http://", "https://"))
-        cache_dir = os.path.join(os.path.dirname(__file__), "__csvcache__")
-        os.makedirs(cache_dir, exist_ok=True)
-
-        if is_url:
-            filename = os.path.basename(selected_csv)
-            cached_path = os.path.join(cache_dir, filename)
-            if not os.path.isfile(cached_path):
-                try:
-                    urllib.request.urlretrieve(selected_csv, cached_path)
-                except Exception:
-                    cached_path = None
-            selected_csv = cached_path
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        autocomplete_dir = os.path.join(base_dir, "..", "__autocomplete__")
+        selected_csv = os.path.join(autocomplete_dir, csv_file)
 
         alias_map = {}
         canonical_map = {}
@@ -81,8 +56,10 @@ class ErePromptFilter:
                                 alias_map[alias] = tag
             except Exception as e:
                 print(f"[ErePromptFilter] Failed to read CSV: {e}")
+                return (prompt,)
         else:
             print(f"[ErePromptFilter] CSV not found or invalid: {selected_csv}")
+            return (prompt,)
 
         result_tags = []
         for token in tokens:

@@ -15,28 +15,10 @@ app.registerExtension({
             
             const textWidget = node.widgets?.find(w => w.name === "text");
 
-            // const testInput = node.addInput("input", "Test", "test_input", () => {});
-  
-            // console.log(testInput);
-            // console.log(node.inputs.text);
-            // we keep hidden saveButton so we don't have to fix functions that use it
-            // so let's keep it here, hidden and use it for spacing instead of creating dummy widget for that. So efficient.
             const saveButton = node.addWidget("button", "Save", "edit_text", () => {});
             saveButton.computeSize = () => [0, 20];
             saveButton.hidden = true;
-
-            // console.log(node.widgets);
-            // saveButton.hidden = true;
-            // saveButton.index = -2;
-            // ok so after testing it's the reordering that caused empty textWidget after refresh... Maybe because ComfyUI stores data in accordance to index? We will think of something else for reordering then.
-            // That's a bug that we would never find ourselves if i didn't comment every textWidget.value and it still happend... 
-            // move above text widget
-            // const textWidgetIndex = node.widgets.findIndex(w => w.name === 'text');
-            // console.log(textWidgetIndex);
-            // const saveButtonIndex = node.widgets.findIndex(w => w.name === 'edit_text');
-            // console.log(saveButtonIndex);
-            // node.widgets.reverse();
-
+            
             node.onMouseDown = (e, pos) => {
                 if (node.isEditMode) return;
 

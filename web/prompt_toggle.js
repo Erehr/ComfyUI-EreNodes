@@ -68,10 +68,6 @@ app.registerExtension({
                         }
                     } 
 
-                    // TODO:
-                    // Find if we are clicking just toggle switch
-                    // and move onTagPillClick there
-
                 }
 
             };
@@ -93,20 +89,21 @@ app.registerExtension({
 
             ctx.font = "12px monospace";
 
-            const pillX = 10, pillY = 35, spacing = 5, pillPadding = 5;
+            const pillX = 10, pillY = 26 + 5, spacing = 5, pillPadding = 5;
             const pillMaxWidth = this.size[0] - pillX * 2;
             let currentX = pillX;
             let currentY = pillY;
 
             const positions = [];
             const specialTags = [
-                { label: "button_menu", display: "≡" } // Menu Button is now the only special button
+                { label: "button_menu", display: "≡" },
+                { label: "button_add_tag", display: "+" } // this button tag need to show at end after all tag pills
             ];
-
+    
             // Creating buttons
             for (const { display, label } of specialTags) {
-                if (currentX + 20 > pillX + pillMaxWidth) {
-                    currentX = pillX;
+                if (currentX + 20 > pillX + pillMaxWidth - pillPadding) {
+                    currentX = pillX + pillPadding;
                     currentY += 20 + spacing;
                 }
                 positions.push({ x: currentX, y: currentY, w: 20, h: 20, label, display, button: true });
@@ -168,15 +165,8 @@ app.registerExtension({
             for (const p of positions) {
                 ctx.beginPath();
                 ctx.globalAlpha = p.active ? 0.75 : 1;
-                // let pillFill = "#414650"; // Default
                 let pillFill = LiteGraph.WIDGET_BGCOLOR;
-                // if (p.type === 'lora') {
-                //     pillFill = "#415041"; // Muted green-cyan
-                // } else if (p.type === 'embedding') {
-                //     pillFill = "#504149 "; // Muted yellow
-                // }
                 ctx.fillStyle = p.button ? LiteGraph.NODE_DEFAULT_BOXCOLOR : (p.active ? LiteGraph.WIDGET_BGCOLOR : pillFill);
-                // ctx.fillStyle = p.button ? LiteGraph.NODE_DEFAULT_BOXCOLOR : (p.active ? LiteGraph.WIDGET_BGCOLOR: LiteGraph.WIDGET_BGCOLOR);
                 ctx.roundRect(p.x, p.y, p.w, p.h, p.h / 2);
                 ctx.fill();
 
@@ -229,8 +219,9 @@ app.registerExtension({
             
             this._measuredHeight = pillY + pillHeight + 8;
             // height correction
-            if (!this.isEditMode && this._measuredHeight && this.size[1] !== this._measuredHeight) {
-                this.setSize([this.size[0], this._measuredHeight]);
+            if (!this.isEditMode) {
+                textWidget.computeSize = () => [0, pillHeight];
+                this.setSize([this.size[0], this.size[1]]);
             }
 
         };

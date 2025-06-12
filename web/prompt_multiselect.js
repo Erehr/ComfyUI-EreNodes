@@ -27,7 +27,7 @@ app.registerExtension({
             if (!textWidget) return;
             textWidget.computeSize = () => [0, 0];
             textWidget.hidden = true;
-
+            
             // Restore saved JSON to widget output
             if (node.properties._tagDataJSON) {
                 const tags = parseTags(node.properties._tagDataJSON).filter(t => t.active && t.name);
@@ -54,6 +54,7 @@ app.registerExtension({
                     for (const pill of node._pillMap || []) {
                         if (x >= pill.x && x <= pill.x + pill.w && y >= pill.y && y <= pill.y + pill.h) {
                             clickedPill = pill;
+                            pos = [pill.x, pill.y + pill.h];
                             break;
                         }
                     }
@@ -62,6 +63,7 @@ app.registerExtension({
                     if (clickedPill) {
                         if (e.shiftKey) {
                             node.onTagQuickEdit(e, pos, clickedPill);
+                            
                         } else {    
                             node.onTagPillClick(e, pos, clickedPill);
                         }
@@ -108,16 +110,17 @@ app.registerExtension({
 
             ctx.font = "12px monospace";
 
-            const pillX = 10, pillY = 35, spacing = 5, pillPadding = 5;
+            const pillX = 10, pillY = 26, spacing = 5, pillPadding = 5;
             const pillMaxWidth = this.size[0] - pillX * 2;
             let currentX = pillX + pillPadding;
             let currentY = pillY + pillPadding;
 
             const positions = [];
             const specialTags = [
-                { label: "button_menu", display: "≡" } // Menu Button is now the only special button
+                { label: "button_menu", display: "≡" },
+                { label: "button_add_tag", display: "+" } // this button tag need to show at end after all tag pills
             ];
-            
+              
             // Creating buttons
             for (const { display, label } of specialTags) {
                 if (currentX + 20 > pillX + pillMaxWidth - pillPadding) {
@@ -230,8 +233,9 @@ app.registerExtension({
             
             this._measuredHeight = pillY + pillHeight + 8;
             // height correction
-            if (!this.isEditMode && this._measuredHeight && this.size[1] !== this._measuredHeight) {
-                this.setSize([this.size[0], this._measuredHeight]);
+            if (!this.isEditMode) {
+                textWidget.computeSize = () => [0, pillHeight];
+                this.setSize([this.size[0], this.size[1]]);
             }
 
         };
