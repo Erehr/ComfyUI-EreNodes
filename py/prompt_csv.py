@@ -44,7 +44,8 @@ def load_tags_from_csv(csv_path):
                     except (ValueError, IndexError):
                         continue
         except Exception as e:
-            print(f"[ErePromptFilter] Failed to read CSV for autocomplete: {e}")
+            # Consider logging this error if it's critical for debugging
+            pass
     
     return tags
 
@@ -62,10 +63,8 @@ def get_tag_data():
     autocomplete_dir = os.path.join(base_dir, "..", "__autocomplete__")
     csv_path = os.path.join(autocomplete_dir, active_csv)
 
-    print(f"[EreNodes] Caching autocomplete tags from {active_csv}...")
     tags = load_tags_from_csv(csv_path)
     TAG_DATA_CACHE[active_csv] = tags
-    print(f"[EreNodes] Autocomplete tags cached from {active_csv}.")
     return tags
 
 @server.PromptServer.instance.routes.get("/erenodes/search_tags")

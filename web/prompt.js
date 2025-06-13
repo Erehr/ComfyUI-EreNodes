@@ -808,7 +808,10 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
 
         if (!clickedTag) return;
         
+        // let quickEditAutocompleteInstance = null; // To hold the GlobalAutocomplete instance for this specific textarea
+
         const deleteTag = () => {
+            // if (quickEditAutocompleteInstance) quickEditAutocompleteInstance.detach(); // Remnant removed
             const newTagData = tagData.filter(t => t.name !== clickedTag.name);
             node.properties._tagDataJSON = JSON.stringify(newTagData, null, 2);
             node.onUpdateTextWidget(node);
@@ -816,20 +819,19 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         };
 
         const updateTag = () => {
-
-            const newTagName = input.value;
+            // if (quickEditAutocompleteInstance) quickEditAutocompleteInstance.detach(); // Remnant removed
+            const newTagName = input.value.trim().replace(/,\s*$/, ''); // Remove trailing comma and space from autocomplete
             const newStrength = strengthInput.value;
             let strength = 1.0;
             if (newStrength && newStrength.trim() !== "" && !isNaN(newStrength)) {
                 strength = parseFloat(newStrength);
             }
             
-            if (newTagName && newTagName.trim()) {
-                const trimmedNewName = newTagName.trim();
-                if (trimmedNewName !== clickedTag.name && tagData.some(t => t.name === trimmedNewName)) {
+            if (newTagName) {
+                if (newTagName !== clickedTag.name && tagData.some(t => t.name === newTagName)) {
                     return;
                 }
-                clickedTag.name = trimmedNewName;
+                clickedTag.name = newTagName;
                 
                 if (strength === 1.0) {
                     delete clickedTag.strength;
@@ -865,7 +867,9 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         input.style.margin = "0";
         input.addEventListener('focus', () => {
             input.style.outline = "1px solid #666";
+            // Autocomplete will be handled by the global focusin listener
         });
+        // input.addEventListener('blur', () => { ... }); // Removed: Global instance handles blur
 
         const strengthInput = document.createElement("input");
         strengthInput.type = "number";
@@ -927,6 +931,12 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         container.appendChild(saveButton);
         container.appendChild(deleteButton);
         menu.root.prepend(container);
+        menu.onClose = () => { // Ensure detachment when the context menu itself is closed
+            if (quickEditAutocompleteInstance) {
+                quickEditAutocompleteInstance.detach();
+                quickEditAutocompleteInstance = null;
+            }
+        };
         setTimeout(() => input.focus(), 50);
 
         return;
