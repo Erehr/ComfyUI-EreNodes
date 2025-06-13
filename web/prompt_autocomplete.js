@@ -710,13 +710,43 @@ class GlobalAutocomplete {
                             const text = this.textarea.value;
                             const cursorPos = this.textarea.selectionStart;
                             const textToCursor = text.substring(0, cursorPos);
+                            
+                            let wordStart = 0;
                             const lastComma = textToCursor.lastIndexOf(',');
                             const lastNewline = textToCursor.lastIndexOf('\n');
-                            const wordStart = Math.max(lastComma, lastNewline) + 1;
+                            wordStart = Math.max(lastComma, lastNewline) + 1;
+
+                            // Adjust wordStart to preserve space after comma if present
+                            if (lastComma !== -1 && textToCursor.substring(lastComma + 1, wordStart).trim() === '') {
+                                // If the character after the last comma is a space (and then the cursor),
+                                // ensure wordStart includes that space for the 'before' string.
+                                if (text[lastComma + 1] === ' ') {
+                                    // wordStart is already correct in this case if currentWord was empty or just spaces
+                                } 
+                                // If currentWord was being typed right after comma (no space), wordStart is also fine.
+                            }
                             
-                            const before = text.substring(0, wordStart);
+                            let before = text.substring(0, wordStart);
                             const after = text.substring(cursorPos);
+
+                            // Ensure 'before' ends with a comma and a space if it's not the start of the text
+                            // and the previous character was a comma without a space.
+                            if (wordStart > 0 && before.endsWith(',') && !before.endsWith(', ')) {
+                                before += ' ';
+                            } else if (wordStart > 0 && !before.endsWith(', ') && !before.endsWith('\n') && before.trim() !== '') {
+                                // If 'before' is not empty, not ending with newline, and not ending with ", ", add it.
+                                // This handles cases where the previous content didn't end with a comma.
+                                if (!before.endsWith(',')) before += ',';
+                                if (!before.endsWith(' ')) before += ' ';
+                            } else if (before.trim() === '') {
+                                // If 'before' is empty or just whitespace, don't add a leading comma.
+                                before = ''; 
+                            }
+
                             this.textarea.value = before + textToInsert + ", " + after;
+                            
+                            const newTextValue = before + textToInsert + ", " + after;
+                            this.textarea.value = newTextValue;
                             
                             const newCursorPos = (before + textToInsert + ", ").length;
                             this.textarea.setSelectionRange(newCursorPos, newCursorPos);
