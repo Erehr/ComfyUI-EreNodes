@@ -39,3 +39,4 @@ Thumbs.db
 # Project specific
 __csvcache__/
 *.log 
+__autocomplete__/booru_complete.csv

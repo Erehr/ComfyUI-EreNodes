@@ -168,6 +168,71 @@ async def save_tag_group_handler(request):
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
+
+# --- LORA API Endpoints --- #
+
+import folder_paths # Import ComfyUI's folder_paths
+
+# --- LORA API Endpoints --- #
+
+@server.PromptServer.instance.routes.get("/erenodes/search_loras")
+async def search_loras_handler(request):
+    query = request.query.get("query", "").lower()
+    limit = int(request.query.get("limit", "10"))
+
+    try:
+        # Use ComfyUI's folder_paths to get the list of lora files (with extensions)
+        all_loras_with_ext = folder_paths.get_filename_list("loras")
+        
+        # Remove extensions and normalize path separators for matching and display
+        # This aligns with how pythongosssss/autocomplete.py handles it.
+        all_loras = [os.path.splitext(lora)[0].replace('\\', '/') for lora in all_loras_with_ext]
+
+    except Exception as e:
+        print(f"Error getting LORA list from folder_paths: {e}")
+        return web.json_response([])
+
+    if query:
+        # Filter loras: query can be anywhere in the path/filename (without extension)
+        filtered_loras = [lora for lora in all_loras if query in lora.lower()]
+    else:
+        filtered_loras = all_loras
+    
+    return web.json_response(filtered_loras[:limit])
+    
+
+# --- Embedding API Endpoints --- #
+
+@server.PromptServer.instance.routes.get("/erenodes/search_embeddings")
+async def search_embeddings_handler(request):
+    query = request.query.get("query", "").lower()
+    limit = int(request.query.get("limit", "10")) # Default limit to 10, similar to loras
+
+    try:
+        # Use ComfyUI's folder_paths to get the list of embedding files (with extensions)
+        all_embeddings_with_ext = folder_paths.get_filename_list("embeddings")
+        
+        # Remove extensions and normalize path separators for matching and display
+        all_embeddings = [os.path.splitext(emb)[0].replace('\\', '/') for emb in all_embeddings_with_ext]
+
+    except Exception as e:
+        print(f"Error getting EMBEDDING list from folder_paths: {e}")
+        return web.json_response([])
+
+    if query:
+        # Filter embeddings: query can be anywhere in the path/filename (without extension)
+        filtered_embeddings = [emb for emb in all_embeddings if query in emb.lower()]
+    else:
+        filtered_embeddings = all_embeddings
+    
+    # Apply limit
+    return web.json_response(filtered_embeddings[:limit])
+
+    # Sort alphabetically for consistent results
+    filtered_loras.sort()
+    
+    return web.json_response(filtered_loras[:limit])
+
 @server.PromptServer.instance.routes.post("/erenodes/create_folder")
 async def create_folder_handler(request):
     try:
