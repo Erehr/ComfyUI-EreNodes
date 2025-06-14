@@ -120,8 +120,26 @@ const getTextInput = async (title, promptMessage, defaultValue = "") => {
 };
 
 export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
+
+    if (node.type !== "ErePromptMultiline") {
+        node.properties = node.properties || {};
+        if (node.properties._tagSeparator === undefined || node.properties._tagSeparator === null || node.properties._tagSeparator === "") {
+            node.properties._tagSeparator = ", ";
+        }
+        if (node.properties._prefixSeparator === undefined || node.properties._prefixSeparator === null || node.properties._prefixSeparator === "") {
+            node.properties._prefixSeparator = ",\\n\\n"; // Store as literal \n for display in properties
+        }
+        node.onPropertyChanged = function(name, value) {
+            if (name === "_tagSeparator" || name === "_prefixSeparator") { // Added _prefixSeparator
+                if (this.onUpdateTextWidget) {
+                    this.onUpdateTextWidget(this);
+                }
+            }
+        };
+    }
+
     node.convertTo = function(targetNodeType) {
-        if (this.type === "ErePromptMultiline") {
+        if (node.type === "ErePromptMultiline") {
             const textWidget = this.widgets.find(w => w.name === "text");
             if (textWidget) {
                 const tagData = parseTextToTagData(textWidget.value);
@@ -149,6 +167,8 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
     
         if (targetNodeType === "ErePromptMultiline") {
             if (newNode.properties) delete newNode.properties._tagDataJSON;
+            if (newNode.properties) delete newNode.properties._prefixSeparator;
+            if (newNode.properties) delete newNode.properties._tagSeparator;
         }
         
         newNode.pos = [this.pos[0], this.pos[1]]; 
@@ -239,7 +259,8 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         for (const tag of tagData) {
             if (tag.type === 'separator') {
                 if (currentLine.length > 0) {
-                    lines.push(currentLine.join(", "));
+                    const separator = (node.properties._tagSeparator !== undefined && node.properties._tagSeparator !== "") ? node.properties._tagSeparator : ", ";
+                    lines.push(currentLine.join(separator));
                 }
                 lines.push(""); 
                 currentLine = [];
@@ -249,7 +270,8 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         }
         
         if (currentLine.length > 0) {
-            lines.push(currentLine.join(", "));
+            const separator = (node.properties._tagSeparator !== undefined && node.properties._tagSeparator !== "") ? node.properties._tagSeparator : ", ";
+            lines.push(currentLine.join(separator));
         }
 
         textWidget.value = lines.join("\n");
@@ -260,26 +282,78 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
     node.onUpdateTextWidget = (node) => {
         const textWidget = node.widgets.find(w => w.name === "text");
         if (!textWidget) return;
+
         const tagData = parseTags(node.properties._tagDataJSON || "[]");
         const activeTagsAndSeparators = tagData.filter(t => (t.active && t.name) || t.type === 'separator');
 
-        const lines = activeTagsAndSeparators.reduce((acc, tag) => {
+        let tagSeparator = (node.properties._tagSeparator !== undefined && node.properties._tagSeparator !== "") ? node.properties._tagSeparator : ", ";
+        tagSeparator = tagSeparator.replace(/\\n/g, "\n"); // Replace literal \n with actual newline
+
+        const parts = [];
+        let currentLineTags = [];
+
+        for (const tag of activeTagsAndSeparators) {
             if (tag.type === 'separator') {
-                if (acc.length === 0 || acc[acc.length - 1].length > 0) {
-                    acc.push([]);
+                if (currentLineTags.length > 0) {
+                    parts.push(currentLineTags.join(tagSeparator));
+                    currentLineTags = [];
+                }
+                // Only add a separator if there was something before it and parts is not empty
+                // and the last part wasn't already a separator (or effectively one due to empty line).
+                if (parts.length > 0 && parts[parts.length -1] !== tagSeparator) {
+                     // Check if the last part added actual content or if it was an empty line join
+                    if (parts[parts.length-1].trim() !== "") { 
+                        parts.push(tagSeparator);
+                    }
                 }
             } else {
-                if (acc.length === 0) {
-                    acc.push([]);
-                }
-                acc[acc.length - 1].push(formatTag(tag));
+                currentLineTags.push(formatTag(tag));
             }
-            return acc;
-        }, []);
+        }
 
-        textWidget.value = lines
-            .map(line => line.join(", "))
-            .join("\n");
+        if (currentLineTags.length > 0) {
+            parts.push(currentLineTags.join(tagSeparator));
+        }
+
+        // Filter out any empty strings that might result from consecutive separators
+        // or separators at the beginning/end without content.
+        let currentText = parts.filter(part => part.trim() !== '' || part === tagSeparator)
+                               .join('');
+        // If the final result is just the separator itself (e.g. only a separator was active), make it empty.
+        if (currentText === tagSeparator && activeTagsAndSeparators.filter(t => t.type !== 'separator').length === 0) {
+            currentText = '';
+        }
+
+        // Apply prefix if input is connected
+        let finalText = currentText;
+        if (node.type !== "ErePromptMultiline" && node.inputs && node.inputs[0] && node.inputs[0].link !== null) {
+            const linkId = node.inputs[0].link;
+            const linkInfo = app.graph.links[linkId];
+            if (linkInfo) {
+                const originNode = app.graph.getNodeById(linkInfo.origin_id);
+                if (originNode) {
+                    let prefixText = "";
+                    // Try to get text from a "text" widget on the origin node
+                    if (originNode.widgets) {
+                        const originTextWidget = originNode.widgets.find(w => w.name === "text");
+                        if (originTextWidget && typeof originTextWidget.value === 'string') {
+                            prefixText = originTextWidget.value;
+                        }
+                    }
+                    // Example for PrimitiveNode (if you need to support it directly)
+                    // else if (originNode.type === "PrimitiveNode" && originNode.widgets && originNode.widgets[0] && typeof originNode.widgets[0].value === 'string') {
+                    //    prefixText = originNode.widgets[0].value.trim();
+                    // }
+
+                    if (originNode.mode !== 4 && prefixText.trim()) {
+                        let prefixSep = node.properties._prefixSeparator;
+                        prefixSep = prefixSep.replace(/\\n/g, "\n"); // Replace literal \n with actual newline
+                        finalText = `${prefixSep}${currentText}`;
+                    } 
+                }
+            }
+        }
+        textWidget.value = finalText;
     };
 
     node.onClipboardReplace = () => {
@@ -459,7 +533,7 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
                 if (textWidget) {
                     const newText = newTagData.map(formatTag).join("\n");
                     if (textWidget.value) {
-                        textWidget.value += `\n\n${newText}`;
+                        textWidget.value += `${newText}`;
                     } else {
                         textWidget.value = newText;
                     }
@@ -481,7 +555,7 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
             if (currentPath !== "") {
                 const parentPath = currentPath.substring(0, currentPath.lastIndexOf('/'));
                 loadSubMenu.push({
-                    content: "⬆️ .. (Up)",
+                    content: "⬅️ .. (Up)",
                     callback: () => node.onLoadTagGroup(actionEvent, parentPath)
                 });
             }
@@ -490,7 +564,7 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
                     const fullItemPath = currentPath ? `${currentPath}/${item.name}` : item.name;
                     if (item.type === "folder") {
                         loadSubMenu.push({
-                            content: "📁 " + item.name,
+                            content: "📂 " + item.name,
                             callback: () => node.onLoadTagGroup(actionEvent, fullItemPath)
                         });
                     } else if (item.type === "file") {
@@ -558,7 +632,7 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         });
 
         saveSubMenu.push({
-            content: "➕ Create New Folder...",
+            content: "📂 Create New Folder...",
             callback: () => node.promptForNewFolder(actionEvent, currentPath)
         });
 
@@ -567,7 +641,7 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         if (currentPath !== "") {
             const parentPath = currentPath.substring(0, currentPath.lastIndexOf('/'));
             saveSubMenu.push({
-                content: "⬆️ .. (Up)",
+                content: "⬅️ .. (Up)",
                 callback: () => node.onSaveTagGroup(actionEvent, parentPath)
             });
         }
@@ -819,32 +893,58 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         };
 
         const updateTag = () => {
-            // if (quickEditAutocompleteInstance) quickEditAutocompleteInstance.detach(); // Remnant removed
-            const newTagName = input.value.trim().replace(/,\s*$/, ''); // Remove trailing comma and space from autocomplete
-            const newStrength = strengthInput.value;
-            let strength = 1.0;
-            if (newStrength && newStrength.trim() !== "" && !isNaN(newStrength)) {
-                strength = parseFloat(newStrength);
-            }
-            
-            if (newTagName) {
-                if (newTagName !== clickedTag.name && tagData.some(t => t.name === newTagName)) {
-                    return;
-                }
-                clickedTag.name = newTagName;
-                
-                if (strength === 1.0) {
-                    delete clickedTag.strength;
+            const currentTagData = parseTags(node.properties._tagDataJSON || "[]");
+            const tagIndex = currentTagData.findIndex(t => t.name === clickedTag.name && t.type === clickedTag.type && t.strength === clickedTag.strength);
+
+            const inputText = input.value.trim();
+            const newStrengthValue = strengthInput.value.trim();
+
+            // Parse the input text which might contain multiple new tags
+            // We pass an empty array as oldTagData to parseTextToTagData because we are replacing, not merging with existing list context here.
+            const newTags = parseTextToTagData(inputText, []); 
+
+            if (tagIndex !== -1) {
+                if (newTags.length > 0) {
+                    // If the input resulted in one or more tags
+                    // Apply the strength from the strength input to the first new tag if it's not a LORA with its own strength
+                    // or if the new tag is a LORA and the strength input is not empty.
+                    if (newTags[0].type !== 'lora' || (newTags[0].type === 'lora' && newStrengthValue !== "")) {
+                         const strength = parseFloat(newStrengthValue);
+                         if (!isNaN(strength) && strength !== 1.0) {
+                            newTags[0].strength = strength;
+                         } else if (newTags[0].type === 'lora' && newTags[0].strength === undefined && newStrengthValue === "") {
+                            // If it's a LORA parsed without strength and strength input is empty, keep it undefined
+                            newTags[0].strength = undefined;
+                         } else if (newTags[0].type !== 'lora'){
+                            newTags[0].strength = undefined; // Default for non-lora or strength 1
+                         }
+                    }
+                    // Replace the old tag with the new one(s)
+                    currentTagData.splice(tagIndex, 1, ...newTags);
                 } else {
-                    clickedTag.strength = strength;
+                    // If input is empty, effectively delete the tag
+                    currentTagData.splice(tagIndex, 1);
                 }
-        
-                node.properties._tagDataJSON = JSON.stringify(tagData, null, 2);
-                
-                node.onUpdateTextWidget(node);
-                app.graph.setDirtyCanvas(true);
+            } else if (newTags.length > 0) {
+                // If original tag not found (shouldn't happen ideally, but as a fallback), append new tags
+                // Apply strength to the first new tag as above
+                if (newTags[0].type !== 'lora' || (newTags[0].type === 'lora' && newStrengthValue !== "")) {
+                    const strength = parseFloat(newStrengthValue);
+                    if (!isNaN(strength) && strength !== 1.0) {
+                        newTags[0].strength = strength;
+                    }
+                     else if (newTags[0].type === 'lora' && newTags[0].strength === undefined && newStrengthValue === "") {
+                        newTags[0].strength = undefined;
+                     } else if (newTags[0].type !== 'lora'){
+                        newTags[0].strength = undefined; 
+                     }
+                }
+                currentTagData.push(...newTags);
             }
 
+            node.properties._tagDataJSON = JSON.stringify(currentTagData, null, 2);
+            node.onUpdateTextWidget(node);
+            app.graph.setDirtyCanvas(true);
             menu.close();
         };
 
@@ -855,7 +955,7 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         container.style.margin = "0";
 
         const input = document.createElement("textarea");
-        input.value = clickedTag.name;
+        input.value = formatTag(clickedTag);
         input.style.border = "none";
         input.style.background = LiteGraph.WIDGET_BGCOLOR;
         input.style.fieldSizing = "content";

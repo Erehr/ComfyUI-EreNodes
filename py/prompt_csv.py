@@ -4,7 +4,7 @@ import re
 import server
 from aiohttp import web
 
-from .settings_utils import get_erenodes_settings
+from .settings import get_erenodes_settings
 
 # Define constants for export
 CSV_FILES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "__autocomplete__")

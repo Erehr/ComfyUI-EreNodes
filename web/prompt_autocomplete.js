@@ -65,47 +65,55 @@ class TagContextMenu {
         const query = this.currentWord.toLowerCase().replace(/_/g, ' ');
 
         this.options.forEach((option, i) => {
-            if (option.type === 'separator') {
-                const separator = document.createElement("div");
-                separator.className = "litemenu-separator";
-                this.itemsContainer.appendChild(separator);
-                return;
-            }
+            // Separator rendering is handled by the class assignment below if option.type === 'separator'
 
             const item = document.createElement("div");
-            item.className = "litemenu-entry submenu";
             item.dataset.optionIndex = i;
 
-            if (option.disabled) {
-                item.classList.add("disabled");
-            }
-
-            if (option.name !== undefined) { 
-                // Unified highlighting for both tags and LORAs using option.name
-                const displayHTML = this.highlight(option.name, query);
-                
-                let countHTML = '';
-                if (option.count !== undefined && option.type === 'tag') { // Count only for tags
-                    countHTML = `<div style="font-size: 0.8em; opacity: 0.7; margin-left: 10px; white-space: nowrap;">(${option.count.toLocaleString('en-US')})</div>`;
-                }
-
-                let aliasesHTML = '';
-                if (option.aliases && option.aliases.length > 0 && option.type === 'tag') { // Aliases only for tags
-                    const highlightedAliases = option.aliases.map(alias => this.highlight(alias, query)).join(', ');
-                    aliasesHTML = `<div style="font-size: 0.8em; opacity: 0.7; white-space: normal;">${highlightedAliases}</div>`;
-                }
-
-                item.innerHTML = `
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div>${displayHTML}</div>
-                        ${countHTML}
-                    </div>
-                    ${aliasesHTML}
-                `;
-            } else if (option.content) { // For "Add tag:" or other simple content
-                item.innerHTML = this.highlight(option.content, query);
+            if (option.type === 'separator') {
+                item.className = "litemenu-entry submenu separator";
+                // No text or event listeners for separators
             } else {
-                item.innerHTML = "Error: Invalid option"; 
+                item.className = "litemenu-entry submenu";
+                if (option.disabled) {
+                    item.classList.add("disabled");
+                }
+
+                let icon = '';
+                switch(option.type) {
+                    case 'lora': icon = ''; break; // Or specific LORA icon if desired
+                    case 'embedding': icon = ''; break; // Or specific Embedding icon
+                    case 'folder': icon = '📁 '; break;
+                    case 'lora_folder_up': icon = '⬅️ '; break;
+                    case 'embedding_folder_up': icon = '⬅️ '; break;
+                    case 'tag': icon = ''; break; // No icon for regular tags by default
+                    case 'add_custom_tag': icon = '➕ '; break;
+                    default: icon = ''; // Default no icon
+                }
+
+                if (option.name !== undefined) {
+                    const displayHTML = this.highlight(option.name, query);
+                    let countHTML = '';
+                    if (option.count !== undefined && option.type === 'tag') {
+                        countHTML = `<div style="font-size: 0.8em; opacity: 0.7; margin-left: 10px; white-space: nowrap;">(${option.count.toLocaleString('en-US')})</div>`;
+                    }
+                    let aliasesHTML = '';
+                    if (option.aliases && option.aliases.length > 0 && option.type === 'tag') {
+                        const highlightedAliases = option.aliases.map(alias => this.highlight(alias, query)).join(', ');
+                        aliasesHTML = `<div style="font-size: 0.8em; opacity: 0.7; white-space: normal;">${highlightedAliases}</div>`;
+                    }
+                    item.innerHTML = `
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>${icon}${displayHTML}</div>
+                            ${countHTML}
+                        </div>
+                        ${aliasesHTML}
+                    `;
+                } else if (option.content) { // For "Add tag:" or other simple content
+                     item.innerHTML = `${icon}${this.highlight(option.content, query)}`;
+                } else {
+                    item.innerHTML = "Error: Invalid option";
+                }
             }
 
             item.addEventListener("click", (e) => {
@@ -237,8 +245,8 @@ export class TagContextMenuInsert extends TagContextMenu {
             this.globalAutocompleteInstance.detach(); // Detach from any previous element
         }
 
-        // Attach the globalAutocompleteInstance
-        this.globalAutocompleteInstance.attach(this.searchBox, (selectedItem, _originalWord) => { // existingTags will be passed here
+        // Attach the globalAutocompleteInstance, passing currentLORApath and currentEMBEDDINGpath
+        this.globalAutocompleteInstance.attach(this.searchBox, (selectedItem, _originalWord) => {
             // selectedItem can be a string (for tags) or an object {name, type} for lora/embedding
             let textToInsert = selectedItem;
             if (typeof selectedItem === 'object' && selectedItem.name) {
@@ -251,8 +259,7 @@ export class TagContextMenuInsert extends TagContextMenu {
                 }
             } else if (typeof selectedItem !== 'string') {
                  // Fallback if selectedItem is an object but not structured as expected, or not a string
-                 console.warn("Autocomplete: Unexpected selectedItem format", selectedItem);
-                 textToInsert = selectedItem.originalName || selectedItem.name || ""; // Best guess
+                 textToInsert = selectedItem.name || ""; // Best guess
             }
 
             this.onSelect(textToInsert); // Pass the formatted string (or plain name) to the node's onSelect
@@ -414,10 +421,11 @@ function getElementOrCursorCoords(element) {
 
 // For global autocomplete, a passive renderer controlled by another class
 export class TagContextMenuAutocomplete extends TagContextMenu {
-    constructor(textarea, onSelectCallback, positioningElement = null) {
+    constructor(textarea, onSelectCallback, positioningElement = null, globalAutocompleteInstance) {
         super(null, onSelectCallback); 
         this.textarea = textarea; 
         this.positioningElement = positioningElement || textarea;
+        this.globalAutocompleteInstance = globalAutocompleteInstance; // Store reference
         this.show();
     }
 
@@ -427,38 +435,38 @@ export class TagContextMenuAutocomplete extends TagContextMenu {
             return;
         }
 
-        this.currentWord = currentWord; // currentWord is the text being typed, e.g. "lora:myL"
+        this.currentWord = currentWord;
         this.options = suggestions.map(s => ({
-            ...s, // s already contains name, type, and originalName if applicable
+            ...s, // s contains name, type, path
             callback: () => {
-                // The onSelectExternalCallback (passed to GlobalAutocomplete.attach)
-                // expects the selected item. It will then format it if necessary.
-                // So, we pass the suggestion object 's' itself for lora/embedding,
-                // or just its name/originalName for tags.
-                if (s.type === 'lora' || s.type === 'embedding') {
-                    this.onSelect(s); // Pass the object {name, type} for lora/embedding
-                } else if (s.type === 'add_custom_tag') {
-                    this.onSelect(s.originalName); // Pass the string for the new tag
-                } else { // 'tag'
-                    this.onSelect(s.name); // Pass the tag name string
-                }
+                // The onSelect callback is now more complex due to folder navigation
+                // It's handled by the callback passed to TagContextMenuAutocomplete's constructor,
+                // which is defined within GlobalAutocomplete.onInput
+                this.onSelect(s); // Pass the full suggestion object
             }
         }));
         
         this.renderItems();
-        // Highlight logic: if the input is a filter (like in TagContextMenuInsert)
-        // and the first suggestion is to add a custom tag, highlight the next actual suggestion if available.
-        if (this.textarea && this.textarea.classList.contains('comfy-context-menu-filter') && 
-            this.options.length > 0 && this.options[0].type === 'add_custom_tag') {
-            if (this.options.length > 1) {
-                 this.setHighlight(1); 
-            } else {
-                 this.setHighlight(0); 
+        if (this.options.length > 0) {
+            // Prioritize highlighting non-'up_folder' items if 'up_folder' is first
+            // and there are other items. Otherwise, highlight the first available.
+            let highlightIdx = 0;
+            if (this.options[0].type === 'up_folder' && this.options.length > 1) {
+                highlightIdx = 1;
             }
-        } else if (this.options.length > 0) {
-            this.setHighlight(0); 
+            // If it's a search box and the first item is 'add_custom_tag', prefer the next one if it exists.
+            if (this.textarea && this.textarea.classList.contains('comfy-context-menu-filter') && 
+                this.options[highlightIdx]?.type === 'add_custom_tag' && this.options.length > highlightIdx + 1) {
+                this.setHighlight(highlightIdx + 1); 
+            } else {
+                this.setHighlight(highlightIdx);
+            }
+        } else {
+            this.setHighlight(-1);
         }
     }
+
+
 
     show() {
         this.root = document.createElement("div");
@@ -485,6 +493,12 @@ class GlobalAutocomplete {
         this.onSelectExternalCallback = null;
         this.existingTagsProvider = null; // Can be a Set or a function returning a Set
         this.positioningElement = null;
+        // Ensure these are initialized for every instance
+        this.currentPath = "";
+        this.isLoraSearch = false; 
+        this.isEmbeddingSearch = false; 
+        this.currentPrefix = ""; 
+        this.lastQueryForFetch = ""; // Stores the actual query string used in the last fetch
 
         // Bind methods in constructor to ensure 'this' context is correct
         // This was the source of the error, methods were bound in attach(), 
@@ -494,7 +508,7 @@ class GlobalAutocomplete {
     }
 
     // Modified attach to be more flexible
-    attach(inputElement, onSelectCallback, existingTags = new Set(), positioningElement = null) {
+    attach(inputElement, onSelectCallback, existingTags = new Set(), positioningElement = null, initialPath = "") {
         if (this.textarea === inputElement) return;
         this.detach();
 
@@ -531,12 +545,23 @@ class GlobalAutocomplete {
         this.onSelectExternalCallback = null;
         this.existingTagsProvider = null;
         this.positioningElement = null;
+        // Reset paths on detach
+        this.currentPath = "";
+        this.isLoraSearch = false;
+        this.isEmbeddingSearch = false;
+        this.currentPrefix = "";
     }
 
     onKeyDown(e) {
         if (this.menu) {
             const handled = this.menu.handleKeyboard(e);
             if (handled) {
+                // If Escape was handled, the menu is now closed by TagContextMenu.close()
+                // We need to ensure GlobalAutocomplete knows its menu is gone so it can create a new one.
+                if (e.key === 'Escape') {
+                    this.menu = null; // Allow new menu creation on next input
+                }
+
                 e.preventDefault();
                 e.stopPropagation();
             }
@@ -561,203 +586,379 @@ class GlobalAutocomplete {
     async onInput() {
         const isAutocompleteEnabled = app.ui.settings.getSettingValue('erenodes.autocomplete', true);
         if (!isAutocompleteEnabled || !this.textarea) {
-            if (this.menu) {
-                this.menu.close();
-                this.menu = null;
-            }
+            if (this.menu) this.menu.close();
             return;
         }
 
         const text = this.textarea.value;
         const cursorPos = this.textarea.selectionStart;
-        let currentWord = "";
-        let queryForFetch = "";
-        this.currentWord = ""; // Initialize currentWord
-
+        let currentInputWord = ""; // The full word including prefix like "lora:cat"
+        let queryForFetch = "";    // The part after the prefix, e.g., "cat"
+        
+        // Determine current word based on context (textarea vs. input)
+        // Use regex pattern similar to reference implementation to extract only the word being typed
         if (this.textarea.tagName === 'TEXTAREA') {
             const textToCursor = text.substring(0, cursorPos);
-            const lastComma = textToCursor.lastIndexOf(',');
-            const lastNewline = textToCursor.lastIndexOf('\n');
-            const wordStart = Math.max(lastComma, lastNewline) + 1;
-            currentWord = textToCursor.substring(wordStart).trimStart();
-            queryForFetch = currentWord;
-        } else if (this.textarea.classList.contains('comfy-context-menu-filter')) {
-            currentWord = text.trimStart();
-            queryForFetch = currentWord;
-        } else {
-            currentWord = text.trimStart();
-            queryForFetch = currentWord;
+            // Extract the word being typed, excluding delimiters like parentheses, commas, etc.
+            const match = textToCursor.match(/([^,;"|}{}()\n]+)$/);
+            if (match) {
+                currentInputWord = match[0].replace(/^\s+/, "").replace(/\s/g, "_");
+            } else {
+                currentInputWord = "";
+            }
+        } else { // For comfy-context-menu-filter or other inputs
+            currentInputWord = text.trimStart();
         }
-        this.currentWord = currentWord; 
+        this.currentWord = currentInputWord; // Store for menu highlighting
 
-        const lowerQueryForFetch = queryForFetch.toLowerCase(); // Moved up for early check
+        // Determine queryForFetch, and set isLoraSearch, isEmbeddingSearch, currentPrefix based on currentInputWord
+        queryForFetch = ""; // Ensure queryForFetch is declared and reset
+        this.isLoraSearch = false;    // Reset search type flags
+        this.isEmbeddingSearch = false;
+        this.currentPrefix = "";      // Reset prefix
 
-        if (queryForFetch.length < 1 && !lowerQueryForFetch.startsWith("lora:") && !lowerQueryForFetch.startsWith("l:") && !lowerQueryForFetch.startsWith("embedding:") && !lowerQueryForFetch.startsWith("e:")) {
+        const lowerCurrentInputWord = currentInputWord.toLowerCase();
+
+        if (lowerCurrentInputWord.startsWith("lora:") || lowerCurrentInputWord.startsWith("l:")) {
+            this.isLoraSearch = true;
+            this.currentPrefix = lowerCurrentInputWord.startsWith("lora:") ? "lora:" : "l:";
+            queryForFetch = currentInputWord.substring(this.currentPrefix.length);
+        } else if (lowerCurrentInputWord.startsWith("embedding:") || lowerCurrentInputWord.startsWith("e:")) {
+            this.isEmbeddingSearch = true;
+            this.currentPrefix = lowerCurrentInputWord.startsWith("embedding:") ? "embedding:" : "e:";
+            queryForFetch = currentInputWord.substring(this.currentPrefix.length);
+        } else if (currentInputWord.startsWith('(')) {
+            const firstCloseParen = currentInputWord.indexOf(')');
+            // Case 1: (weight)tag_or_lora - e.g. (text:1.2)tag or (text:1.2)lora:name
+            // Ensure there's content after the parenthesis and it's not just "()"
+            if (firstCloseParen > 0 && firstCloseParen < currentInputWord.length - 1) {
+                let potentialTag = currentInputWord.substring(firstCloseParen + 1).trimStart();
+                const lowerPotentialTag = potentialTag.toLowerCase();
+                if (lowerPotentialTag.startsWith("lora:") || lowerPotentialTag.startsWith("l:")) {
+                    this.isLoraSearch = true;
+                    this.currentPrefix = lowerPotentialTag.startsWith("lora:") ? "lora:" : "l:";
+                    queryForFetch = potentialTag.substring(this.currentPrefix.length);
+                } else if (lowerPotentialTag.startsWith("embedding:") || lowerPotentialTag.startsWith("e:")) {
+                    this.isEmbeddingSearch = true;
+                    this.currentPrefix = lowerPotentialTag.startsWith("embedding:") ? "embedding:" : "e:";
+                    queryForFetch = potentialTag.substring(this.currentPrefix.length);
+                } else {
+                    queryForFetch = potentialTag;
+                }
+            } else { // Case 2: (tag_being_typed or (tag1, tag2_being_typed - e.g. (1girl or (1girl, solo
+                let contentInsideParens = currentInputWord.substring(1); // Remove leading '('
+                // If firstCloseParen exists and is the last char of currentInputWord (e.g. "(1girl)"), remove it from content
+                if (firstCloseParen === currentInputWord.length - 1) {
+                    contentInsideParens = contentInsideParens.substring(0, contentInsideParens.length - 1);
+                }
+                
+                const lastCommaInParens = contentInsideParens.lastIndexOf(',');
+                let activeSegment = "";
+                if (lastCommaInParens !== -1) {
+                    activeSegment = contentInsideParens.substring(lastCommaInParens + 1).trimStart();
+                } else {
+                    activeSegment = contentInsideParens.trimStart();
+                }
+
+                const lowerActiveSegment = activeSegment.toLowerCase();
+                if (lowerActiveSegment.startsWith("lora:") || lowerActiveSegment.startsWith("l:")) {
+                    this.isLoraSearch = true;
+                    this.currentPrefix = lowerActiveSegment.startsWith("lora:") ? "lora:" : "l:";
+                    queryForFetch = activeSegment.substring(this.currentPrefix.length);
+                } else if (lowerActiveSegment.startsWith("embedding:") || lowerActiveSegment.startsWith("e:")) {
+                    this.isEmbeddingSearch = true;
+                    this.currentPrefix = lowerActiveSegment.startsWith("embedding:") ? "embedding:" : "e:";
+                    queryForFetch = activeSegment.substring(this.currentPrefix.length);
+                } else {
+                    queryForFetch = activeSegment;
+                }
+            }
+        } else { // Standard tag, not starting with LORA/Embedding/(
+            queryForFetch = currentInputWord;
+        }
+
+        // Preserve the original currentInputWord for display/highlighting if it started with '('
+        // but use the potentially modified queryForFetch for actual searching.
+        // this.currentWord is already set to the original currentInputWord.
+
+        // Hide menu if query is too short (unless it's a prefix-only LORA/Embedding search to list all)
+        // Or if we are in parenthesis mode but the active segment (queryForFetch) is empty, but the user is still typing inside overall (e.g. "(tag, )")
+        const inParenModeNoQuery = currentInputWord.startsWith('(') && queryForFetch.length < 1 && !this.isLoraSearch && !this.isEmbeddingSearch;
+
+        if ((queryForFetch.length < 1 && !this.isLoraSearch && !this.isEmbeddingSearch && currentInputWord.length < 1) || inParenModeNoQuery) {
             if (this.menu) {
                 this.menu.close();
-                this.menu = null;
+                this.menu = null; // Ensure menu can be recreated
+            }
+            // If inParenModeNoQuery is true, we might still want to keep lastQueryForFetch if currentInputWord is not empty
+            // This allows replacing an empty segment like "(tag, |)" with a new tag if user selects one.
+            // However, for now, if queryForFetch is empty, we don't fetch, so lastQueryForFetch won't be updated.
+            // If currentInputWord is also empty, then definitely return.
+            if (currentInputWord.length < 1) return;
+            if (inParenModeNoQuery && !currentInputWord.endsWith(',')) { // if it's like `(tag ` don't return, allow typing
+                 // but if it's `(tag, ` then we should not fetch, but also not return if user might type more.
+                 // The existing logic for `queryForFetch.length < 1` will handle not fetching.
+            } else if (inParenModeNoQuery) {
+                return; // e.g. (tag, ) - stop here, don't fetch
+            }
+            if (queryForFetch.length < 1 && !this.isLoraSearch && !this.isEmbeddingSearch) return; // General case for empty query
+        }
+
+        // Allow empty queryForFetch if it's LORA/Embedding search (e.g. "lora:") to list root/current folder items
+        // This was queryForFetch.length < 0, which is impossible. Should be queryForFetch.length === 0 for prefix only search.
+        if (queryForFetch.length === 0 && (this.isLoraSearch || this.isEmbeddingSearch)) {
+             // Proceed to fetch for LORA/Embedding root/current folder listing
+        } else if (queryForFetch.length < 1 && !this.isLoraSearch && !this.isEmbeddingSearch) {
+            // This case should ideally be caught by the more comprehensive block above.
+            // If it reaches here, it means queryForFetch is empty for a tag search.
+            if (this.menu) {
+                this.menu.close();
+                this.menu = null; // Ensure menu can be recreated
             }
             return;
         }
 
         let fetchedItems = [];
-        let isLoraSearch = false;
-        let isEmbeddingSearch = false;
-        let specificSearchQuery = ""; // Renamed from loraSearchQuery for generality
-
-        if (lowerQueryForFetch.startsWith("lora:")) {
-            isLoraSearch = true;
-            specificSearchQuery = queryForFetch.substring(5);
-        } else if (lowerQueryForFetch.startsWith("l:")) {
-            isLoraSearch = true;
-            specificSearchQuery = queryForFetch.substring(2);
-        } else if (lowerQueryForFetch.startsWith("embedding:")) {
-            isEmbeddingSearch = true;
-            specificSearchQuery = queryForFetch.substring(10);
-        } else if (lowerQueryForFetch.startsWith("e:")) { // Added e: for embeddings
-            isEmbeddingSearch = true;
-            specificSearchQuery = queryForFetch.substring(2);
-        }
-
-        const effectiveQuery = (isLoraSearch || isEmbeddingSearch) ? specificSearchQuery : queryForFetch;
-
-        // If it's a tag search (neither Lora nor Embedding) and the query is empty, return.
-        // For Lora/Embedding, an empty specificSearchQuery (e.g., "lora:") is allowed to proceed to fetch all.
-        if (effectiveQuery.length < 1 && !isLoraSearch && !isEmbeddingSearch) {
-             if (this.menu) {
-                this.menu.close();
-                this.menu = null;
-            }
-            return;
-        }
-
         try {
             const existingTags = this.existingTagsProvider ? this.existingTagsProvider() : new Set();
-            if (isLoraSearch) {
-                const response = await fetch(`/erenodes/search_loras?query=${encodeURIComponent(specificSearchQuery)}&limit=10`);
-                if (!response.ok) {
-                    if (this.menu) this.menu.close();
-                    return;
-                }
-                const loraFiles = await response.json();
-                fetchedItems = loraFiles
-                    .filter(loraFile => !existingTags.has(`lora:${loraFile.toLowerCase()}`))
-                    .map(loraFile => ({
-                        name: loraFile,
-                        type: 'lora'
-                    }));
-            } else if (isEmbeddingSearch) {
-                const response = await fetch(`/erenodes/search_embeddings?query=${encodeURIComponent(specificSearchQuery)}&limit=10`);
-                if (!response.ok) {
-                    if (this.menu) this.menu.close();
-                    return;
-                }
-                const embeddingFiles = await response.json();
-                fetchedItems = embeddingFiles
-                    .filter(embeddingFile => !existingTags.has(`embedding:${embeddingFile.toLowerCase()}`))
-                    .map(embeddingFile => ({
-                        name: embeddingFile,
-                        type: 'embedding'
-                    }));
-            } else { // Tag search
-                const response = await fetch(`/erenodes/search_tags?query=${encodeURIComponent(effectiveQuery)}&limit=10`);
-                if (!response.ok) {
-                    if (this.menu) this.menu.close();
-                    return;
-                }
-                const tags = await response.json();
-                fetchedItems = tags.filter(tag => !existingTags.has(tag.name)).map(tag => ({
-                    name: tag.name,
-                    type: 'tag',
-                    aliases: tag.aliases,
-                    count: tag.count,
-                    originalName: tag.name
-                }));
+            let apiPath = "";
+            let currentPathForAPI = "";
 
-                // Add "Add tag: ..." option if in comfy-context-menu-filter and query is not empty
-                if (this.textarea.classList.contains('comfy-context-menu-filter') && effectiveQuery.trim().length > 0) {
-                    const alreadyExists = fetchedItems.some(item => item.name.toLowerCase() === effectiveQuery.toLowerCase());
-                    if (!alreadyExists) {
-                        fetchedItems.unshift({
-                            name: `Add tag: "${effectiveQuery}"`,
-                            type: 'add_custom_tag',
-                            originalName: effectiveQuery
-                        });
+            if (this.isLoraSearch) {
+                apiPath = "/erenodes/search_loras";
+                currentPathForAPI = this.currentPath;
+            } else if (this.isEmbeddingSearch) {
+                apiPath = "/erenodes/search_embeddings";
+                currentPathForAPI = this.currentPath;
+            } else { // Tag search
+                apiPath = "/erenodes/search_tags";
+            }
+
+            if (apiPath) {
+                let url = `${apiPath}?query=${encodeURIComponent(queryForFetch)}&limit=50`;
+                if (this.isLoraSearch || this.isEmbeddingSearch) {
+                    url += `&path=${encodeURIComponent(currentPathForAPI)}`;
+                }
+                const response = await fetch(url);
+                if (!response.ok) {
+                    console.error(`Error fetching from ${apiPath}: ${response.status}`);
+                    if (this.menu) {
+                        this.menu.close();
+                        this.menu = null; // Ensure menu can be recreated
                     }
+                    return;
+                }
+                const resultData = await response.json();
+
+                if (this.isLoraSearch || this.isEmbeddingSearch) {
+                    let itemsToMap = resultData.items; // Expecting object with 'items' and optional 'parentPath'
+                    const parentPath = resultData.parentPath;
+
+                    if (!Array.isArray(itemsToMap)) { // Check if itemsToMap is an array
+                        console.warn("[LORA/EMBEDDING] Autocomplete suggestions received 'items' that is not an array or missing in resultData object:", resultData);
+                        itemsToMap = []; // Default to empty array to prevent further errors
+                    }
+
+                    let suggestions = [];
+                    let hasFolders = false;
+                    let hasFiles = false;
+
+                    // Add 'Up' option if in a subfolder for LORA/Embedding search
+                    if ((this.isLoraSearch || this.isEmbeddingSearch) && currentPathForAPI && parentPath !== undefined) {
+                        suggestions.push({
+                            name: `Up to ${parentPath || (this.isLoraSearch ? 'LORA root' : 'Embedding root')}`,
+                            type: this.isLoraSearch ? 'lora_folder_up' : 'embedding_folder_up',
+                            path: parentPath
+                        });
+                        // Add a separator after the 'Up' option if there are other items
+                        if (itemsToMap.length > 0) {
+                            suggestions.push({ type: 'separator' });
+                        }
+                    }
+
+                    const mappedItems = itemsToMap.map(item => {
+                        if (item.type === 'folder') hasFolders = true;
+                        else if (item.type === 'lora' || item.type === 'embedding') hasFiles = true;
+                        return {
+                            name: item.name,
+                            type: item.type,
+                            path: item.path,
+                            extension: item.extension
+                        };
+                    });
+
+                    // Sort folders first, then files
+                    mappedItems.sort((a, b) => {
+                        if (a.type === 'folder' && b.type !== 'folder') return -1;
+                        if (a.type !== 'folder' && b.type === 'folder') return 1;
+                        return a.name.localeCompare(b.name);
+                    });
+
+                    let folderItems = mappedItems.filter(item => item.type === 'folder');
+                    let fileItems = mappedItems.filter(item => item.type === 'lora' || item.type === 'embedding');
+
+                    suggestions.push(...folderItems);
+
+                    // Add a separator between folders and files if both exist
+                    if (folderItems.length > 0 && fileItems.length > 0) {
+                        suggestions.push({ type: 'separator' });
+                    }
+
+                    suggestions.push(...fileItems);
+                    fetchedItems = suggestions;
+                } else { // Tag search results
+                    fetchedItems = resultData.filter(tag => !existingTags.has(tag.name.toLowerCase().replace(/_/g, ' ')))
+                        .map(tag => ({
+                            name: tag.name,
+                            type: 'tag',
+                            aliases: tag.aliases,
+                            count: tag.count
+                        }));
                 }
             }
+            
+            // Add "Add tag: ..." option for tag searches in the + button's context menu filter
+            if (!this.isLoraSearch && !this.isEmbeddingSearch && this.textarea.classList.contains('comfy-context-menu-filter') && queryForFetch.trim().length > 0) {
+                const alreadyExistsAsTag = fetchedItems.some(item => item.type === 'tag' && item.name.toLowerCase() === queryForFetch.toLowerCase());
+                if (!alreadyExistsAsTag) {
+                    fetchedItems.unshift({
+                        name: `Add tag: "${queryForFetch}"`,
+                        type: 'add_custom_tag', 
+                    });
+                }
+            }
+
+            this.lastQueryForFetch = queryForFetch; // Store the query used for this fetch
 
             if (fetchedItems.length > 0) {
                 if (!this.menu) {
-                    this.menu = new TagContextMenuAutocomplete(this.textarea, (selectedName, originalWord) => {
+                    this.menu = new TagContextMenuAutocomplete(this.textarea, (selectedItem) => {
+                        // selectedItem is the full object {name, type, path, originalName}
+                        if (selectedItem.type === 'folder') {
+                            this.currentPath = selectedItem.path;
+                            this.textarea.value = this.currentPrefix; 
+                            this.textarea.focus();
+                            this.textarea.setSelectionRange(this.currentPrefix.length, this.currentPrefix.length);
+                            this.onInput(); 
+                            return; 
+                        }
+                        if (selectedItem.type === 'lora_folder_up' || selectedItem.type === 'embedding_folder_up') {
+                            this.currentPath = selectedItem.path;
+                            if (!this.currentPath) {
+                                if (this.isLoraSearch) this.isLoraSearch = false;
+                                if (this.isEmbeddingSearch) this.isEmbeddingSearch = false;
+                            }
+                            this.textarea.value = this.currentPrefix;
+                            this.textarea.focus();
+                            this.textarea.setSelectionRange(this.currentPrefix.length, this.currentPrefix.length);
+                            this.onInput();
+                            return;
+                        }
+
                         if (this.onSelectExternalCallback) {
-                            this.onSelectExternalCallback(selectedName, originalWord || this.currentWord);
-                        } else {
-                            // Default behavior for textareas if no external callback
-                            let textToInsert;
-                            if (typeof selectedName === 'object' && selectedName.name) {
-                                if (selectedName.type === 'lora') {
-                                    textToInsert = `lora:${selectedName.name}`;
-                                } else if (selectedName.type === 'embedding') {
-                                    textToInsert = `embedding:${selectedName.name}`;
-                                } else {
-                                    textToInsert = selectedName.name;
+                            const originalFullSegment = this.currentWord; // What was typed e.g. "(1g"
+                            const queryUsedForSearch = this.lastQueryForFetch; // The part that matched e.g. "1g"
+
+                            let finalReplacementText;
+
+                            if (selectedItem.type === 'lora' || selectedItem.type === 'embedding') {
+                                if (selectedItem.type === 'lora') {
+                                    finalReplacementText = `<lora:${selectedItem.path}${selectedItem.extension}>`;
+                                } else { // embedding
+                                    finalReplacementText = `embedding:${selectedItem.path}${selectedItem.extension}`;
                                 }
-                            } else {
-                                textToInsert = selectedName;
+                            } else { // 'tag' or 'add_custom_tag'
+                                const completedTagPart = (selectedItem.type === 'add_custom_tag') 
+                                    ? queryUsedForSearch // For 'add_custom_tag', the 'name' is descriptive, use the query itself
+                                    : selectedItem.name; // For 'tag', use the selected item's name
+
+                                // originalFullSegment is what the user typed, e.g., "(1g" or "lora:mylo"
+                                // queryUsedForSearch is the part used for searching, e.g., "1g" or "mylo"
+                                // completedTagPart is the selected suggestion, e.g., "1girl"
+
+                                if (originalFullSegment && queryUsedForSearch && queryUsedForSearch !== "") {
+                                    // Find the last occurrence of queryUsedForSearch within originalFullSegment
+                                    // This helps correctly identify the prefix if queryUsedForSearch appears multiple times
+                                    const indexOfQuery = originalFullSegment.toLowerCase().lastIndexOf(queryUsedForSearch.toLowerCase());
+
+                                    if (indexOfQuery !== -1) {
+                                        // Extract the prefix before the part that was searched
+                                        const prefix = originalFullSegment.substring(0, indexOfQuery);
+                                        finalReplacementText = prefix + completedTagPart;
+                                    } else {
+                                        // Fallback: If queryUsedForSearch is not found (should be rare if logic is correct),
+                                        // construct based on currentPrefix if it exists (e.g. for lora: or embedding:)
+                                        // or just prepend the completedTagPart to what might be a prefix in originalFullSegment
+                                        // This part might need refinement if issues persist with complex prefixes.
+                                        if (this.currentPrefix && originalFullSegment.toLowerCase().startsWith(this.currentPrefix.toLowerCase())) {
+                                            finalReplacementText = this.currentPrefix + completedTagPart;
+                                        } else if (originalFullSegment.startsWith('(') && !queryUsedForSearch.startsWith('(')) {
+                                            // If original starts with '(' but query didn't, assume '(' is the prefix.
+                                            finalReplacementText = '(' + completedTagPart;
+                                        } else {
+                                            // Default fallback: replace the whole original segment or just use completed part.
+                                            // This might lead to issues if originalFullSegment has a complex prefix not handled above.
+                                            finalReplacementText = completedTagPart; 
+                                            console.warn("[Autocomplete] Fallback in finalReplacementText construction for tags. Original: ", originalFullSegment, "Query: ", queryUsedForSearch);
+                                        }
+                                    }
+                                } else if (originalFullSegment) { // queryUsedForSearch is empty, but original segment exists (e.g. user typed "(" and selected a tag)
+                                    // If originalFullSegment is just '(', prepend it.
+                                    if (originalFullSegment === '(') {
+                                        finalReplacementText = originalFullSegment + completedTagPart;
+                                    } else {
+                                        // Otherwise, append. This case might need more thought if it causes issues.
+                                        finalReplacementText = originalFullSegment + completedTagPart; 
+                                    }
+                                } else { // No original segment, just insert the completed tag part
+                                    finalReplacementText = completedTagPart;
+                                }
+                            }
+                            // Pass `originalFullSegment` as the part to replace. This ensures that prompt.js
+                            // understands the full context of what's being replaced, including prefixes like '(',
+                            // aligning with finalReplacementText which also contains the prefix.
+                            this.onSelectExternalCallback(finalReplacementText, originalFullSegment, selectedItem.type);
+                        } else {
+                            // Default behavior for textareas if no external callback (legacy, might need adjustment)
+                            let textToInsert = selectedItem.name;
+                            if (selectedItem.type === 'lora') {
+                                textToInsert = `<lora:${selectedItem.path}${selectedItem.extension}>`;
+                            } else if (selectedItem.type === 'embedding') {
+                                textToInsert = `embedding:${selectedItem.path}${selectedItem.extension}`;
                             }
 
-                            const text = this.textarea.value;
-                            const cursorPos = this.textarea.selectionStart;
-                            const textToCursor = text.substring(0, cursorPos);
+                            // Use the same logic as the reference implementation
+                            // Replace the currentWord (what was typed) with the selected item
+                            const currentText = this.textarea.value;
+                            const currentCursorPos = this.textarea.selectionStart;
+                            const originalWord = this.currentWord || '';
                             
-                            let wordStart = 0;
-                            const lastComma = textToCursor.lastIndexOf(',');
-                            const lastNewline = textToCursor.lastIndexOf('\n');
-                            wordStart = Math.max(lastComma, lastNewline) + 1;
-
-                            // Adjust wordStart to preserve space after comma if present
-                            if (lastComma !== -1 && textToCursor.substring(lastComma + 1, wordStart).trim() === '') {
-                                // If the character after the last comma is a space (and then the cursor),
-                                // ensure wordStart includes that space for the 'before' string.
-                                if (text[lastComma + 1] === ' ') {
-                                    // wordStart is already correct in this case if currentWord was empty or just spaces
-                                } 
-                                // If currentWord was being typed right after comma (no space), wordStart is also fine.
-                            }
+                            // Calculate the start position of the word to replace
+                            const wordStartPos = currentCursorPos - originalWord.length;
                             
-                            let before = text.substring(0, wordStart);
-                            const after = text.substring(cursorPos);
-
-                            // Ensure 'before' ends with a comma and a space if it's not the start of the text
-                            // and the previous character was a comma without a space.
-                            if (wordStart > 0 && before.endsWith(',') && !before.endsWith(', ')) {
-                                before += ' ';
-                            } else if (wordStart > 0 && !before.endsWith(', ') && !before.endsWith('\n') && before.trim() !== '') {
-                                // If 'before' is not empty, not ending with newline, and not ending with ", ", add it.
-                                // This handles cases where the previous content didn't end with a comma.
-                                if (!before.endsWith(',')) before += ',';
-                                if (!before.endsWith(' ')) before += ' ';
-                            } else if (before.trim() === '') {
-                                // If 'before' is empty or just whitespace, don't add a leading comma.
-                                before = ''; 
-                            }
-
-                            this.textarea.value = before + textToInsert + ", " + after;
+                            // Get text before and after the word being replaced
+                            const before = currentText.substring(0, wordStartPos);
+                            const after = currentText.substring(currentCursorPos);
                             
-                            const newTextValue = before + textToInsert + ", " + after;
-                            this.textarea.value = newTextValue;
+                            // Check if we need to add a separator after the inserted text
+                            // Always add separator unless there's already a comma or semicolon at the start of remaining text
+                            const needsSeparator = !after.trim().startsWith(',') && !after.trim().startsWith(';');
+                            const separator = needsSeparator ? ', ' : '';
                             
-                            const newCursorPos = (before + textToInsert + ", ").length;
+                            // Replace the text
+                            this.textarea.value = before + textToInsert + separator + after;
+                            const newCursorPos = (before + textToInsert + separator).length;
                             this.textarea.setSelectionRange(newCursorPos, newCursorPos);
                             this.textarea.focus();
-                            this.textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                            // Don't dispatch input event as it would retrigger autocomplete
+                            // this.textarea.dispatchEvent(new Event('input', { bubbles: true }));
                         }
+                        // Close menu after selection of a non-folder item
                         if (this.menu) {
                             this.menu.close();
                             this.menu = null;
                         }
-                    }, this.positioningElement);
+                    }, this.positioningElement, this); // Pass 'this' (GlobalAutocomplete instance)
                 }
                 this.menu.update(fetchedItems, this.currentWord);
             } else {

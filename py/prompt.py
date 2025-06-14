@@ -17,15 +17,12 @@ class ErePrompt:
     CATEGORY = "EreNodes"
 
     def process(self, text, prefix=""):
-        clean_prefix = prefix.strip() if prefix else ""
-        clean_text = text.strip() if text else ""
-        
-        if clean_prefix and clean_text:
-            return (f"{clean_prefix}\n\n{clean_text}",)
-        elif clean_prefix:
-            return (clean_prefix,)
+        if prefix and text:
+            return (f"{prefix}{text}",)
+        elif prefix:
+            return (prefix,)
         else:
-            return (clean_text,)
+            return (text,)
 
 
 class ErePromptMultiSelect(ErePrompt): pass
