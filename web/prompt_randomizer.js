@@ -58,8 +58,7 @@ app.registerExtension({
             
             // Restore saved JSON to widget output
             if (node.properties._tagDataJSON) {
-                const tags = parseTags(node.properties._tagDataJSON).filter(t => t.active && t.name);
-                textWidget.value = tags.map(t => t.name).join(", ");
+                node.onUpdateTextWidget(node);
             }
 
             // Randomize control
@@ -108,7 +107,8 @@ app.registerExtension({
                                 const entry = tagData.find(t => t.name === tag.name);
                                 if (entry) entry.active = true;
                                 node.properties._tagDataJSON = JSON.stringify(tagData, null, 2);
-                                textWidget.value = tagData.filter(t => t.active).map(t => t.name).join(", ");
+                                const separator = (node.properties._tagSeparator !== "") ? node.properties._tagSeparator : ", ";
+                                textWidget.value = tagData.filter(t => t.active).map(t => t.name).join(separator);
                                 app.graph.setDirtyCanvas(true);
                             }
                         }));

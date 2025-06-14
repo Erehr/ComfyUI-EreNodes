@@ -59,6 +59,7 @@ A robust set of features for managing, saving, and editing your tags.
 - **Save and Load Tag Groups**: Manage your prompts by saving or loading entire tag groups. This includes options to easily create subfolders and convinient search filter. 
 - **Import and Export Tag Group**: Tag groups can be also exported and imported directly as `.json`.
 - **Quick Editing**: `Shift+Click` on any tag pill to open a quick-edit menu. This allows you to instantly change the tag's name and strength, or delete it entirely without entering the main editor.
+- **Custom separator**: Option to set custom separator between tags and chained nodes under Properties.
 - **Convertible**: All prompt nodes can be converted to another type under menu dropdown. 
 > **Note:**  Converting to Prompt Multiline will result in permanent loss of inactive tags.
 

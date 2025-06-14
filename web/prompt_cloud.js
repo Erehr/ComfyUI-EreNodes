@@ -22,6 +22,12 @@ app.registerExtension({
             const node = this;
             node.isEditMode = false;
             node.properties = node.properties || {};
+            if (node.properties._tagSeparator === undefined) {
+                node.properties._tagSeparator = "";
+            }
+            if (node.properties._prefixSeparator === undefined) {
+                node.properties._prefixSeparator = "";
+            }
 
             // Text widget
             const textWidget = node.widgets?.find(w => w.name === "text");

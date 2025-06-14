@@ -22,7 +22,6 @@ app.registerExtension({
 
             const node = this;
             node.isEditMode = false;
-            node.properties = node.properties || {};
 
             const textWidget = node.widgets?.find(w => w.name === "text");
             if (!textWidget) return;
@@ -31,8 +30,7 @@ app.registerExtension({
 
             // Restore saved JSON to widget output
             if (node.properties._tagDataJSON) {
-                const tags = parseTags(node.properties._tagDataJSON).filter(t => t.active && t.name);
-                textWidget.value = tags.map(t => t.name).join(", ");
+                node.onUpdateTextWidget(node);
             }
 
             // Save button
