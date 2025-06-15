@@ -11,7 +11,9 @@ app.registerExtension({
         nodeType.prototype.onNodeCreated = function () {
             if (origCreated) origCreated.apply(this, arguments);
 
-            const node = this;            
+            const node = this;
+            node._isInitialized = false;
+            node.properties = node.properties || {};     
             
             const textWidget = node.widgets?.find(w => w.name === "text");
 
@@ -52,6 +54,9 @@ app.registerExtension({
             // Initialize all other functions shared between prompt nodes
             initializeSharedPromptFunctions(this, textWidget, saveButton);
 
+            setTimeout(() => {
+                this._isInitialized = true; // Set flag to true after all initial setup
+            }, 0);
         };
         
         const origDraw = nodeType.prototype.onDrawForeground;

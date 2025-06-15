@@ -121,44 +121,108 @@ const getTextInput = async (title, promptMessage, defaultValue = "") => {
 
 export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
 
+    // Create prefix separator widget directly in JavaScript for all node types
+    let prefixSeparatorWidget = node.widgets?.find(w => w.name === "prefix_separator");
+    if (!prefixSeparatorWidget) {
+        prefixSeparatorWidget = node.addWidget("text", "prefix_separator", ",\n\n", () => {});
+    }
+    if (prefixSeparatorWidget) {
+        // prefixSeparatorWidget.computeSize = () => [0, 0];
+        // prefixSeparatorWidget.hidden = true;
+    }
+
+    node.properties = node.properties || {};
+    
+    // Initialize properties from widget values if not already set
+    if (node.properties._prefixSeparator === undefined || node.properties._prefixSeparator === null) {
+        node.properties._prefixSeparator = prefixSeparatorWidget ? prefixSeparatorWidget.value.replace(/\n/g, "\\n") : ",\\n\\n";
+    }
+    
+    // Add widget change callbacks to update properties automatically
+    // Handle prefix_separator for all nodes
+    if (prefixSeparatorWidget && !prefixSeparatorWidget._hasCallback) {
+        const originalCallback = prefixSeparatorWidget.callback;
+        prefixSeparatorWidget.callback = function(value, widget, node) {
+            node.properties._prefixSeparator = value.replace(/\n/g, "\\n");
+            if (originalCallback) originalCallback.call(this, value, widget, node);
+            if (node.onUpdateTextWidget) node.onUpdateTextWidget(node);
+        };
+        prefixSeparatorWidget._hasCallback = true;
+    }
+    
+    // Handle tag_separator only for non-multiline nodes
     if (node.type !== "ErePromptMultiline") {
-        node.properties = node.properties || {};
-        if (node.properties._tagSeparator === undefined || node.properties._tagSeparator === null || node.properties._tagSeparator === "") {
-            node.properties._tagSeparator = ", ";
+        // Create tag separator widget directly in JavaScript (similar to saveButton)
+        const tagSeparatorWidget = node.addWidget("text", "tag_separator", ", ", () => {});
+        if (tagSeparatorWidget) {
+            // tagSeparatorWidget.computeSize = () => [0, 0];
+            // tagSeparatorWidget.hidden = true;
         }
-        if (node.properties._prefixSeparator === undefined || node.properties._prefixSeparator === null || node.properties._prefixSeparator === "") {
-            node.properties._prefixSeparator = ",\\n\\n"; // Store as literal \n for display in properties
+        
+        if (node.properties._tagSeparator === undefined || node.properties._tagSeparator === null) {
+            node.properties._tagSeparator = tagSeparatorWidget ? tagSeparatorWidget.value.replace(/\n/g, "\\n") : ", ";
         }
 
-        // It's crucial to capture the existing onPropertyChanged *before* overwriting it.
-        // This allows chaining if the node type or another extension already defined it.
-        const existingOnPropertyChanged = node.onPropertyChanged;
+        if (tagSeparatorWidget && !tagSeparatorWidget._hasCallback) {
+            const originalCallback = tagSeparatorWidget.callback;
+            tagSeparatorWidget.callback = function(value, widget, node) {
+                node.properties._tagSeparator = value.replace(/\n/g, "\\n");
+                if (originalCallback) originalCallback.call(this, value, widget, node);
+                if (node.onUpdateTextWidget) node.onUpdateTextWidget(node);
+            };
+            tagSeparatorWidget._hasCallback = true;
+        }
+    }
 
-        node.onPropertyChanged = function(name, value) {
+    // It's crucial to capture the existing onPropertyChanged *before* overwriting it.
+    // This allows chaining if the node type or another extension already defined it.
+    const existingOnPropertyChanged = node.onPropertyChanged;
 
-            // Call the previously existing onPropertyChanged, if any.
-            if (typeof existingOnPropertyChanged === 'function') {
-                existingOnPropertyChanged.apply(this, arguments);
-            }
+    node.onPropertyChanged = function(name, value) {
 
-            // The _isInitialized flag is managed by individual node types:
-            // - Set to false at the start of its onNodeCreated.
-            // - Set to true after all its initial setup is complete (including async parts).
-            if (!this._isInitialized) {
-                return; 
-            }
-            
-            // This log now correctly reflects changes happening *after* the node is fully initialized.
-            console.log('property changed: ' + name + ' (Node: ' + this.title + ', ID: ' + this.id + ')'); 
+        // Call the previously existing onPropertyChanged, if any.
+        if (typeof existingOnPropertyChanged === 'function') {
+            existingOnPropertyChanged.apply(this, arguments);
+        }
 
-            if (name === "_tagSeparator" || name === "_prefixSeparator") { // Added _prefixSeparator
-                // console.log(`   ↳ Relevant property '${name}' for node '${this.title}' changed post-initialization. Updating text widget.`);
-                if (this.onUpdateTextWidget) {
-                    this.onUpdateTextWidget(this);
+        // The _isInitialized flag is managed by individual node types:
+        // - Set to false at the start of its onNodeCreated.
+        // - Set to true after all its initial setup is complete (including async parts).
+        if (!this._isInitialized) {
+            return; 
+        }
+        
+        // This log now correctly reflects changes happening *after* the node is fully initialized.
+        console.log('property changed: ' + name + ' (Node: ' + this.title + ', ID: ' + this.id + ')'); 
+
+        if (name === "_tagSeparator") {
+            // Update tag_separator widget value from property
+            const tagSeparatorWidget = this.widgets?.find(w => w.name === "tag_separator");
+            if (tagSeparatorWidget) {
+                const newValue = (value !== undefined && value !== null) ? value.replace(/\\n/g, "\n") : ", ";
+                if (tagSeparatorWidget.value !== newValue) {
+                    tagSeparatorWidget.value = newValue;
                 }
             }
-        };
-    }
+            if (this.onUpdateTextWidget) {
+                this.onUpdateTextWidget(this);
+            }
+        } 
+        
+        if (name === "_prefixSeparator") {
+            // Update prefix_separator widget value from property
+            const prefixSeparatorWidget = this.widgets?.find(w => w.name === "prefix_separator");
+            if (prefixSeparatorWidget) {
+                const newValue = (value !== undefined && value !== null) ? value.replace(/\\n/g, "\n") : ",\n\n";
+                if (prefixSeparatorWidget.value !== newValue) {
+                    prefixSeparatorWidget.value = newValue;
+                }
+            }
+            if (this.onUpdateTextWidget) {
+                this.onUpdateTextWidget(this);
+            }
+        }
+    };
 
     node.convertTo = function(targetNodeType) {
         if (node.type === "ErePromptMultiline") {
@@ -308,8 +372,9 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         const tagData = parseTags(node.properties._tagDataJSON || "[]");
         const activeTagsAndSeparators = tagData.filter(t => (t.active && t.name) || t.type === 'separator');
 
-        let tagSeparator = (node.properties._tagSeparator !== undefined && node.properties._tagSeparator !== "") ? node.properties._tagSeparator : ", ";
-        tagSeparator = tagSeparator.replace(/\\n/g, "\n"); // Replace literal \n with actual newline
+        // Get tagSeparator from widget instead of property
+        const tagSeparatorWidget = node.widgets?.find(w => w.name === "tag_separator");
+        let tagSeparator = tagSeparatorWidget ? tagSeparatorWidget.value : ", ";
 
         const parts = [];
         let currentLineTags = [];
@@ -337,45 +402,21 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
             parts.push(currentLineTags.join(tagSeparator));
         }
 
-        // Filter out any empty strings that might result from consecutive separators
-        // or separators at the beginning/end without content.
-        let currentText = parts.filter(part => part.trim() !== '' || part === tagSeparator)
-                               .join('');
-        // If the final result is just the separator itself (e.g. only a separator was active), make it empty.
-        if (currentText === tagSeparator && activeTagsAndSeparators.filter(t => t.type !== 'separator').length === 0) {
-            currentText = '';
-        }
-
-        // Apply prefix if input is connected
-        let finalText = currentText;
-        if (node.type !== "ErePromptMultiline" && node.inputs && node.inputs[0] && node.inputs[0].link !== null) {
-            const linkId = node.inputs[0].link;
-            const linkInfo = app.graph.links[linkId];
-            if (linkInfo) {
-                const originNode = app.graph.getNodeById(linkInfo.origin_id);
-                if (originNode) {
-                    let prefixText = "";
-                    // Try to get text from a "text" widget on the origin node
-                    if (originNode.widgets) {
-                        const originTextWidget = originNode.widgets.find(w => w.name === "text");
-                        if (originTextWidget && typeof originTextWidget.value === 'string') {
-                            prefixText = originTextWidget.value;
-                        }
-                    }
-                    // Example for PrimitiveNode (if you need to support it directly)
-                    // else if (originNode.type === "PrimitiveNode" && originNode.widgets && originNode.widgets[0] && typeof originNode.widgets[0].value === 'string') {
-                    //    prefixText = originNode.widgets[0].value.trim();
-                    // }
-
-                    if (originNode.mode !== 4 && prefixText.trim() && currentText.trim() !== "") {
-                        let prefixSep = (node.properties._prefixSeparator !== undefined && node.properties._prefixSeparator !== null && node.properties._prefixSeparator !== "") ? node.properties._prefixSeparator : ",\\n\\n";
-                        prefixSep = prefixSep.replace(/\\n/g, "\n"); // Replace literal \n with actual newline
-                        finalText = `${prefixSep}${currentText}`;
-                    } 
-                }
+        // For multiline nodes, don't modify the text widget content when updating separators
+        if (node.type !== "ErePromptMultiline") {
+            // Filter out any empty strings that might result from consecutive separators
+            // or separators at the beginning/end without content.
+            let currentText = parts.filter(part => part.trim() !== '' || part === tagSeparator)
+                                   .join('');
+            // If the final result is just the separator itself (e.g. only a separator was active), make it empty.
+            if (currentText === tagSeparator && activeTagsAndSeparators.filter(t => t.type !== 'separator').length === 0) {
+                currentText = '';
             }
+
+            // Python will now handle prefix logic, so we just set the current text
+            textWidget.value = currentText;
         }
-        textWidget.value = finalText;
+        // For multiline nodes, preserve the existing text content
     };
 
     node.onClipboardReplace = () => {

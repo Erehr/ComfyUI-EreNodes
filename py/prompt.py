@@ -8,7 +8,8 @@ class ErePrompt:
                 "text": ("STRING", {"default": "", "multiline": True})
             },
             "optional": {
-                "prefix": ("STRING", {"forceInput": True})
+                "prefix": ("STRING", {"forceInput": True}),
+                "prefix_separator": ("STRING", {"default": ",\n\n", "multiline": False})
             },
         }
 
@@ -16,9 +17,15 @@ class ErePrompt:
     FUNCTION = "process"
     CATEGORY = "EreNodes"
 
-    def process(self, text, prefix=""):
+    def process(self, text, prefix="", prefix_separator=None):
+        # Use the input values or fall back to defaults
+        if prefix_separator is None:
+            prefix_separator = ",\n\n"
+        
         if prefix and text:
-            return (f"{prefix}{text}",)
+            # Replace literal \n with actual newlines in the separator
+            separator = prefix_separator.replace("\\n", "\n")
+            return (f"{prefix}{separator}{text}",)
         elif prefix:
             return (prefix,)
         else:
