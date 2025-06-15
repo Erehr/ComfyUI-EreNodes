@@ -68,7 +68,7 @@ app.registerExtension({
             };
 
             // Initialize all other functions shared between prompt nodes
-            initializeSharedPromptFunctions(this, textWidget);
+            initializeSharedPromptFunctions(this, textWidget, saveButton);
 
             // Defer the update based on _tagDataJSON, as it might not be immediately available
             // when onNodeCreated is called during graph load.
