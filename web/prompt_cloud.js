@@ -20,25 +20,15 @@ app.registerExtension({
             if (origCreated) origCreated.apply(this, arguments);
 
             const node = this;
+            node._isInitialized = false;
             node.isEditMode = false;
             node.properties = node.properties || {};
-            if (node.properties._tagSeparator === undefined) {
-                node.properties._tagSeparator = "";
-            }
-            if (node.properties._prefixSeparator === undefined) {
-                node.properties._prefixSeparator = "";
-            }
 
             // Text widget
             const textWidget = node.widgets?.find(w => w.name === "text");
             if (!textWidget) return;
             textWidget.computeSize = () => [0, 0];
             textWidget.hidden = true;
-
-            // Update text widget from stored json
-            if (node.properties._tagDataJSON) {
-                node.onUpdateTextWidget(node);
-            }
 
             // Button widget (save)
             const saveButton = node.addWidget("button", "Save", "edit_text", () => {});
@@ -80,8 +70,19 @@ app.registerExtension({
             // Initialize all other functions shared between prompt nodes
             initializeSharedPromptFunctions(this, textWidget, saveButton);
 
+            // Defer the update based on _tagDataJSON, as it might not be immediately available
+            // when onNodeCreated is called during graph load.
+            setTimeout(() => {
+                if (this.properties && this.properties._tagDataJSON) {
+                    if (this.onUpdateTextWidget) {
+                        // console.log('update text widget node side');
+                        this.onUpdateTextWidget(this);
+                    }
+                }
+                this._isInitialized = true; // Set flag to true after all initial setup
+            }, 0);
         };
-        
+
         const origDraw = nodeType.prototype.onDrawForeground;
         nodeType.prototype.onDrawForeground = function (ctx) {
             if (origDraw) origDraw.call(this, ctx);
