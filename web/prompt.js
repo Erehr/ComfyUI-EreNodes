@@ -129,8 +129,30 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         if (node.properties._prefixSeparator === undefined || node.properties._prefixSeparator === null || node.properties._prefixSeparator === "") {
             node.properties._prefixSeparator = ",\\n\\n"; // Store as literal \n for display in properties
         }
+
+        // It's crucial to capture the existing onPropertyChanged *before* overwriting it.
+        // This allows chaining if the node type or another extension already defined it.
+        const existingOnPropertyChanged = node.onPropertyChanged;
+
         node.onPropertyChanged = function(name, value) {
+
+            // Call the previously existing onPropertyChanged, if any.
+            if (typeof existingOnPropertyChanged === 'function') {
+                existingOnPropertyChanged.apply(this, arguments);
+            }
+
+            // The _isInitialized flag is managed by individual node types:
+            // - Set to false at the start of its onNodeCreated.
+            // - Set to true after all its initial setup is complete (including async parts).
+            if (!this._isInitialized) {
+                return; 
+            }
+            
+            // This log now correctly reflects changes happening *after* the node is fully initialized.
+            console.log('property changed: ' + name + ' (Node: ' + this.title + ', ID: ' + this.id + ')'); 
+
             if (name === "_tagSeparator" || name === "_prefixSeparator") { // Added _prefixSeparator
+                // console.log(`   ↳ Relevant property '${name}' for node '${this.title}' changed post-initialization. Updating text widget.`);
                 if (this.onUpdateTextWidget) {
                     this.onUpdateTextWidget(this);
                 }
@@ -345,8 +367,8 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
                     //    prefixText = originNode.widgets[0].value.trim();
                     // }
 
-                    if (originNode.mode !== 4 && prefixText.trim()) {
-                        let prefixSep = node.properties._prefixSeparator;
+                    if (originNode.mode !== 4 && prefixText.trim() && currentText.trim() !== "") {
+                        let prefixSep = (node.properties._prefixSeparator !== undefined && node.properties._prefixSeparator !== null && node.properties._prefixSeparator !== "") ? node.properties._prefixSeparator : ",\\n\\n";
                         prefixSep = prefixSep.replace(/\\n/g, "\n"); // Replace literal \n with actual newline
                         finalText = `${prefixSep}${currentText}`;
                     } 
