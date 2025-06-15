@@ -15,8 +15,6 @@ app.registerExtension({
             node.isEditMode = false;
 
             const textWidget = node.widgets?.find(w => w.name === "text");
-            textWidget.computeSize = () => [0, 0];
-            textWidget.hidden = true;
             
             node.onMouseDown = (e, pos) => {
                 if (node.isEditMode) return;
