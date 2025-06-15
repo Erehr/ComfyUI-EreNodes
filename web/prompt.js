@@ -136,6 +136,14 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
     // Initialize properties from widget values if not already set
     if (node.properties._prefixSeparator === undefined || node.properties._prefixSeparator === null) {
         node.properties._prefixSeparator = prefixSeparatorWidget ? prefixSeparatorWidget.value.replace(/\n/g, "\\n") : ",\\n\\n";
+    } else {
+        // If property exists (e.g., from loaded workflow), sync it to widget
+        if (prefixSeparatorWidget) {
+            const propertyValue = node.properties._prefixSeparator.replace(/\\n/g, "\n");
+            if (prefixSeparatorWidget.value !== propertyValue) {
+                prefixSeparatorWidget.value = propertyValue;
+            }
+        }
     }
     
     // Add widget change callbacks to update properties automatically
@@ -185,6 +193,20 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
             existingOnPropertyChanged.apply(this, arguments);
         }
 
+        const tagSeparatorWidget = this.widgets?.find(w => w.name === "tag_separator");
+        const prefixSeparatorWidget = this.widgets?.find(w => w.name === "prefix_separator");
+
+        // fix for widget order issue between py and js. Resync properties to widget value
+        setTimeout(() => {        
+            if (tagSeparatorWidget && node.properties._tagSeparator !== undefined) {
+                tagSeparatorWidget.value = node.properties._tagSeparator;
+            }
+            if (prefixSeparatorWidget && node.properties._prefixSeparator !== undefined) {
+                prefixSeparatorWidget.value = node.properties._prefixSeparator;
+            }
+        }, 0);
+
+        
         // The _isInitialized flag is managed by individual node types:
         // - Set to false at the start of its onNodeCreated.
         // - Set to true after all its initial setup is complete (including async parts).
@@ -197,7 +219,6 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
 
         if (name === "_tagSeparator") {
             // Update tag_separator widget value from property
-            const tagSeparatorWidget = this.widgets?.find(w => w.name === "tag_separator");
             if (tagSeparatorWidget) {
                 const newValue = (value !== undefined && value !== null) ? value.replace(/\\n/g, "\n") : ", ";
                 if (tagSeparatorWidget.value !== newValue) {
@@ -211,7 +232,6 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         
         if (name === "_prefixSeparator") {
             // Update prefix_separator widget value from property
-            const prefixSeparatorWidget = this.widgets?.find(w => w.name === "prefix_separator");
             if (prefixSeparatorWidget) {
                 const newValue = (value !== undefined && value !== null) ? value.replace(/\\n/g, "\n") : ",\n\n";
                 if (prefixSeparatorWidget.value !== newValue) {
