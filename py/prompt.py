@@ -9,7 +9,7 @@ class ErePrompt:
             },
             "optional": {
                 "prefix": ("STRING", {"forceInput": True}),
-                "prefix_separator": ("STRING", {"default": ",\n\n", "multiline": False})
+                "prefix_separator": ("STRING", {"default": ",\n\n", "multiline": False}),
             },
         }
 
