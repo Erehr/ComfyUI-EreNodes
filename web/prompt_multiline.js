@@ -12,14 +12,11 @@ app.registerExtension({
             if (origCreated) origCreated.apply(this, arguments);
 
             const node = this;
-            node._isInitialized = false;
-            node.properties = node.properties || {};     
-            
-            const textWidget = node.widgets?.find(w => w.name === "text");
+            node.isEditMode = false;
 
-            const saveButton = node.addWidget("button", "Save", "edit_text", () => {});
-            saveButton.computeSize = () => [0, 20];
-            saveButton.hidden = true;
+            const textWidget = node.widgets?.find(w => w.name === "text");
+            textWidget.computeSize = () => [0, 0];
+            textWidget.hidden = true;
             
             node.onMouseDown = (e, pos) => {
                 if (node.isEditMode) return;
@@ -52,11 +49,10 @@ app.registerExtension({
             };
 
             // Initialize all other functions shared between prompt nodes
-            initializeSharedPromptFunctions(this, textWidget, saveButton);
+            initializeSharedPromptFunctions(this, textWidget);
 
-            setTimeout(() => {
-                this._isInitialized = true; // Set flag to true after all initial setup
-            }, 0);
+            // Update on load
+            this.onUpdateTextWidget(this);
         };
         
         const origDraw = nodeType.prototype.onDrawForeground;

@@ -20,19 +20,11 @@ app.registerExtension({
             if (origCreated) origCreated.apply(this, arguments);
 
             const node = this;
-            node._isInitialized = false;
             node.isEditMode = false;
-            node.properties = node.properties || {};
 
-            // Text widget
             const textWidget = node.widgets?.find(w => w.name === "text");
-            if (!textWidget) return;
             textWidget.computeSize = () => [0, 0];
             textWidget.hidden = true;
-
-            // Button widget (save)
-            const saveButton = node.addWidget("button", "Save", "edit_text", () => {});
-            saveButton.hidden = true;
 
             node.onMouseDown = (e, pos) => {
                 if (node.isEditMode) return;
@@ -68,19 +60,11 @@ app.registerExtension({
             };
 
             // Initialize all other functions shared between prompt nodes
-            initializeSharedPromptFunctions(this, textWidget, saveButton);
+            initializeSharedPromptFunctions(this, textWidget);
 
-            // Defer the update based on _tagDataJSON, as it might not be immediately available
-            // when onNodeCreated is called during graph load.
-            setTimeout(() => {
-                if (this.properties && this.properties._tagDataJSON) {
-                    if (this.onUpdateTextWidget) {
-                        // console.log('update text widget node side');
-                        this.onUpdateTextWidget(this);
-                    }
-                }
-                this._isInitialized = true; // Set flag to true after all initial setup
-            }, 0);
+            // Update on load
+            this.onUpdateTextWidget(this);
+
         };
 
         const origDraw = nodeType.prototype.onDrawForeground;
