@@ -127,8 +127,8 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         prefixSeparatorWidget = node.addWidget("text", "prefix_separator", ",\n\n", () => {});
     }
     if (prefixSeparatorWidget) {
-        // prefixSeparatorWidget.computeSize = () => [0, 0];
-        // prefixSeparatorWidget.hidden = true;
+        prefixSeparatorWidget.computeSize = () => [0, 0];
+        prefixSeparatorWidget.hidden = true;
     }
 
     node.properties = node.properties || {};
@@ -155,8 +155,8 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         // Create tag separator widget directly in JavaScript (similar to saveButton)
         const tagSeparatorWidget = node.addWidget("text", "tag_separator", ", ", () => {});
         if (tagSeparatorWidget) {
-            // tagSeparatorWidget.computeSize = () => [0, 0];
-            // tagSeparatorWidget.hidden = true;
+            tagSeparatorWidget.computeSize = () => [0, 0];
+            tagSeparatorWidget.hidden = true;
         }
         
         if (node.properties._tagSeparator === undefined || node.properties._tagSeparator === null) {
