@@ -125,7 +125,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
 
     // Initialize _prefixSeparator if it's null or undefined
     if (node.properties._prefixSeparator === null || node.properties._prefixSeparator === undefined) {
-        node.properties._prefixSeparator = ",\n\n"; // Default value
+        node.properties._prefixSeparator = ",\\n\\n"; // Default value
     }
 
     // Initialize _tagSeparator if it's null or undefined
