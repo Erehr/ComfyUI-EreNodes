@@ -119,125 +119,27 @@ const getTextInput = async (title, promptMessage, defaultValue = "") => {
     return value;
 };
 
-export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
-
-    // Create prefix separator widget directly in JavaScript for all node types
-    let prefixSeparatorWidget = node.widgets?.find(w => w.name === "prefix_separator");
-    if (!prefixSeparatorWidget) {
-        prefixSeparatorWidget = node.addWidget("text", "prefix_separator", ",\n\n", () => {});
-    }
-    if (prefixSeparatorWidget) {
-        prefixSeparatorWidget.computeSize = () => [0, 0];
-        prefixSeparatorWidget.hidden = true;
-    }
+export function initializeSharedPromptFunctions(node, textWidget) {
 
     node.properties = node.properties || {};
-    
-    // Initialize properties from widget values if not already set
-    if (node.properties._prefixSeparator === undefined || node.properties._prefixSeparator === null) {
-        node.properties._prefixSeparator = prefixSeparatorWidget ? prefixSeparatorWidget.value.replace(/\n/g, "\\n") : ",\\n\\n";
-    } else {
-        // If property exists (e.g., from loaded workflow), sync it to widget
-        if (prefixSeparatorWidget) {
-            const propertyValue = node.properties._prefixSeparator.replace(/\\n/g, "\n");
-            if (prefixSeparatorWidget.value !== propertyValue) {
-                prefixSeparatorWidget.value = propertyValue;
-            }
-        }
-    }
-    
-    // Add widget change callbacks to update properties automatically
-    // Handle prefix_separator for all nodes
-    if (prefixSeparatorWidget && !prefixSeparatorWidget._hasCallback) {
-        const originalCallback = prefixSeparatorWidget.callback;
-        prefixSeparatorWidget.callback = function(value, widget, node) {
-            node.properties._prefixSeparator = value.replace(/\n/g, "\\n");
-            if (originalCallback) originalCallback.call(this, value, widget, node);
-            if (node.onUpdateTextWidget) node.onUpdateTextWidget(node);
-        };
-        prefixSeparatorWidget._hasCallback = true;
-    }
-    
-    // Handle tag_separator only for non-multiline nodes
-    if (node.type !== "ErePromptMultiline") {
-        // Create tag separator widget directly in JavaScript (similar to saveButton)
-        const tagSeparatorWidget = node.addWidget("text", "tag_separator", ", ", () => {});
-        if (tagSeparatorWidget) {
-            tagSeparatorWidget.computeSize = () => [0, 0];
-            tagSeparatorWidget.hidden = true;
-        }
-        
-        if (node.properties._tagSeparator === undefined || node.properties._tagSeparator === null) {
-            node.properties._tagSeparator = tagSeparatorWidget ? tagSeparatorWidget.value.replace(/\n/g, "\\n") : ", ";
-        }
 
-        if (tagSeparatorWidget && !tagSeparatorWidget._hasCallback) {
-            const originalCallback = tagSeparatorWidget.callback;
-            tagSeparatorWidget.callback = function(value, widget, node) {
-                node.properties._tagSeparator = value.replace(/\n/g, "\\n");
-                if (originalCallback) originalCallback.call(this, value, widget, node);
-                if (node.onUpdateTextWidget) node.onUpdateTextWidget(node);
-            };
-            tagSeparatorWidget._hasCallback = true;
-        }
+    // Initialize _prefixSeparator if it's null or undefined
+    if (node.properties._prefixSeparator === null || node.properties._prefixSeparator === undefined) {
+        node.properties._prefixSeparator = ",\n\n"; // Default value
     }
 
-    // It's crucial to capture the existing onPropertyChanged *before* overwriting it.
-    // This allows chaining if the node type or another extension already defined it.
+    // Initialize _tagSeparator if it's null or undefined
+    if (node.properties._tagSeparator === null || node.properties._tagSeparator === undefined) {
+        node.properties._tagSeparator = ", "; // Default value
+    }
+    
+    // Capture existing onPropertyChanged to allow chaining
     const existingOnPropertyChanged = node.onPropertyChanged;
 
     node.onPropertyChanged = function(name, value) {
-
-        // Call the previously existing onPropertyChanged, if any.
-        if (typeof existingOnPropertyChanged === 'function') {
-            existingOnPropertyChanged.apply(this, arguments);
-        }
-
-        const tagSeparatorWidget = this.widgets?.find(w => w.name === "tag_separator");
-        const prefixSeparatorWidget = this.widgets?.find(w => w.name === "prefix_separator");
-
-        // fix for widget order issue between py and js. Resync properties to widget value
-        setTimeout(() => {        
-            if (tagSeparatorWidget && node.properties._tagSeparator !== undefined) {
-                tagSeparatorWidget.value = node.properties._tagSeparator;
-            }
-            if (prefixSeparatorWidget && node.properties._prefixSeparator !== undefined) {
-                prefixSeparatorWidget.value = node.properties._prefixSeparator;
-            }
-        }, 0);
-
-        
-        // The _isInitialized flag is managed by individual node types:
-        // - Set to false at the start of its onNodeCreated.
-        // - Set to true after all its initial setup is complete (including async parts).
-        if (!this._isInitialized) {
-            return; 
-        }
-        
-        // This log now correctly reflects changes happening *after* the node is fully initialized.
-        console.log('property changed: ' + name + ' (Node: ' + this.title + ', ID: ' + this.id + ')'); 
-
+        // Handle _tagSeparator property changes
         if (name === "_tagSeparator") {
-            // Update tag_separator widget value from property
-            if (tagSeparatorWidget) {
-                const newValue = (value !== undefined && value !== null) ? value.replace(/\\n/g, "\n") : ", ";
-                if (tagSeparatorWidget.value !== newValue) {
-                    tagSeparatorWidget.value = newValue;
-                }
-            }
-            if (this.onUpdateTextWidget) {
-                this.onUpdateTextWidget(this);
-            }
-        } 
-        
-        if (name === "_prefixSeparator") {
-            // Update prefix_separator widget value from property
-            if (prefixSeparatorWidget) {
-                const newValue = (value !== undefined && value !== null) ? value.replace(/\\n/g, "\n") : ",\n\n";
-                if (prefixSeparatorWidget.value !== newValue) {
-                    prefixSeparatorWidget.value = newValue;
-                }
-            }
+            // Trigger text widget update when tag separator changes
             if (this.onUpdateTextWidget) {
                 this.onUpdateTextWidget(this);
             }
@@ -347,21 +249,42 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
 
     node.onEdit = () => {
         node.isEditMode = true;
-        saveButton.hidden = false;
         textWidget.hidden = false;
-
         textWidget.computeSize = null;
         
+        // Add save button widget
+        let saveButton = node.addWidget("button", "Save", "edit_text", () => {
+            
+            // Save to JSON
+            const finalTagData = parseTextToTagData(textWidget.value, parseTags(node.properties._tagDataJSON || "[]"));
+            node.properties._tagDataJSON = JSON.stringify(finalTagData, null, 2);
+
+            // Disable edit mode and remove button
+            node.isEditMode = false;
+            textWidget.hidden = true;
+
+            const widgetIndex = node.widgets.indexOf(saveButton);
+            if (widgetIndex > -1) {
+                node.widgets.splice(widgetIndex, 1); // Use splice instead of removeWidget
+            } 
+
+            // Update output
+            node.onUpdateTextWidget(node);
+        });
+
+        // Set editor size
         const minEditorHeight = 256;
         if (node.size[1] < minEditorHeight) {
             node.setSize([node.size[0], minEditorHeight]);
         }
 
+        // Parse tags into editor value
         const tagData = parseTags(node.properties._tagDataJSON || "[]");
         
         let lines = [];
         let currentLine = [];
 
+        // Insert tags and separators
         for (const tag of tagData) {
             if (tag.type === 'separator') {
                 if (currentLine.length > 0) {
@@ -375,13 +298,13 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
             }
         }
         
+        // Join with tag separator
         if (currentLine.length > 0) {
             const separator = (node.properties._tagSeparator !== undefined && node.properties._tagSeparator !== "") ? node.properties._tagSeparator : ", ";
             lines.push(currentLine.join(separator));
         }
 
         textWidget.value = lines.join("\n");
-
         app.graph.setDirtyCanvas(true);
     };
 
@@ -392,9 +315,7 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         const tagData = parseTags(node.properties._tagDataJSON || "[]");
         const activeTagsAndSeparators = tagData.filter(t => (t.active && t.name) || t.type === 'separator');
 
-        // Get tagSeparator from widget instead of property
-        const tagSeparatorWidget = node.widgets?.find(w => w.name === "tag_separator");
-        let tagSeparator = tagSeparatorWidget ? tagSeparatorWidget.value : ", ";
+        let tagSeparator = (node.properties._tagSeparator || ", ").replace(/\\n/g, "\n");
 
         const parts = [];
         let currentLineTags = [];
@@ -1125,20 +1046,21 @@ export function initializeSharedPromptFunctions(node, textWidget, saveButton) {
         return;
     };
 
-    if (saveButton) {
-        saveButton.callback = () => {
-            const finalTagData = parseTextToTagData(textWidget.value, parseTags(node.properties._tagDataJSON || "[]"));
+    // if (saveButton) {
+    //     saveButton.callback = () => {
+    //         const finalTagData = parseTextToTagData(textWidget.value, parseTags(node.properties._tagDataJSON || "[]"));
             
-            node.properties._tagDataJSON = JSON.stringify(finalTagData, null, 2);
+    //         node.properties._tagDataJSON = JSON.stringify(finalTagData, null, 2);
 
-            node.isEditMode = false;
-            saveButton.hidden = true;
-            textWidget.hidden = true;
+    //         node.isEditMode = false;
+    //         // saveButton.hidden = true;
+    //         textWidget.hidden = true;
+    //         node.removeWidget(saveButton);
 
-            node.onUpdateTextWidget(node);
+    //         node.onUpdateTextWidget(node);
 
-            node.setDirtyCanvas(true);
-            node.onResize();
-        }
-    }
+    //         node.setDirtyCanvas(true);
+    //         node.onResize();
+    //     }
+    // }
 }

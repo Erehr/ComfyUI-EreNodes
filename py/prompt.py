@@ -1,4 +1,5 @@
 import os
+import time
 
 class ErePrompt:
     @classmethod
@@ -9,22 +10,41 @@ class ErePrompt:
             },
             "optional": {
                 "prefix": ("STRING", {"forceInput": True}),
-                "prefix_separator": ("STRING", {"default": ",\n\n", "multiline": False}),
             },
+            "hidden": {"extra_pnginfo": "EXTRA_PNGINFO", "unique_id": "UNIQUE_ID"}
         }
 
     RETURN_TYPES = ("STRING",)
     FUNCTION = "process"
     CATEGORY = "EreNodes"
 
-    def process(self, text, prefix="", prefix_separator=None):
-        # Use the input values or fall back to defaults
-        if prefix_separator is None:
-            prefix_separator = ",\n\n"
+    @classmethod
+    def IS_CHANGED(cls, text, prefix="", extra_pnginfo="", unique_id=""):
+        # Include separator in the hash to force re-execution
+        for node in extra_pnginfo["workflow"]["nodes"]:
+            if node["id"] == int(unique_id):
+                prefix_separator = node["properties"].get("_prefixSeparator", ",\n\n")
+                return hash((text, prefix, prefix_separator))
+        return hash((text, prefix))
+        
+    def process(self, text, prefix="", extra_pnginfo="", unique_id=""):
+
+        node_found = False
+        for node in extra_pnginfo["workflow"]["nodes"]:
+            if node["id"] == int(unique_id):
+                prefix_separator = node["properties"].get("_prefixSeparator")
+                tag_separator = node["properties"].get("_tagSeparator")
+                node_found = True
+                break
+
+
+        # final_prefix_separator_str = None
+        print(f"[ErePrompt DEBUG]  Prefix Separator: {prefix_separator}")
+        print(f"[ErePrompt DEBUG] Tag Separator: {tag_separator}")
+        
+        separator = str(prefix_separator).replace("\\n", "\n")
         
         if prefix and text:
-            # Replace literal \n with actual newlines in the separator
-            separator = prefix_separator.replace("\\n", "\n")
             return (f"{prefix}{separator}{text}",)
         elif prefix:
             return (prefix,)
