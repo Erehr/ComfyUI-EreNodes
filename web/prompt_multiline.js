@@ -51,6 +51,10 @@ app.registerExtension({
 
             // Update on load
             this.onUpdateTextWidget(this);
+            
+            // Dummy button to make space for action button
+            let saveButton = node.addWidget("button", "Save", "edit_text", () => {});
+            saveButton.hidden = true;
         };
         
         const origDraw = nodeType.prototype.onDrawForeground;
@@ -105,8 +109,9 @@ app.registerExtension({
                 ctx.fillText(p.display, textX, textY);
 
                 ctx.textBaseline = "alphabetic";
-            
+                ctx.globalCompositeOperation='source-atop';
                 this._pillMap.push({ x: p.x, y: p.y, w: p.w, h: p.h, label: p.label, button: p.button });
+                ctx.globalCompositeOperation='source-over';
             }
             
         };

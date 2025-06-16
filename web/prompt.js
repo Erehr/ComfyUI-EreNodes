@@ -175,8 +175,8 @@ export function initializeSharedPromptFunctions(node, textWidget) {
     
         if (targetNodeType === "ErePromptMultiline") {
             if (newNode.properties) delete newNode.properties._tagDataJSON;
-            if (newNode.properties) delete newNode.properties._prefixSeparator;
-            if (newNode.properties) delete newNode.properties._tagSeparator;
+            // if (newNode.properties) delete newNode.properties._prefixSeparator;
+            // if (newNode.properties) delete newNode.properties._tagSeparator;
         }
         
         newNode.pos = [this.pos[0], this.pos[1]]; 
