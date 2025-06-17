@@ -53,7 +53,10 @@ app.registerExtension({
             const textWidget = node.widgets?.find(w => w.name === "text");
             textWidget.computeSize = () => [0, 0];
             textWidget.hidden = true;
-              
+
+            // Randomize control
+            const controlWidget = node.addWidget("combo", "control after generate", "fixed", "control_after_generate", { values: ["fixed", "increment", "decrement", "randomize"] });
+            
             node.onMouseDown = (e, pos) => {
                 if (node.isEditMode) return;
 
@@ -124,7 +127,6 @@ app.registerExtension({
             const textWidget = this.widgets?.find(w => w.name === "text");
             const controlWidget = this.widgets?.find(w => w.name === "control after generate");
  
-            
             if (!textWidget || this.isEditMode || this.flags?.collapsed) return;
 
             const tagData = parseTags(this.properties._tagDataJSON || textWidget.value);

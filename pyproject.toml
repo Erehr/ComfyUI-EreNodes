@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-erenodes"
 description = "A collection of prompt managent nodes with advanced tag parsing. Prompt tag cloud, mutiselect, toggle list, randomizer, filter, autocompete."
-version = "1.5.2"
+version = "1.5.3"
 license = { file = "LICENSE.txt" }
 dependencies  = []
 
