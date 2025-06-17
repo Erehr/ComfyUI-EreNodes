@@ -865,7 +865,7 @@ class GlobalAutocomplete {
                                 if (selectedItem.type === 'lora') {
                                     finalReplacementText = `<lora:${selectedItem.path}${selectedItem.extension}>`;
                                 } else { // embedding
-                                    finalReplacementText = `embedding:${selectedItem.path}${selectedItem.extension}`;
+                                    finalReplacementText = `embedding:${selectedItem.path}`; // embedding without extension
                                 }
                             } else { // 'tag' or 'add_custom_tag'
                                 const completedTagPart = (selectedItem.type === 'add_custom_tag') 
@@ -924,7 +924,7 @@ class GlobalAutocomplete {
                             if (selectedItem.type === 'lora') {
                                 textToInsert = `<lora:${selectedItem.path}${selectedItem.extension}>`;
                             } else if (selectedItem.type === 'embedding') {
-                                textToInsert = `embedding:${selectedItem.path}${selectedItem.extension}`;
+                                textToInsert = `embedding:${selectedItem.path}`; // embedding without extension
                             }
 
                             // Use the same logic as the reference implementation
