@@ -343,6 +343,11 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             parts.push(currentLineTags.join(tagSeparator));
         }
 
+        // Remove trailing separator if 'parts' ends with it and has more than one element.
+        if (parts.length > 1 && parts[parts.length - 1] === tagSeparator) {
+            parts.pop();
+        }
+
         // For multiline nodes, don't modify the text widget content when updating separators
         if (node.type !== "ErePromptMultiline") {
             // Filter out any empty strings that might result from consecutive separators
@@ -885,11 +890,8 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         const clickedTag = tagData.find(t => t.name === clickedPill.label);
 
         if (!clickedTag) return;
-        
-        // let quickEditAutocompleteInstance = null; // To hold the GlobalAutocomplete instance for this specific textarea
 
         const deleteTag = () => {
-            // if (quickEditAutocompleteInstance) quickEditAutocompleteInstance.detach(); // Remnant removed
             const newTagData = tagData.filter(t => t.name !== clickedTag.name);
             node.properties._tagDataJSON = JSON.stringify(newTagData, null, 2);
             node.onUpdateTextWidget(node);
@@ -973,7 +975,6 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             input.style.outline = "1px solid #666";
             // Autocomplete will be handled by the global focusin listener
         });
-        // input.addEventListener('blur', () => { ... }); // Removed: Global instance handles blur
 
         const strengthInput = document.createElement("input");
         strengthInput.type = "number";
@@ -1045,22 +1046,5 @@ export function initializeSharedPromptFunctions(node, textWidget) {
 
         return;
     };
-
-    // if (saveButton) {
-    //     saveButton.callback = () => {
-    //         const finalTagData = parseTextToTagData(textWidget.value, parseTags(node.properties._tagDataJSON || "[]"));
-            
-    //         node.properties._tagDataJSON = JSON.stringify(finalTagData, null, 2);
-
-    //         node.isEditMode = false;
-    //         // saveButton.hidden = true;
-    //         textWidget.hidden = true;
-    //         node.removeWidget(saveButton);
-
-    //         node.onUpdateTextWidget(node);
-
-    //         node.setDirtyCanvas(true);
-    //         node.onResize();
-    //     }
-    // }
+    
 }

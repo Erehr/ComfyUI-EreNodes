@@ -37,6 +37,7 @@ yarn-error.log*
 Thumbs.db
 
 # Project specific
-__csvcache__/
+__prompts__/
 *.log 
 __autocomplete__/booru_complete.csv
+py/settings.json

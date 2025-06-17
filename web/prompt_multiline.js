@@ -53,8 +53,8 @@ app.registerExtension({
             this.onUpdateTextWidget(this);
             
             // Dummy button to make space for action button
-            let saveButton = node.addWidget("button", "Save", "edit_text", () => {});
-            saveButton.hidden = true;
+            let fakeButton = node.addWidget("button", "Placeholder", "fake_button", () => {});
+            fakeButton.hidden = true;
         };
         
         const origDraw = nodeType.prototype.onDrawForeground;
