@@ -28,31 +28,32 @@ def sanitize_filename(filename):
 
 # --- API Endpoints ---
 
-@server.PromptServer.instance.routes.post("/erenodes/set_active_csv")
-async def set_active_csv_handler(request):
+@server.PromptServer.instance.routes.post("/erenodes/set_setting")
+async def set_setting_handler(request):
     data = await request.json()
-    csv_file = data.get("csv_file")
-    if csv_file is None:
-        return web.json_response({"status": "error", "message": "csv_file not provided"}, status=400)
-    
+    key = data.get("key")
+    value = data.get("value")
+
+    if key is None:
+        return web.json_response({"status": "error", "message": "Setting 'key' not provided"}, status=400)
+
     settings = get_erenodes_settings()
-    settings['active_csv'] = csv_file
+    
+    # Simple key update, can be expanded for nested keys if needed
+    settings[key] = value
+    
     save_erenodes_settings(settings)
-    try:
-        # Refresh autocomplete for the newly activated CSV
-        load_tags_from_csv(csv_file, encoding=DEFAULT_ENCODING, csv_files_path=CSV_FILES_PATH)
-    except Exception as e:
-        # Log this error on the server, but don't fail the entire operation
-        # as setting active_csv was successful.
-        # Consider a more robust logging mechanism if this becomes a common issue.
-        pass
-    
-    return web.json_response({"status": "ok"})
-    
-    settings = get_erenodes_settings()
-    settings['active_csv'] = csv_file
-    save_erenodes_settings(settings)
-    
+
+    # If the active CSV is changed, we need to reload the tags
+    if key == "autocomplete.csv_file":
+        try:
+            load_tags_from_csv(value, encoding=DEFAULT_ENCODING, csv_files_path=CSV_FILES_PATH)
+        except Exception as e:
+            # It's okay if this fails (e.g., file not found during a temporary state)
+            # The setting is still saved.
+            print(f"[EreNodes] Non-critical error reloading CSV on setting change: {e}")
+            pass
+
     return web.json_response({"status": "ok"})
 
 @server.PromptServer.instance.routes.get("/erenodes/list_csv_files")
@@ -174,264 +175,188 @@ async def save_tag_group_handler(request):
 # --- LORA API Endpoints --- #
 
 import folder_paths # Import ComfyUI's folder_paths
+from safetensors import safe_open
 
-# --- LORA API Endpoints --- #
-
-@server.PromptServer.instance.routes.get("/erenodes/search_loras")
-async def search_loras_handler(request):
-    raw_query = request.query.get("query", "")
-    path_param = request.query.get("path", "") # This is the current subfolder relative to a LORA root
-    LORA_EXTENSIONS = ('.safetensors', '.pt', '.ckpt', '.lora')
-
-    # Handle query-based navigation
-    # If query is like "folder/" or "folder\", treat it as navigation
-    potential_nav_folder = ""
-    actual_search_query = raw_query.lower()
-
-    if raw_query.endswith('/') or raw_query.endswith('\\'):
-        potential_nav_folder = os.path.normpath(raw_query.strip('/\\'))
-        actual_search_query = "" # Clear search query if it was a navigation command
-        # The new path_param will be the old path_param + potential_nav_folder
-        if path_param:
-            path_param = os.path.join(path_param, potential_nav_folder).replace('\\', '/')
-        else:
-            path_param = potential_nav_folder.replace('\\', '/')
-    
-    query = actual_search_query
+@server.PromptServer.instance.routes.get("/erenodes/get_lora_metadata")
+async def get_lora_metadata_handler(request):
+    filename = request.query.get("filename")
+    if not filename:
+        return web.json_response({"error": "Filename not provided"}, status=400)
 
     try:
-        lora_collection_paths = folder_paths.get_folder_paths("loras")
-        if not lora_collection_paths:
-            return web.json_response({"items": [], "parentPath": path_param if path_param else ""})
+        lora_path = folder_paths.get_full_path("loras", filename)
+        if not lora_path:
+            # Try to find it in the old loras folder as well
+            lora_path = folder_paths.get_full_path("loras_old", filename)
+            if not lora_path:
+                return web.json_response({"error": "Lora not found in any known folder"}, status=404)
 
-        items = []
-        found_relative_paths = set()
-
-        # Determine the actual absolute path to scan and the root of this LORA collection for relative path calculation
-        scan_target_abs = None
-        current_lora_collection_root_abs = None
-
-        if path_param:
-            normalized_path_param = os.path.normpath(path_param.lstrip('/').lstrip('\\'))
-            for lora_root in lora_collection_paths:
-                abs_lora_root = os.path.abspath(lora_root)
-                potential_scan_path = os.path.abspath(os.path.join(abs_lora_root, normalized_path_param))
-                if os.path.isdir(potential_scan_path) and os.path.commonpath([abs_lora_root, potential_scan_path]) == abs_lora_root:
-                    scan_target_abs = potential_scan_path
-                    current_lora_collection_root_abs = abs_lora_root
-                    break
-            if not scan_target_abs:
-                return web.json_response({"items": [], "parentPath": path_param})
-        else:
-            # No path_param, search starts from the root of the primary LORA collection path
-            # For simplicity, we'll use the first LORA path as the primary scan target for root searches.
-            # A more complex setup might iterate all roots or provide a way to switch between them.
-            if lora_collection_paths:
-                scan_target_abs = os.path.abspath(lora_collection_paths[0])
-                current_lora_collection_root_abs = scan_target_abs # Root is its own collection root
-            else:
-                 return web.json_response({"items": [], "parentPath": ""}) # Should be caught by earlier check
-
-
-        for dirpath, dirnames_orig, filenames in os.walk(scan_target_abs, topdown=True):
-            is_current_scan_level = (os.path.normpath(dirpath) == os.path.normpath(scan_target_abs))
-
-            # Process files
-            for filename in filenames:
-                if filename.lower().endswith(LORA_EXTENSIONS):
-                    filename_no_ext = os.path.splitext(filename)[0]
-                    full_file_path_abs = os.path.join(dirpath, filename)
-                    relative_to_collection_root = os.path.relpath(full_file_path_abs, current_lora_collection_root_abs).replace('\\', '/')
-                    # The 'path' for a LORA should be its filename without extension, relative to the LORA collection root.
-                    # This 'path' is what gets inserted into the prompt, e.g., "style/my_lora"
-                    lora_prompt_path = os.path.splitext(relative_to_collection_root)[0]
-
-                    if query: # Query present, search recursively
-                        if query in filename_no_ext.lower() or query in lora_prompt_path.lower():
-                            if lora_prompt_path not in found_relative_paths:
-                                # For display, we might still want just the filename, but the 'path' for prompt needs to be full
-                                items.append({"name": filename_no_ext, "type": "lora", "path": lora_prompt_path, "extension": os.path.splitext(filename)[1]})
-                                found_relative_paths.add(lora_prompt_path)
-                    else: # No query, only list if current level is the scan_target_abs
-                        if is_current_scan_level:
-                            if lora_prompt_path not in found_relative_paths:
-                                items.append({"name": filename_no_ext, "type": "lora", "path": lora_prompt_path, "extension": os.path.splitext(filename)[1]})
-                                found_relative_paths.add(lora_prompt_path)
-            
-            # Process folders
-            # dirnames_orig is the list of subdirectories in dirpath from os.walk.
-            # We will modify the actual dirnames list that os.walk uses for recursion.
-            current_level_dirnames_to_process = list(dirnames_orig) # Make a copy to iterate
-            dirnames_orig[:] = [] # Clear dirnames_orig to control recursion. We'll add back if needed.
-
-            for dirname in current_level_dirnames_to_process:
-                if dirname.startswith('.') or dirname == "__pycache__":
-                    continue
-
-                full_folder_path_abs = os.path.join(dirpath, dirname)
-                relative_to_collection_root = os.path.relpath(full_folder_path_abs, current_lora_collection_root_abs).replace('\\', '/')
-
-                if query: # Query present, search recursively for matching folder names
-                    if query in dirname.lower():
-                        if relative_to_collection_root not in found_relative_paths:
-                            items.append({"name": dirname, "type": "folder", "path": relative_to_collection_root})
-                            found_relative_paths.add(relative_to_collection_root)
-                    # Always allow recursion if query is present, as subfolders might contain matching files/folders
-                    dirnames_orig.append(dirname)
-                else: # No query, only list if current level is scan_target_abs
-                    if is_current_scan_level:
-                        if relative_to_collection_root not in found_relative_paths:
-                            items.append({"name": dirname, "type": "folder", "path": relative_to_collection_root})
-                            found_relative_paths.add(relative_to_collection_root)
-                    # If no query, we do not want to recurse into subdirectories for listing.
-                    # By not adding 'dirname' back to dirnames_orig, os.walk will not visit it.
-
-        items.sort(key=lambda x: (x["type"] == "lora", x["name"].lower()))
+        metadata = {}
+        with safe_open(lora_path, framework="pt", device="cpu") as f:
+            metadata = f.metadata()
         
-        current_relative_path_for_client = os.path.relpath(scan_target_abs, current_lora_collection_root_abs).replace('\\', '/')
-        if current_relative_path_for_client == '.':
-            current_relative_path_for_client = ""
+        if not metadata:
+            return web.json_response({})
 
-        parent_path_for_client = ""
-        if current_relative_path_for_client:
-            parent_path_for_client = os.path.dirname(current_relative_path_for_client).replace('\\', '/')
-            if parent_path_for_client == '.': # Should not happen if current_relative_path_for_client is not empty
-                parent_path_for_client = ""
-        
-        response_data = {
-            "items": items,
-            "currentPath": current_relative_path_for_client,
-            "parentPath": parent_path_for_client
-        }
-        
-        return web.json_response(response_data)
+        # The 'ss_tag_frequency' is often a JSON string within the metadata, so we parse it.
+        if 'ss_tag_frequency' in metadata and isinstance(metadata['ss_tag_frequency'], str):
+            try:
+                metadata['ss_tag_frequency'] = json.loads(metadata['ss_tag_frequency'])
+            except json.JSONDecodeError:
+                # Keep it as a string if it's not valid JSON
+                pass
 
+        return web.json_response(metadata)
     except Exception as e:
-        # It's good practice to return a consistent structure even on error, if possible
-        return web.json_response({"items": [], "parentPath": path_param if path_param else "", "error": str(e)}, status=500)
-    
+        # Consider logging the full error for debugging
+        return web.json_response({"error": "Failed to read LoRA metadata: " + str(e)}, status=500)
 
-# --- Embedding API Endpoints --- #
+# --- Unified File Search API Endpoint --- #
 
-@server.PromptServer.instance.routes.get("/erenodes/search_embeddings")
-async def search_embeddings_handler(request):
+@server.PromptServer.instance.routes.get("/erenodes/search_files")
+async def search_files_handler(request):
     raw_query = request.query.get("query", "")
-    path_param = request.query.get("path", "") # Current subfolder relative to an embedding root
-    EMBEDDING_EXTENSIONS = ('.pt', '.bin', '.safetensors', '.embedding')
+    path_param = request.query.get("path", "")
+    file_type = request.query.get("type")
 
-    # Handle query-based navigation
+    if not file_type:
+        return web.json_response({"error": "File type not provided"}, status=400)
+
+    type_configs = {
+        'lora': {
+            'roots': folder_paths.get_folder_paths("loras"),
+            'extensions': ('.safetensors', '.pt', '.ckpt', '.lora'),
+        },
+        'embedding': {
+            'roots': folder_paths.get_folder_paths("embeddings"),
+            'extensions': ('.pt', '.bin', '.safetensors', '.embedding'),
+        },
+        'group': {
+            'roots': [prompts_dir],
+            'extensions': ('.json',),
+        }
+    }
+
+    config = type_configs.get(file_type)
+    if not config:
+        return web.json_response({"error": f"Invalid file type: {file_type}"}, status=400)
+    
+    collection_paths = config['roots']
+    extensions = config['extensions']
+
     potential_nav_folder = ""
     actual_search_query = raw_query.lower()
 
     if raw_query.endswith('/') or raw_query.endswith('\\'):
         potential_nav_folder = os.path.normpath(raw_query.strip('/\\'))
-        actual_search_query = "" # Clear search query if it was a navigation command
+        actual_search_query = ""
         if path_param:
-            path_param = os.path.join(path_param, potential_nav_folder).replace('\\', '/')
+            path_param = os.path.join(path_param, potential_nav_folder)
         else:
-            path_param = potential_nav_folder.replace('\\', '/')
-
+            path_param = potential_nav_folder
+    
     query = actual_search_query
 
     try:
-        embedding_collection_paths = folder_paths.get_folder_paths("embeddings")
-        if not embedding_collection_paths:
+        if not collection_paths:
             return web.json_response({"items": [], "parentPath": path_param if path_param else ""})
 
         items = []
         found_relative_paths = set()
 
         scan_target_abs = None
-        current_embedding_collection_root_abs = None
+        current_collection_root_abs = None
 
         if path_param:
             normalized_path_param = os.path.normpath(path_param.lstrip('/').lstrip('\\'))
-            for emb_root in embedding_collection_paths:
-                abs_emb_root = os.path.abspath(emb_root)
-                potential_scan_path = os.path.abspath(os.path.join(abs_emb_root, normalized_path_param))
-                if os.path.isdir(potential_scan_path) and os.path.commonpath([abs_emb_root, potential_scan_path]) == abs_emb_root:
+            for root in collection_paths:
+                abs_root = os.path.abspath(root)
+                potential_scan_path = os.path.abspath(os.path.join(abs_root, normalized_path_param))
+                if os.path.isdir(potential_scan_path) and os.path.commonpath([abs_root, potential_scan_path]) == abs_root:
                     scan_target_abs = potential_scan_path
-                    current_embedding_collection_root_abs = abs_emb_root
+                    current_collection_root_abs = abs_root
                     break
             if not scan_target_abs:
                 return web.json_response({"items": [], "parentPath": path_param})
         else:
-            if embedding_collection_paths:
-                scan_target_abs = os.path.abspath(embedding_collection_paths[0])
-                current_embedding_collection_root_abs = scan_target_abs
+            if collection_paths:
+                scan_target_abs = os.path.abspath(collection_paths[0])
+                current_collection_root_abs = scan_target_abs
             else:
-                return web.json_response({"items": [], "parentPath": ""})
-
+                 return web.json_response({"items": [], "parentPath": ""})
 
         for dirpath, dirnames_orig, filenames in os.walk(scan_target_abs, topdown=True):
             is_current_scan_level = (os.path.normpath(dirpath) == os.path.normpath(scan_target_abs))
 
             # Process files
             for filename in filenames:
-                if filename.lower().endswith(EMBEDDING_EXTENSIONS):
-                    filename_no_ext = os.path.splitext(filename)[0]
+                if filename.lower().endswith(extensions):
+                    filename_no_ext, file_ext = os.path.splitext(filename)
                     full_file_path_abs = os.path.join(dirpath, filename)
-                    relative_to_collection_root = os.path.relpath(full_file_path_abs, current_embedding_collection_root_abs).replace('\\', '/')
-                    # The 'path' for an embedding should be its filename without extension, relative to the embedding collection root.
-                    embedding_prompt_path = os.path.splitext(relative_to_collection_root)[0]
+                    relative_to_collection_root = os.path.relpath(full_file_path_abs, current_collection_root_abs)
+                    prompt_path = os.path.splitext(relative_to_collection_root)[0]
 
-                    if query: # Query present, search recursively
-                        if query in filename_no_ext.lower() or query in embedding_prompt_path.lower():
-                            if embedding_prompt_path not in found_relative_paths:
-                                items.append({"name": filename_no_ext, "type": "embedding", "path": embedding_prompt_path, "extension": os.path.splitext(filename)[1]})
-                                found_relative_paths.add(embedding_prompt_path)
-                    else: # No query, only list if current level is the scan_target_abs
+                    item_data = {"name": filename_no_ext, "type": file_type, "path": prompt_path, "extension": file_ext}
+
+                    if query:
+                        if query in filename_no_ext.lower() or query in prompt_path.lower():
+                            if prompt_path not in found_relative_paths:
+                                items.append(item_data)
+                                found_relative_paths.add(prompt_path)
+                    else:
                         if is_current_scan_level:
-                            if embedding_prompt_path not in found_relative_paths:
-                                items.append({"name": filename_no_ext, "type": "embedding", "path": embedding_prompt_path, "extension": os.path.splitext(filename)[1]})
-                                found_relative_paths.add(embedding_prompt_path)
+                            if prompt_path not in found_relative_paths:
+                                items.append(item_data)
+                                found_relative_paths.add(prompt_path)
             
             # Process folders
-            current_level_dirnames_to_process = list(dirnames_orig) # Make a copy to iterate
-            dirnames_orig[:] = [] # Clear dirnames_orig to control recursion.
+            current_level_dirnames_to_process = list(dirnames_orig)
+            dirnames_orig[:] = []
 
             for dirname in current_level_dirnames_to_process:
                 if dirname.startswith('.') or dirname == "__pycache__":
                     continue
 
                 full_folder_path_abs = os.path.join(dirpath, dirname)
-                relative_to_collection_root = os.path.relpath(full_folder_path_abs, current_embedding_collection_root_abs).replace('\\', '/')
+                relative_to_collection_root = os.path.relpath(full_folder_path_abs, current_collection_root_abs)
 
-                if query: # Query present, search recursively for matching folder names
+
+                if query:
                     if query in dirname.lower():
                         if relative_to_collection_root not in found_relative_paths:
                             items.append({"name": dirname, "type": "folder", "path": relative_to_collection_root})
                             found_relative_paths.add(relative_to_collection_root)
-                    dirnames_orig.append(dirname) # Allow recursion if query is present
-                else: # No query, only list if current level is scan_target_abs
+                    dirnames_orig.append(dirname)
+                else:
                     if is_current_scan_level:
                         if relative_to_collection_root not in found_relative_paths:
                             items.append({"name": dirname, "type": "folder", "path": relative_to_collection_root})
                             found_relative_paths.add(relative_to_collection_root)
-                    # If no query, do not recurse by not adding back to dirnames_orig
 
-        items.sort(key=lambda x: (x["type"] == "embedding", x["name"].lower()))
+        items.sort(key=lambda x: (x["type"] != "folder", x["name"].lower()))
+        
+        current_relative_path_for_client = os.path.relpath(scan_target_abs, current_collection_root_abs)
 
-        current_relative_path_for_client = os.path.relpath(scan_target_abs, current_embedding_collection_root_abs).replace('\\', '/')
         if current_relative_path_for_client == '.':
             current_relative_path_for_client = ""
 
         parent_path_for_client = ""
         if current_relative_path_for_client:
-            parent_path_for_client = os.path.dirname(current_relative_path_for_client).replace('\\', '/')
+            parent_path_for_client = os.path.dirname(current_relative_path_for_client)
             if parent_path_for_client == '.':
                 parent_path_for_client = ""
-
+        
         response_data = {
             "items": items,
             "currentPath": current_relative_path_for_client,
             "parentPath": parent_path_for_client
         }
-
+        
         return web.json_response(response_data)
 
     except Exception as e:
         return web.json_response({"items": [], "parentPath": path_param if path_param else "", "error": str(e)}, status=500)
+
 
 @server.PromptServer.instance.routes.post("/erenodes/create_folder")
 async def create_folder_handler(request):
@@ -459,3 +384,44 @@ async def create_folder_handler(request):
         return web.json_response({"message": "Folder created successfully."})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
+
+@server.PromptServer.instance.routes.get("/erenodes/view/{type}/{path:.*}")
+async def view_file_handler(request):
+    type_name = request.match_info.get("type")
+    path_param = request.match_info.get("path")
+
+    if not type_name or not path_param:
+        return web.Response(status=400, text="Missing type or path")
+
+    # Determine base directories
+    if type_name == 'groups':
+        # The 'prompts_dir' is already an absolute path.
+        base_dirs = [prompts_dir]
+    else:
+        # folder_paths uses plural for loras, embeddings, etc.
+        base_dirs = folder_paths.get_folder_paths(type_name)
+
+    if not base_dirs:
+        return web.Response(status=404, text=f"No folder configured for type '{type_name}'")
+
+    # This is a basic sanitization. The check below is more robust.
+    # It prevents using '..' to escape the intended directories.
+    path_param = path_param.replace("..", "_")
+
+    potential_extensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif']
+
+    for root_dir in base_dirs:
+        abs_root_dir = os.path.abspath(root_dir)
+        # The path_param is the path to the main file, *without* its extension.
+        # It's what we use as the base for finding a preview image.
+        prospective_path_base = os.path.join(abs_root_dir, path_param)
+
+        # Security check: ensure the requested path is within the intended directory
+        if os.path.abspath(prospective_path_base).startswith(abs_root_dir):
+            for ext in potential_extensions:
+                image_path = prospective_path_base + ext
+                if os.path.isfile(image_path):
+                    return web.FileResponse(image_path)
+    
+    # If we get here, no file was found in any of the directories
+    return web.Response(status=404, text="Preview image not found")

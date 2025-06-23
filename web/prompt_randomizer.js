@@ -1,11 +1,14 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
-import { initializeSharedPromptFunctions } from "./prompt.js";
+import { initializeSharedPromptFunctions, applyContextMenuPatch } from "./prompt.js";
+// import { initializeSharedPromptFunctions } from "./prompt.js";
 
 app.registerExtension({
     name: "ErePromptRandomizer",
 
     setup() {
+        applyContextMenuPatch();
+        
         api.addEventListener("status", ({ detail }) => {
             if (detail?.exec_info?.queue_remaining === 0) {
                 setTimeout(() => {
@@ -79,11 +82,7 @@ app.registerExtension({
 
                     // Handle normal toggle click and qucik edit shift click
                     if (clickedPill) {
-                        if (e.shiftKey) {
-                            node.onTagQuickEdit(e, pos, clickedPill);
-                        } else {    
-                            node.onTagPillClick(e, pos, clickedPill);
-                        }
+                        node.onTagPillClick(e, pos, clickedPill);
                     // Open dropdown on background click tag selection
                     } else {
 
@@ -125,14 +124,13 @@ app.registerExtension({
             if (origDraw) origDraw.call(this, ctx);
 
             const textWidget = this.widgets?.find(w => w.name === "text");
-            const controlWidget = this.widgets?.find(w => w.name === "control after generate");
- 
             if (!textWidget || this.isEditMode || this.flags?.collapsed) return;
 
             const tagData = parseTags(this.properties._tagDataJSON || textWidget.value);
 
             ctx.font = "12px monospace";
-            const pillX = 10, pillY = 26, spacing = 5, pillPadding = 5;
+
+            const pillX = 10, pillY = 25, spacing = 5, pillPadding = 5;
             const pillMaxWidth = this.size[0] - pillX * 2;
             let currentX = pillX + pillPadding;
             let currentY = pillY + pillPadding;
@@ -143,7 +141,7 @@ app.registerExtension({
                 { label: "button_add_tag", display: "+" },
                 { label: "button_randomize", display: "🎲︎" },
             ];
-            
+              
             // Creating buttons
             for (const { display, label } of specialTags) {
                 if (currentX + 20 > pillX + pillMaxWidth - pillPadding) {
@@ -169,29 +167,38 @@ app.registerExtension({
                     // displayName = displayName.substring(Math.max(displayName.lastIndexOf('\\'), displayName.lastIndexOf('/')) + 1);
                     const dotIndex = displayName.lastIndexOf('.');
                     if (dotIndex !== -1) displayName = displayName.substring(0, dotIndex);
+                    if (tag.triggers && tag.triggers.length > 0) {
+                        displayName += ` [+${tag.triggers.length}]`;
+                    }
                 } else if (tag.type === 'embedding') {
                     displayName = displayName.replace(/^embedding:/, '');
+                } else if (tag.type === 'group') {
+                    // displayName = displayName.substring(Math.max(displayName.lastIndexOf('\\'), displayName.lastIndexOf('/')) + 1);
+                    const dotIndex = displayName.lastIndexOf('.');
+                    if (dotIndex !== -1) displayName = displayName.substring(0, dotIndex);
                 }
-                
+
                 let strengthText = "";
                 if (tag.strength && tag.strength !== 1.0) {
+                    tag.strength = tag.strength.toFixed(2);
                     strengthText = ` ${tag.strength}`;
                 }
 
                 let display = displayName;
-                let textWidth = ctx.measureText(display).width + ctx.measureText(strengthText).width;
+                let strengthWidth = ctx.measureText(strengthText).width;
+                let textWidth = ctx.measureText(display).width + strengthWidth;
             
                 // Trim and append ellipsis if too wide
                 if (textWidth > pillMaxWidth - pillPadding * 2) {
                     let i = display.length;
                     const dots = "...";
                     const dotsWidth = ctx.measureText("...").width;
-                    while (i > 0 && ctx.measureText(display.slice(0, i)).width + dotsWidth + ctx.measureText(strengthText).width > pillMaxWidth - dotsWidth / 2 - pillPadding * 2 ) i--;
+                    while (i > 0 && ctx.measureText(display.slice(0, i)).width + dotsWidth + strengthWidth > pillMaxWidth - dotsWidth / 2 - pillPadding * 2 ) i--;
                     display = display.slice(0, i) + dots;
                 }
 
                 // calculate pill width
-                const w = Math.min(ctx.measureText(display).width + ctx.measureText(strengthText).width + 12, pillMaxWidth - pillPadding * 2);
+                const w = Math.min(textWidth + 12, pillMaxWidth - pillPadding * 2);
             
                 if (currentX + w > pillX + pillMaxWidth - pillPadding) {
                     currentX = pillX + pillPadding;
@@ -224,7 +231,10 @@ app.registerExtension({
                     pillFill = "#415041"; // Muted green-cyan
                 } else if (p.type === 'embedding') {
                     pillFill = "#504149 "; // Muted yellow
+                } else if (p.type === 'group') {
+                    pillFill = "#504C41"; // Muted orange/brown
                 }
+
                 ctx.fillStyle = p.button ? LiteGraph.WIDGET_OUTLINE_COLOR  : pillFill;
                 ctx.roundRect(p.x, p.y, p.w, p.h, 6);
                 ctx.fill();
@@ -254,15 +264,12 @@ app.registerExtension({
                 this._pillMap.push({ x: p.x, y: p.y, w: p.w, h: p.h, label: p.label, button: p.button });
             }
             
-            this._measuredHeight = pillY + pillHeight + 8 + 25; // janky solution for locking resize height
+            this._measuredHeight = pillY + pillHeight + 10 + 25;
             // height correction
             if (!this.isEditMode) {
                 textWidget.computeSize = () => [0, pillHeight];
                 this.setSize([this.size[0], this.size[1]]);
-            } else {
-                controlWidget.hidden = true;
             }
-
 
         };
         

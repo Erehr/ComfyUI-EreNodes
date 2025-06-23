@@ -1,11 +1,18 @@
 import { app } from "../../scripts/app.js";
-import { initializeSharedPromptFunctions } from "./prompt.js";
+import { initializeSharedPromptFunctions, applyContextMenuPatch } from "./prompt.js";
+// import { initializeSharedPromptFunctions } from "./prompt.js";
 
 app.registerExtension({
     name: "ErePromptCloud",
 
+    async setup() {
+        applyContextMenuPatch();
+    },
+
     beforeRegisterNodeDef(nodeType, nodeData, app) {
         if (nodeData.name !== "ErePromptCloud") return;
+
+        console.log(`[ErePromptCloud] Applying custom logic to ${nodeData.name}.`);
 
         const parseTags = value => {
             try {
@@ -46,13 +53,9 @@ app.registerExtension({
                         }
                     }
 
-                    // Handle normal toggle click and qucik edit shift click
+                    // Handle normal toggle click and quick edit shift click
                     if (clickedPill) {
-                        if (e.shiftKey) {
-                            node.onTagQuickEdit(e, pos, clickedPill);
-                        } else {    
-                            node.onTagPillClick(e, pos, clickedPill);
-                        }
+                        node.onTagPillClick(e, pos, clickedPill);
                     } 
 
                 }
@@ -61,7 +64,6 @@ app.registerExtension({
 
             // Initialize all other functions shared between prompt nodes
             initializeSharedPromptFunctions(this, textWidget);
-
             // Update on load
             this.onUpdateTextWidget(this);
 
@@ -77,7 +79,7 @@ app.registerExtension({
 
             ctx.font = "12px monospace";
 
-            const pillX = 10, pillY = 26 + 5, spacing = 5, pillPadding = 5;
+            const pillX = 10, pillY = 30, spacing = 5, pillPadding = 5;
             const pillMaxWidth = this.size[0] - pillX * 2;
             let currentX = pillX;
             let currentY = pillY;
@@ -100,47 +102,56 @@ app.registerExtension({
 
             for (const tag of tagData) {
                 if (tag.type === "separator") {
-                    currentX = pillX;
+                    currentX = pillX + pillPadding;
                     currentY += 20 + 10 + 4;
-                    continue;
+                    continue; 
                 }
-            
+
                 let label = tag.name;
                 let displayName = tag.name;
                 if (tag.type === 'lora') {
                     // displayName = displayName.substring(Math.max(displayName.lastIndexOf('\\'), displayName.lastIndexOf('/')) + 1);
                     const dotIndex = displayName.lastIndexOf('.');
                     if (dotIndex !== -1) displayName = displayName.substring(0, dotIndex);
+                    if (tag.triggers && tag.triggers.length > 0) {
+                        displayName += ` [+${tag.triggers.length}]`;
+                    }
                 } else if (tag.type === 'embedding') {
                     displayName = displayName.replace(/^embedding:/, '');
+                } else if (tag.type === 'group') {
+                    // displayName = displayName.substring(Math.max(displayName.lastIndexOf('\\'), displayName.lastIndexOf('/')) + 1);
+                    const dotIndex = displayName.lastIndexOf('.');
+                    if (dotIndex !== -1) displayName = displayName.substring(0, dotIndex);
                 }
-                let nameForMeasuring = displayName;
+
                 let strengthText = "";
-                if (tag.strength && (tag.strength !== 1.0 || tag.strength !== "1.00" )) {
+                if (tag.strength && tag.strength !== 1.0) {
+                    tag.strength = tag.strength.toFixed(2);
                     strengthText = ` ${tag.strength}`;
                 }
-                
-                const pillMaxWidth = this.size[0] - pillX * 2;
-                const strengthWidth = ctx.measureText(strengthText).width;
-                const dots = "...";
-                const dotsWidth = ctx.measureText(dots).width;
 
-                if (ctx.measureText(nameForMeasuring).width + strengthWidth > pillMaxWidth - pillPadding * 2) {
-                    let i = nameForMeasuring.length;
-                    while (i > 0 && ctx.measureText(nameForMeasuring.slice(0, i)).width + dotsWidth + strengthWidth > pillMaxWidth - pillPadding * 2) {
-                        i--;
-                    }
-                    nameForMeasuring = nameForMeasuring.slice(0, i) + dots;
-                }
+                let display = displayName;
+                let strengthWidth = ctx.measureText(strengthText).width;
+                let textWidth = ctx.measureText(display).width + strengthWidth;
             
-                const w = Math.min(ctx.measureText(nameForMeasuring).width + strengthWidth + 12, pillMaxWidth);
+                // Trim and append ellipsis if too wide
+                if (textWidth > pillMaxWidth - pillPadding * 2) {
+                    let i = display.length;
+                    const dots = "...";
+                    const dotsWidth = ctx.measureText("...").width;
+                    while (i > 0 && ctx.measureText(display.slice(0, i)).width + dotsWidth + strengthWidth > pillMaxWidth - dotsWidth / 2 - pillPadding * 2 ) i--;
+                    display = display.slice(0, i) + dots;
+                }
+
+                // calculate pill width
+                const w = Math.min(textWidth + 12, pillMaxWidth);
             
                 if (currentX + w > pillX + pillMaxWidth) {
                     currentX = pillX;
                     currentY += 20 + spacing;
                 }
             
-                positions.push({ x: currentX, y: currentY, w, h: 20, label, display: nameForMeasuring, active: !tag.active, strength: tag.strength, type: tag.type });
+                positions.push({ x: currentX, y: currentY, w, h: 20, label, display, active: !tag.active, type: tag.type, strength: tag.strength });
                 currentX += w + spacing;
             }
 
@@ -159,6 +170,8 @@ app.registerExtension({
                     pillFill = "#415041"; // Muted green-cyan
                 } else if (p.type === 'embedding') {
                     pillFill = "#504149 "; // Muted yellow
+                } else if (p.type === 'group') {
+                    pillFill = "#504C41"; // Muted orange/brown
                 }
                 ctx.fillStyle = p.button ? LiteGraph.NODE_DEFAULT_BOXCOLOR : (p.active ? LiteGraph.WIDGET_BGCOLOR : pillFill);
                 ctx.roundRect(p.x, p.y, p.w, p.h, 6);

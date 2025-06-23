@@ -1,4 +1,7 @@
 {
-    "active_csv": "danbooru.csv",
-    "other_settings": {}
+    "active_csv": null,
+    "other_settings": {},
+    "autocomplete.global": true,
+    "autocomplete.csv_file": "danbooru.csv",
+    "autocomplete.csv": "danbooru.csv"
 }

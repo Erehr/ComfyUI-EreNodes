@@ -55,10 +55,8 @@ class ErePromptFilter:
                                 alias = alias.strip().lower().replace('_', ' ')
                                 alias_map[alias] = tag
             except Exception as e:
-                # Consider logging this error if it's critical for debugging
                 return (prompt,)
         else:
-            # Consider logging this error if it's critical for debugging
             return (prompt,)
 
         result_tags = []
