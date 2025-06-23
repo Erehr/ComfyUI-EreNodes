@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import shutil # Added for saving image file stream
 import server # ComfyUI's server instance
 from aiohttp import web
 from .prompt_csv import TAG_TYPES, DEFAULT_ENCODING, CSV_FILES_PATH, load_tags_from_csv
@@ -136,12 +137,14 @@ async def get_tag_group_handler(request):
 @server.PromptServer.instance.routes.post("/erenodes/save_tag_group")
 async def save_tag_group_handler(request):
     try:
-        data = await request.json()
-        filename = data.get("filename")
-        tags_json = data.get("tags_json")
-        path_param = data.get("path", "")
+        form_data = await request.post()  # Changed to handle FormData
+        
+        filename = form_data.get("filename")
+        tags_json_str = form_data.get("tags_json") # Renamed to avoid conflict with json module
+        path_param = form_data.get("path", "")
+        image_file_field = form_data.get("image_file", None)
 
-        if not filename or tags_json is None:
+        if not filename or tags_json_str is None:
             return web.json_response({"message": "Filename or tags_json not provided"}, status=400)
 
         safe_path_param = path_param.lstrip('/').lstrip('\\').replace("..", "_")
@@ -151,7 +154,7 @@ async def save_tag_group_handler(request):
             return web.json_response({"error": "Forbidden save path"}, status=403)
 
         os.makedirs(target_dir, exist_ok=True)
-        safe_filename = sanitize_filename(os.path.basename(filename))
+        safe_filename = sanitize_filename(os.path.basename(filename)) # This is the JSON filename
         if not safe_filename.lower().endswith(".json"):
             safe_filename += ".json"
 
@@ -160,15 +163,74 @@ async def save_tag_group_handler(request):
         if os.path.isdir(file_path):
             return web.json_response({"message": "A directory with this name already exists at the target location."}, status=400)
 
-        tags_data = json.loads(tags_json)
+        tags_data = json.loads(tags_json_str)
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(tags_data, f, indent=2)
 
-        display_path = os.path.join(safe_path_param, safe_filename) if safe_path_param else safe_filename
-        return web.json_response({"message": f"Tag group '{display_path}' saved successfully."})
+        message = f"Tag group '{os.path.join(safe_path_param, safe_filename) if safe_path_param else safe_filename}' saved successfully."
+
+        # Save associated image if provided
+        if image_file_field and hasattr(image_file_field, 'file') and image_file_field.file:
+            try:
+                image_original_filename = image_file_field.filename
+                # Ensure there's an original filename to get an extension from
+                if not image_original_filename:
+                    raise ValueError("Image file has no original filename.")
+
+                _, image_extension = os.path.splitext(image_original_filename)
+                
+                # Ensure there's an extension
+                if not image_extension:
+                    # Decide handling: skip, default, or error. Prompt implies using original.
+                    # If truly no extension, it's safer to note it or skip.
+                    print(f"[EreNodes] Warning: Image '{image_original_filename}' has no extension. Skipping image save for '{filename}'.")
+                    message += f" Image '{image_original_filename}' was not saved as it has no extension."
+                else:
+                    json_basename_no_ext, _ = os.path.splitext(safe_filename)
+                    image_save_filename = json_basename_no_ext + image_extension
+                    image_save_path = os.path.join(target_dir, image_save_filename)
+
+                    with open(image_save_path, 'wb') as f_img:
+                        image_file_field.file.seek(0) # Ensure stream is at the beginning
+                        shutil.copyfileobj(image_file_field.file, f_img)
+                    
+                    message += f" Image '{image_save_filename}' also saved."
+            except Exception as e:
+                print(f"[EreNodes] Error saving image for tag group '{filename}': {e}")
+                message += f" Failed to save associated image: {str(e)}"
+        else:
+            # This block is hit if the image field isn't as expected or not present
+            if image_file_field is not None: # Check if the field itself was found
+                print(f"[EreNodes] Debug: 'image_file' field was received but did not pass validation for saving.")
+                print(f"[EreNodes] Debug: Type of image_file_field: {type(image_file_field)}")
+                print(f"[EreNodes] Debug: image_file_field attributes: {dir(image_file_field)}")
+                if hasattr(image_file_field, 'filename'):
+                    print(f"[EreNodes] Debug: image_file_field.filename: {image_file_field.filename}")
+                else:
+                    print(f"[EreNodes] Debug: image_file_field does not have 'filename' attribute.")
+                
+                if hasattr(image_file_field, 'file'):
+                    print(f"[EreNodes] Debug: image_file_field.file: {image_file_field.file}")
+                    if image_file_field.file:
+                        print(f"[EreNodes] Debug: image_file_field.file is truthy.")
+                    else:
+                        print(f"[EreNodes] Debug: image_file_field.file is falsy (e.g., None or empty).")
+                else:
+                    print(f"[EreNodes] Debug: image_file_field does not have 'file' attribute.")
+                message += " (Image was provided but not saved due to an issue)."
+            else:
+                # This means form_data.get("image_file", None) returned None
+                print(f"[EreNodes] Debug: 'image_file' field was not found in the form data.")
+                # If associateImage was true on frontend, this indicates an issue.
+                # We don't know associateImage state here, so can't definitively say it's an error yet.
+                # If an image was meant to be sent, this is the problem point.
+        
+        return web.json_response({"message": message})
     except json.JSONDecodeError:
         return web.json_response({"message": "Invalid JSON format for tags_json."}, status=400)
     except Exception as e:
+        import traceback
+        print(f"[EreNodes] Error in save_tag_group_handler: {traceback.format_exc()}")
         return web.json_response({"error": str(e)}, status=500)
 
 

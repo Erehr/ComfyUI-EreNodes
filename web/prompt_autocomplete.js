@@ -1,7 +1,7 @@
 import { app } from "../../../scripts/app.js";
 
 // Base class for dynamic context menus
-class DynamicContextMenu {
+export class DynamicContextMenu { // Added export
     constructor(event, onSelectCallback) {
         this.event = event;
         this.onSelect = onSelectCallback;
