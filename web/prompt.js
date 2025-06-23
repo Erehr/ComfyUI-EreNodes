@@ -703,14 +703,24 @@ export function initializeSharedPromptFunctions(node, textWidget) {
                 const combinedTagData = existingTagData.concat(uniqueNewTagObjects);
                 node.properties._tagDataJSON = JSON.stringify(combinedTagData, null, 2);
                 node.onUpdateTextWidget(node);
-            } else {
+            } else { // Handles ErePromptMultiline
                 const textWidget = node.widgets.find(w => w.name === "text");
                 if (textWidget) {
-                    const newText = newTagData.map(formatTag).join("\n");
+                    // Use the node's specified tagSeparator, defaulting to ", "
+                    // And ensure \n in the separator string becomes an actual newline
+                    const separator = (node.properties._tagSeparator || ", ").replace(/\\n/g, "\n");
+                    const newTagsString = newTagData.map(formatTag).join(separator);
+                    
                     if (textWidget.value) {
-                        textWidget.value += `${newText}`;
+                        let cleanedExistingText = textWidget.value.replace(/[, \t\n]+$/, "");
+                        if (cleanedExistingText) { // If anything remains after cleaning
+                            textWidget.value = cleanedExistingText + separator + newTagsString;
+                        } else { // Existing text was only separators/whitespace
+                            textWidget.value = newTagsString;
+                        }
                     } else {
-                        textWidget.value = newText;
+                        // If the text widget is empty, just set it to the new tags.
+                        textWidget.value = newTagsString;
                     }
                 }
             }
