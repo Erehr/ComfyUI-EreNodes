@@ -1,8 +1,13 @@
 import { app } from "../../scripts/app.js";
-import { initializeSharedPromptFunctions } from "./prompt.js";
+import { initializeSharedPromptFunctions, applyContextMenuPatch } from "./prompt.js";
+// import { initializeSharedPromptFunctions } from "./prompt.js";
 
 app.registerExtension({
     name: "ErePromptMultiSelect",
+
+    async setup() {
+        applyContextMenuPatch();
+    },
 
     beforeRegisterNodeDef(nodeType, nodeData, app) {
         if (nodeData.name !== "ErePromptMultiSelect") return;
@@ -49,12 +54,7 @@ app.registerExtension({
 
                     // Handle normal toggle click and qucik edit shift click
                     if (clickedPill) {
-                        if (e.shiftKey) {
-                            node.onTagQuickEdit(e, pos, clickedPill);
-                            
-                        } else {    
-                            node.onTagPillClick(e, pos, clickedPill);
-                        }
+                        node.onTagPillClick(e, pos, clickedPill);
                     // Open dropdown on background click tag selection
                     } else {
 
@@ -101,7 +101,7 @@ app.registerExtension({
 
             ctx.font = "12px monospace";
 
-            const pillX = 10, pillY = 26, spacing = 5, pillPadding = 5;
+            const pillX = 10, pillY = 25, spacing = 5, pillPadding = 5;
             const pillMaxWidth = this.size[0] - pillX * 2;
             let currentX = pillX + pillPadding;
             let currentY = pillY + pillPadding;
@@ -109,7 +109,7 @@ app.registerExtension({
             const positions = [];
             const specialTags = [
                 { label: "button_menu", display: "≡" },
-                { label: "button_add_tag", display: "+" } // this button tag need to show at end after all tag pills
+                { label: "button_add_tag", display: "+" }
             ];
               
             // Creating buttons
@@ -137,36 +137,64 @@ app.registerExtension({
                     // displayName = displayName.substring(Math.max(displayName.lastIndexOf('\\'), displayName.lastIndexOf('/')) + 1);
                     const dotIndex = displayName.lastIndexOf('.');
                     if (dotIndex !== -1) displayName = displayName.substring(0, dotIndex);
+                    if (tag.triggers && tag.triggers.length > 0) {
+                        displayName += ` [+${tag.triggers.length}]`;
+                    }
                 } else if (tag.type === 'embedding') {
                     displayName = displayName.replace(/^embedding:/, '');
+                } else if (tag.type === 'group') {
+                    // displayName = displayName.substring(Math.max(displayName.lastIndexOf('\\'), displayName.lastIndexOf('/')) + 1);
+                    const dotIndex = displayName.lastIndexOf('.');
+                    if (dotIndex !== -1) displayName = displayName.substring(0, dotIndex);
                 }
-                
+
                 let strengthText = "";
                 if (tag.strength && tag.strength !== 1.0) {
+                    tag.strength = tag.strength.toFixed(2);
                     strengthText = ` ${tag.strength}`;
                 }
 
-                let display = displayName;
-                let textWidth = ctx.measureText(display).width + ctx.measureText(strengthText).width;
-            
-                // Trim and append ellipsis if too wide
-                if (textWidth > pillMaxWidth - pillPadding * 2) {
-                    let i = display.length;
-                    const dots = "...";
-                    const dotsWidth = ctx.measureText("...").width;
-                    while (i > 0 && ctx.measureText(display.slice(0, i)).width + dotsWidth + ctx.measureText(strengthText).width > pillMaxWidth - dotsWidth / 2 - pillPadding * 2 ) i--;
-                    display = display.slice(0, i) + dots;
-                }
+                // Calculate base text width for pill sizing (w)
+                // strengthText already includes its leading space if present
+                let textWidthForPillSizing = ctx.measureText(displayName).width + ctx.measureText(strengthText).width;
+                const w = Math.min(textWidthForPillSizing + 12, pillMaxWidth - pillPadding * 2); // pill's own width
 
-                // calculate pill width
-                const w = Math.min(ctx.measureText(display).width + ctx.measureText(strengthText).width + 12, pillMaxWidth - pillPadding * 2);
+                // Internal content width for text layout, assuming 6px padding on left and right from textX calculation
+                const contentLayoutWidth = Math.max(0, w - 12);
+                                
+                let finalDisplayString;
+                const namePartW = ctx.measureText(displayName).width;
+                const strengthPartW = ctx.measureText(strengthText).width; // strengthText includes its leading space
+
+                if (namePartW + strengthPartW <= contentLayoutWidth) {
+                    // Fits, add padding spaces to fill remaining space
+                    const spaceCharWidth = ctx.measureText(" ").width;
+                    const remainingSpaceForPadding = contentLayoutWidth - (namePartW + strengthPartW);
+                    const numPaddingSpaces = (spaceCharWidth > 0 && remainingSpaceForPadding > 0) ? Math.floor(remainingSpaceForPadding / spaceCharWidth) : 0;
+                    const padding = " ".repeat(numPaddingSpaces);
+                    finalDisplayString = displayName + padding + strengthText;
+                } else {
+                    // Overflows, combine (strengthText has its space) then truncate. No extra padding.
+                    finalDisplayString = displayName + strengthText;
+                    if (ctx.measureText(finalDisplayString).width > contentLayoutWidth) {
+                        let i = finalDisplayString.length;
+                        const dots = "...";
+                        const dotsWidth = ctx.measureText(dots).width;
+                        const targetWidth = Math.max(0, contentLayoutWidth - dotsWidth);
+                        while (i > 0 && ctx.measureText(finalDisplayString.slice(0, i)).width > targetWidth) {
+                            i--;
+                        }
+                        finalDisplayString = finalDisplayString.slice(0, i) + dots;
+                    }
+                }
             
                 if (currentX + w > pillX + pillMaxWidth - pillPadding) {
                     currentX = pillX + pillPadding;
                     currentY += 20 + spacing;
                 }
             
-                positions.push({ x: currentX, y: currentY, w, h: 20, label, display, active: !tag.active, type: tag.type, strength: tag.strength });
+                // Store the original tag.strength for any interaction logic, display now contains all text
+                positions.push({ x: currentX, y: currentY, w, h: 20, label, display: finalDisplayString, active: !tag.active, type: tag.type, strength: tag.strength });
                 currentX += w + spacing;
             }
 
@@ -192,7 +220,10 @@ app.registerExtension({
                     pillFill = "#415041"; // Muted green-cyan
                 } else if (p.type === 'embedding') {
                     pillFill = "#504149 "; // Muted yellow
+                } else if (p.type === 'group') {
+                    pillFill = "#504C41"; // Muted orange/brown
                 }
+
                 ctx.fillStyle = p.button ? LiteGraph.WIDGET_OUTLINE_COLOR  : pillFill;
                 ctx.roundRect(p.x, p.y, p.w, p.h, 6);
                 ctx.fill();
@@ -207,22 +238,18 @@ app.registerExtension({
 
                 const textX = p.x + (p.button ? p.w / 2 : 6);
                 const textY = p.y + p.h / 2 + 1;
+                // p.display now contains the fully formatted string including name, padding, and strength.
                 ctx.fillText(p.display, textX, textY);
 
-                if (p.strength && p.strength !== 1.0) {
-                    const nameWidth = ctx.measureText(p.display).width;
-                    const strengthText = ` ${p.strength}`;
-                    ctx.globalAlpha = 0.5;
-                    ctx.fillText(strengthText, textX + nameWidth, textY);
-                    ctx.globalAlpha = 1;
-                }
+                // Removed separate drawing of strength text as it's now part of p.display.
+                // The alpha styling for strength is no longer applied with this simpler approach.
 
                 ctx.textBaseline = "alphabetic";
 
                 this._pillMap.push({ x: p.x, y: p.y, w: p.w, h: p.h, label: p.label, button: p.button });
             }
             
-            this._measuredHeight = pillY + pillHeight + 8;
+            this._measuredHeight = pillY + pillHeight + 10;
             // height correction
             if (!this.isEditMode) {
                 textWidget.computeSize = () => [0, pillHeight];

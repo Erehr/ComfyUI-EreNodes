@@ -44,14 +44,13 @@ def load_tags_from_csv(csv_path):
                     except (ValueError, IndexError):
                         continue
         except Exception as e:
-            # Consider logging this error if it's critical for debugging
             pass
     
     return tags
 
 def get_tag_data():
     settings = get_erenodes_settings()
-    active_csv = settings.get('active_csv')
+    active_csv = settings.get('autocomplete.csv')
 
     if not active_csv:
         return []

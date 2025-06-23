@@ -36,11 +36,6 @@ class ErePrompt:
                 tag_separator = node["properties"].get("_tagSeparator")
                 node_found = True
                 break
-
-
-        # final_prefix_separator_str = None
-        print(f"[ErePrompt DEBUG]  Prefix Separator: {prefix_separator}")
-        print(f"[ErePrompt DEBUG] Tag Separator: {tag_separator}")
         
         separator = str(prefix_separator).replace("\\n", "\n")
         

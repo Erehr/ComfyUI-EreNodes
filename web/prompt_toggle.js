@@ -1,8 +1,12 @@
 import { app } from "../../scripts/app.js";
-import { initializeSharedPromptFunctions } from "./prompt.js";
+import { initializeSharedPromptFunctions, applyContextMenuPatch } from "./prompt.js";
 
 app.registerExtension({
     name: "ErePromptToggle",
+
+    async setup() {
+        applyContextMenuPatch();
+    },
 
     beforeRegisterNodeDef(nodeType, nodeData, app) {
         if (nodeData.name !== "ErePromptToggle") return;
@@ -48,12 +52,8 @@ app.registerExtension({
                     }
 
                     // Handle normal toggle click and qucik edit shift click
-                    if (clickedPill) {
-                        if (e.shiftKey) {
-                            node.onTagQuickEdit(e, pos, clickedPill);
-                        } else {    
-                            node.onTagPillClick(e, pos, clickedPill);
-                        }
+                    if (clickedPill) { 
+                        node.onTagPillClick(e, pos, clickedPill);
                     } 
 
                 }
@@ -89,10 +89,9 @@ app.registerExtension({
             const positions = [];
             const specialTags = [
                 { label: "button_menu", display: "≡" },
-                { label: "button_add_tag", display: "+" } // this button tag need to show at end after all tag pills
+                { label: "button_add_tag", display: "+" }
             ];
     
-            // Creating buttons
             for (const { display, label } of specialTags) {
                 if (currentX + 20 > pillX + pillMaxWidth - pillPadding) {
                     currentX = pillX + pillPadding;
@@ -102,50 +101,83 @@ app.registerExtension({
                 currentX += 20 + spacing;
             }
 
-            // Creating pills
             for (const tag of tagData) {
                 if (tag.type === "separator") {
-                    currentX = pillX;
+                    currentX = pillX + pillPadding;
                     currentY += 20 + 10 + 4;
-                    continue;
-                }
-            
-                let label = tag.name;
-                let displayName = tag.name;
-                if (tag.type === 'lora') {
-                    // displayName = displayName.substring(Math.max(displayName.lastIndexOf('\\'), displayName.lastIndexOf('/')) + 1);
-                    const dotIndex = displayName.lastIndexOf('.');
-                    if (dotIndex !== -1) displayName = displayName.substring(0, dotIndex);
-                } else if (tag.type === 'embedding') {
-                    displayName = displayName.replace(/^embedding:/, '');
-                }
-                
-                let strengthText = "";
-                if (tag.strength && tag.strength !== 1.0) {
-                    strengthText = ` ${tag.strength}`;
+                    continue; 
                 }
 
-                let display = displayName;
-                let textWidth = ctx.measureText(display).width + ctx.measureText(strengthText).width;
-            
-                // Trim and append ellipsis if too wide
-                if (textWidth > pillMaxWidth - pillPadding *2 - 32) {
-                    let i = display.length;
-                    const dots = "...";
-                    const dotsWidth = ctx.measureText("...").width;
-                    while (i > 0 && ctx.measureText(display.slice(0, i)).width + dotsWidth + ctx.measureText(strengthText).width > pillMaxWidth - dotsWidth / 2 - pillPadding * 2 - 32) i--;
-                    display = display.slice(0, i) + dots;
+                let baseName = tag.name;
+                let loraTriggersSuffix = ""; // Will include leading space if needed
+                let strengthStringToDraw = null; // Separate string for strength
+
+                if (tag.type === 'lora') {
+                    const dotIndex = baseName.lastIndexOf('.');
+                    if (dotIndex !== -1) baseName = baseName.substring(0, dotIndex);
+                    if (tag.triggers && tag.triggers.length > 0) {
+                        loraTriggersSuffix = ` [+${tag.triggers.length}]`;
+                    }
+                } else if (tag.type === 'embedding') {
+                    baseName = baseName.replace(/^embedding:/, '');
+                } else if (tag.type === 'group') {
+                    const dotIndex = baseName.lastIndexOf('.');
+                    if (dotIndex !== -1) baseName = baseName.substring(0, dotIndex);
                 }
-            
-                // don't need to calculate pill width
+
+                if (tag.strength && parseFloat(tag.strength) !== 1.0) {
+                    strengthStringToDraw = ` ${parseFloat(tag.strength).toFixed(2)}`;
+                }
+
+                const leftTextCombined = baseName + loraTriggersSuffix;
+                
                 const w = pillMaxWidth;
-            
+                const leftMargin = 34; // For toggle switch
+                const rightPadding = 5;
+                const gapBetweenTextParts = 5; // Gap if both left text and strength are present
+                const dots = "...";
+                const dotsWidth = ctx.measureText(dots).width;
+
+                const contentWidthForLayout = w - leftMargin - rightPadding;
+                
+                let strengthPartWidth = 0;
+                if (strengthStringToDraw) {
+                    strengthPartWidth = ctx.measureText(strengthStringToDraw).width;
+                }
+
+                let availableWidthForLeft = contentWidthForLayout;
+                if (strengthPartWidth > 0) {
+                    availableWidthForLeft -= (strengthPartWidth + gapBetweenTextParts);
+                }
+                availableWidthForLeft = Math.max(0, availableWidthForLeft); // Ensure non-negative
+
+                let finalLeftDisplay = leftTextCombined;
+                if (ctx.measureText(leftTextCombined).width > availableWidthForLeft) {
+                    if (availableWidthForLeft <= dotsWidth) { // Not enough space even for "..."
+                        finalLeftDisplay = "";
+                    } else {
+                        let i = leftTextCombined.length;
+                        while (i > 0 && ctx.measureText(leftTextCombined.slice(0, i)).width + dotsWidth > availableWidthForLeft) {
+                            i--;
+                        }
+                        finalLeftDisplay = leftTextCombined.slice(0, i) + dots;
+                    }
+                }
+                            
                 if (currentX + w > pillX + pillMaxWidth) {
                     currentX = pillX;
                     currentY += 20 + spacing;
                 }
             
-                positions.push({ x: currentX, y: currentY, w, h: 20, label, display, active: !tag.active, strength: tag.strength, type: tag.type });
+                positions.push({
+                    x: currentX, y: currentY, w, h: 20,
+                    label: tag.name,
+                    display: finalLeftDisplay, // This is the name + Lora triggers part
+                    strengthDisplay: strengthStringToDraw, // Separate strength part
+                    active: tag.active,
+                    type: tag.type,
+                    strength: tag.strength // Original strength for data
+                });
                 currentX += w + spacing;
             }
 
@@ -156,13 +188,12 @@ app.registerExtension({
 
             for (const p of positions) {
                 ctx.beginPath();
-                ctx.globalAlpha = p.active ? 0.75 : 1;
+                ctx.globalAlpha = p.active ? 1 : 0.75;
                 let pillFill = LiteGraph.WIDGET_BGCOLOR;
-                ctx.fillStyle = p.button ? LiteGraph.NODE_DEFAULT_BOXCOLOR : (p.active ? LiteGraph.WIDGET_BGCOLOR : pillFill);
+                ctx.fillStyle = p.button ? LiteGraph.NODE_DEFAULT_BOXCOLOR : (p.active ? pillFill : LiteGraph.WIDGET_BGCOLOR);
                 ctx.roundRect(p.x, p.y, p.w, p.h, p.h / 2);
                 ctx.fill();
 
-                // Draw toggle switch
                 if (!p.button) {
                     ctx.strokeStyle = "#444";
                     ctx.lineWidth = 1;
@@ -174,16 +205,17 @@ app.registerExtension({
                     ctx.fill();
 
                     ctx.beginPath();
-                    let pillFill = "#8899bb"; // Default
+                    let pillFill = "#8899bb";
                     if (p.type === 'lora') {
-                        pillFill = "#89a189"; // Muted green-cyan
+                        pillFill = "#89a189";
                     } else if (p.type === 'embedding') {
-                        pillFill = "#9b8899  "; // Muted yellow
+                        pillFill = "#9b8899  ";
+                    } else if (p.type === 'group') {
+                        pillFill = "#9b9188";
                     }
-                    ctx.fillStyle = p.active ? "#888" : pillFill;
-                    // ctx.fillStyle = p.active ? "#888" : "#8899bb";
+                    ctx.fillStyle = p.active ? pillFill : "#888";
                     const r = 7;
-                    const cx = p.x + (p.active ? r + 4 : 18 - r + 8);
+                    const cx = p.x + (p.active ? 18 - r + 8 : r + 4);
                     const cy = p.y + p.h / 2;
                     ctx.arc(cx, cy, r, 0, 2 * Math.PI);
                     ctx.fill();
@@ -192,25 +224,36 @@ app.registerExtension({
                 ctx.textBaseline = "middle";
                 ctx.textAlign = p.button ? "center" : "left";
                 ctx.fillStyle = LiteGraph.WIDGET_TEXT_COLOR;
-                const textX = p.x + (p.button ? p.w / 2 : 34);
+                const textX = p.x + (p.button ? p.w / 2 : 34); // Left starting X for main display text
                 const textY = p.y + p.h / 2 + 1;
-                ctx.fillText(p.display, textX, textY);
-
-                if (p.strength && p.strength !== 1.0) {
-                    const nameWidth = ctx.measureText(p.display).width;
-                    const strengthText = ` ${p.strength}`;
-                    ctx.globalAlpha = 0.5;
-                    ctx.fillText(strengthText, textX + nameWidth, textY);
-                    ctx.globalAlpha = 1;
+                
+                // Draw the main display text (name + Lora triggers, possibly truncated)
+                if (p.display) { // Check if display string is not empty after truncation
+                    ctx.fillText(p.display, textX, textY);
                 }
 
+                // Draw strength value separately if it exists, right-aligned with opacity
+                if (p.strengthDisplay) {
+                    const strengthTextWidth = ctx.measureText(p.strengthDisplay).width;
+                    const strengthX = p.x + p.w - pillPadding * 2 - strengthTextWidth; // pill right edge - pillPadding - its own width
+                    
+                    // Ensure strength text doesn't overlap with left text if left text is very short
+                    // This check is tricky if p.display is truncated.
+                    // A simpler rule: if strengthX would be less than textX + p.display width + gap, it might need adjustment.
+                    // However, the availableWidthForLeft calculation should prevent overlap if truncation works.
+
+                    ctx.globalAlpha = 0.5;
+                    ctx.fillText(p.strengthDisplay, strengthX, textY);
+                    ctx.globalAlpha = 1;
+                }
+                
+                // Lora trigger count is now part of p.display, so separate drawing is removed.
                 ctx.textBaseline = "alphabetic";
 
                 this._pillMap.push({ x: p.x, y: p.y, w: p.w, h: p.h, label: p.label, button: p.button });
             }
             
             this._measuredHeight = pillY + pillHeight + 8;
-            // height correction
             if (!this.isEditMode) {
                 textWidget.computeSize = () => [0, pillHeight];
                 this.setSize([this.size[0], this.size[1]]);

@@ -1,5 +1,6 @@
 import { app } from "../../scripts/app.js";
-import { TagContextMenuInsert } from "./prompt_autocomplete.js";
+// import { TagContextMenuInsert, TagContextMenuQuickEdit } from "./prompt_autocomplete.js";
+import { TagContextMenuInsert, TagEditContextMenu } from "./prompt_autocomplete.js";
 
 const parseTags = value => {
     try {
@@ -12,6 +13,11 @@ const parseTags = value => {
 function parseTag(tagString) {
     let originalString = (tagString || "").trim();
     if (!originalString) return null;
+
+    const groupMatch = originalString.match(/^group:(.+)$/);
+    if (groupMatch) {
+        return { name: groupMatch[1], type: 'group', active: true };
+    }
 
     const loraMatch = originalString.match(/^<lora:([^:]+)(?::([\d.-]+))?>$/);
     if (loraMatch) {
@@ -37,6 +43,7 @@ function parseTag(tagString) {
     let type = 'tag';
     if (name.startsWith('embedding:')) {
         type = 'embedding';
+        name = name.substring('embedding:'.length);
     }
 
     return { name, type, strength, active: true };
@@ -47,10 +54,17 @@ function formatTag(tag) {
         return "";
     }
     if (tag.type === 'lora') {
-        if (tag.strength && tag.strength !== 1.0) {
-            return `<lora:${tag.name}:${tag.strength}>`;
-        }
-        return `<lora:${tag.name}>`;
+        const strength = (tag.strength === undefined) ? 1.0 : tag.strength;
+        const strengthStr = (strength % 1 === 0) ? strength.toFixed(1) : strength;
+        const filename = tag.extension ? `${tag.name}${tag.extension}` : tag.name;
+        return `<lora:${filename}:${strengthStr}>`;
+    }
+    if (tag.type === 'embedding') {
+        return `embedding:${tag.name}`;
+    }
+    if (tag.type === 'group') {
+        const filename = tag.extension ? `${tag.name}${tag.extension}` : tag.name;
+        return `group:${filename}`;
     }
 
     if (tag.strength && tag.strength !== 1.0) {
@@ -113,11 +127,127 @@ function parseTextToTagData(text, oldTagData = []) {
     return finalTagData;
 }
 
+async function flattenTagData(tagData, seen = new Set()) {
+    const flattened = [];
+
+    for (const tag of tagData) {
+        if (tag.type === 'group' && !seen.has(tag.name)) {
+            seen.add(tag.name);
+            try {
+                const response = await fetch(`/erenodes/get_tag_group?filename=${encodeURIComponent(tag.name)}`);
+                if (response.ok) {
+                    const groupTags = await response.json();
+                    const recursivelyFlattened = await flattenTagData(groupTags, seen);
+                    flattened.push(...recursivelyFlattened);
+                } else {
+                    flattened.push(tag);
+                }
+            } catch (error) {
+                console.error(`[EreNodes] Error flattening group ${tag.name}:`, error);
+                flattened.push(tag);
+            }
+        } else if (tag.type !== 'group') {
+            flattened.push(tag);
+        }
+    }
+    return flattened;
+}
+
 const getTextInput = async (title, promptMessage, defaultValue = "") => {
     const value = prompt(promptMessage, defaultValue);
     if (value === null) return false; 
     return value;
 };
+
+
+// Custom hijack of the context menu to allow for quick edit of tags on right click
+let contextMenuPatched = false;
+const ERE_TAG_NODE_TYPES = ["ErePromptCloud", "ErePromptToggle", "ErePromptMultiSelect", "ErePromptRandomizer"];
+
+let stylesInjected = false;
+function injectSpinnerHidingStyles() {
+    if (stylesInjected) return;
+    stylesInjected = true;
+    const style = document.createElement('style');
+    style.textContent = `
+        .erenodes-quick-edit-input::-webkit-outer-spin-button,
+        .erenodes-quick-edit-input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        .erenodes-quick-edit-input {
+            -moz-appearance: textfield;
+        }
+    `;
+    document.head.appendChild(style);
+}
+
+export function applyContextMenuPatch() {
+    if (contextMenuPatched) {
+        return;
+    }
+    contextMenuPatched = true;
+
+    injectSpinnerHidingStyles();
+
+    const canvasPrototype = app.canvas.constructor.prototype;
+    const orig_processContextMenu = canvasPrototype.processContextMenu;
+
+    canvasPrototype.processContextMenu = function(node, e) {
+        // Check if it's one of our target nodes
+        if (node && ERE_TAG_NODE_TYPES.includes(node.constructor.type)) {
+            const canvas_pos = this.convertEventToCanvasOffset(e);
+            const node_pos = [canvas_pos[0] - node.pos[0], canvas_pos[1] - node.pos[1]];
+
+            if (node._pillMap) {
+                for (const pill of node._pillMap) {
+                    if (node_pos[0] >= pill.x && node_pos[0] <= pill.x + pill.w &&
+                        node_pos[1] >= pill.y && node_pos[1] <= pill.y + pill.h) {
+                        
+                        const scale = app.canvas.ds.scale;
+
+                        // node_pos is the click relative to the node's top-left, in canvas units.
+                        // pill.x, pill.y, pill.h are relative to the node's top-left, in canvas units.
+
+                        // Pill's bottom-left corner, relative to the node's top-left (canvas units)
+                        const pillNodeRelativeBottomLeftX = pill.x;
+                        const pillNodeRelativeBottomLeftY = pill.y + pill.h;
+
+                        // Delta from the click point (within the node) to the pill's bottom-left (within the node), in canvas units
+                        const deltaCanvasX = pillNodeRelativeBottomLeftX - node_pos[0];
+                        const deltaCanvasY = pillNodeRelativeBottomLeftY - node_pos[1];
+
+                        // Convert this delta to screen pixels
+                        const deltaScreenX = deltaCanvasX * scale;
+                        const deltaScreenY = deltaCanvasY * scale;
+
+                        // New menu position: original click viewport coordinates + screen delta
+                        const finalClientX = e.clientX + deltaScreenX;
+                        const finalClientY = e.clientY + deltaScreenY + 5; // 5px gap
+
+                        const nodeScreenWidth = node.size[0] * scale; // Calculate node's current screen width
+
+                        const positionEvent = {
+                            ...e, // Spread original event properties
+                            clientX: finalClientX,
+                            clientY: finalClientY
+                        };
+                        
+                        // Use setTimeout to avoid menu/event conflicts
+                        setTimeout(() => {
+                            node.onTagQuickEdit(positionEvent, node, pill, nodeScreenWidth);
+                        }, 0);
+                        
+                        return; // Stop processing, preventing the original menu
+                    }
+                }
+            }
+        }
+
+        // If it wasn't our node or wasn't a pill click on our node, call the original function
+        return orig_processContextMenu.apply(this, arguments);
+    };
+}
 
 export function initializeSharedPromptFunctions(node, textWidget) {
 
@@ -308,7 +438,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         app.graph.setDirtyCanvas(true);
     };
 
-    node.onUpdateTextWidget = (node) => {
+    node.onUpdateTextWidget = async (node) => {
         const textWidget = node.widgets.find(w => w.name === "text");
         if (!textWidget) return;
 
@@ -323,24 +453,80 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         for (const tag of activeTagsAndSeparators) {
             if (tag.type === 'separator') {
                 if (currentLineTags.length > 0) {
-                    parts.push(currentLineTags.join(tagSeparator));
-                    currentLineTags = [];
-                }
-                // Only add a separator if there was something before it and parts is not empty
-                // and the last part wasn't already a separator (or effectively one due to empty line).
-                if (parts.length > 0 && parts[parts.length -1] !== tagSeparator) {
-                     // Check if the last part added actual content or if it was an empty line join
-                    if (parts[parts.length-1].trim() !== "") { 
+                    const line = currentLineTags.join(tagSeparator);
+
+                    // If there are already parts, and the last part is content (not a separator/newline),
+                    // then we need to add a separator before adding this new line of content.
+                    if (parts.length > 0 && parts[parts.length - 1] !== tagSeparator && parts[parts.length - 1].trim() !== '') {
                         parts.push(tagSeparator);
                     }
+                    parts.push(line);
+                    currentLineTags = [];
+                }
+            } else if (tag.type === 'group') {
+                // If we have pending tags, join and add them before processing the group.
+                if (currentLineTags.length > 0) {
+                    const line = currentLineTags.join(tagSeparator);
+
+                    // If there are already parts, and the last part is content (not a separator/newline),
+                    // then we need to add a separator before adding this new line of content.
+                    if (parts.length > 0 && parts[parts.length - 1] !== tagSeparator && parts[parts.length - 1].trim() !== '') {
+                        parts.push(tagSeparator);
+                    }
+                    parts.push(line);
+                    currentLineTags = [];
+                }
+                try {
+                    const filename = tag.extension ? `${tag.name}${tag.extension}` : tag.name;
+                    const response = await fetch(`/erenodes/get_tag_group?filename=${encodeURIComponent(filename)}`);
+                    if (response.ok) {
+                        const groupTagData = await response.json();
+                        if (Array.isArray(groupTagData)) {
+                            const activeGroupTags = groupTagData.filter(t => t.active && t.name);
+                            if (activeGroupTags.length > 0) {
+                                if (parts.length > 0 && parts[parts.length - 1].trim() !== '') {
+                                    parts.push(tagSeparator);
+                                }
+                                
+                                const groupParts = [];
+                                activeGroupTags.forEach(gTag => {
+                                    groupParts.push(formatTag(gTag));
+                                    if (gTag.type === 'lora' && gTag.triggers && gTag.triggers.length > 0) {
+                                        groupParts.push(...gTag.triggers);
+                                    }
+                                });
+                                let groupPart = groupParts.join(tagSeparator);
+
+                                if (tag.strength && tag.strength !== 1.0) {
+                                    const strengthValue = parseFloat(tag.strength);
+                                    if (!isNaN(strengthValue) && strengthValue !== 1.0) {
+                                        groupPart = `(${groupPart}:${strengthValue.toFixed(2)})`;
+                                    }
+                                }
+                                parts.push(groupPart);
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error(`[EreNodes] Failed to load and parse tag group: ${tag.name}`, error);
                 }
             } else {
                 currentLineTags.push(formatTag(tag));
+                if (tag.type === 'lora' && tag.triggers && tag.triggers.length > 0) {
+                    currentLineTags.push(...tag.triggers);
+                }
             }
         }
 
         if (currentLineTags.length > 0) {
-            parts.push(currentLineTags.join(tagSeparator));
+            const line = currentLineTags.join(tagSeparator);
+
+            // If there are already parts, and the last part is content (not a separator/newline),
+            // then we need to add a separator before adding this new line of content.
+            if (parts.length > 0 && parts[parts.length - 1] !== tagSeparator && parts[parts.length - 1].trim() !== '') {
+                parts.push(tagSeparator);
+            }
+            parts.push(line);
         }
 
         // Remove trailing separator if 'parts' ends with it and has more than one element.
@@ -355,7 +541,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             let currentText = parts.filter(part => part.trim() !== '' || part === tagSeparator)
                                    .join('');
             // If the final result is just the separator itself (e.g. only a separator was active), make it empty.
-            if (currentText === tagSeparator && activeTagsAndSeparators.filter(t => t.type !== 'separator').length === 0) {
+            if (currentText === tagSeparator && activeTagsAndSeparators.filter(t => t.type !== 'separator' && t.type !== 'group').length === 0) {
                 currentText = '';
             }
 
@@ -366,7 +552,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
     };
 
     node.onClipboardReplace = () => {
-        navigator.clipboard.readText().then(text => {
+        navigator.clipboard.readText().then(async text => {
             if (node.type !== "ErePromptMultiline") {
                 const tagStrings = (text.replace(/\n/g, ',').split(/,(?![^()]*\))/g) || [])
                     .map(s => s.trim())
@@ -375,7 +561,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
                 const tagData = tagStrings.map(parseTag).filter(Boolean);
                 const json = JSON.stringify(tagData, null, 2);
                 node.properties._tagDataJSON = json;
-                node.onUpdateTextWidget(node);
+                await node.onUpdateTextWidget(node);
                 app.graph.setDirtyCanvas(true);
             } else {
                 const textWidget = node.widgets.find(w => w.name === "text");
@@ -387,7 +573,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
     };
 
     node.onClipboardAppend = () => {
-        navigator.clipboard.readText().then(text => {
+        navigator.clipboard.readText().then(async text => {
             if (node.type !== "ErePromptMultiline") {
                 const newTagStrings = (text.replace(/\n/g, ',').split(/,(?![^()]*\))/g) || [])
                     .map(s => s.trim())
@@ -405,7 +591,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
                 
                 const combinedTagData = existingTagData.concat(uniqueNewTags);
                 node.properties._tagDataJSON = JSON.stringify(combinedTagData, null, 2);
-                node.onUpdateTextWidget(node);
+                await node.onUpdateTextWidget(node);
                 app.graph.setDirtyCanvas(true);
             } else {
                 const textWidget = node.widgets.find(w => w.name === "text");
@@ -416,7 +602,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         });
     };
 
-    node.onToggleTags = () => {
+    node.onToggleTags = async () => {
         const tagData = parseTags(node.properties._tagDataJSON || "[]");
         if (!tagData.length) return;
 
@@ -426,7 +612,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         const updatedTagData = tagData.map(tag => ({ ...tag, active: tag.name ? allTargetState : tag.active }));
 
         node.properties._tagDataJSON = JSON.stringify(updatedTagData, null, 2);
-        node.onUpdateTextWidget(node);
+        await node.onUpdateTextWidget(node);
         app.graph.setDirtyCanvas(true);
     };
 
@@ -601,7 +787,9 @@ export function initializeSharedPromptFunctions(node, textWidget) {
     };
 
     node.onOverwriteTagGroup = async (fullItemPath) => {
-        const tagsToSave = node.properties._tagDataJSON || "[]";
+        const tagData = parseTags(node.properties._tagDataJSON || "[]");
+        const flattenedData = await flattenTagData(tagData);
+        const tagsToSave = JSON.stringify(flattenedData, null, 2);
 
         let directoryPath = "";
         let fileName = fullItemPath;
@@ -720,16 +908,19 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         try {
             fileName = await getTextInput("Save Tag Group", "Enter filename (e.g., my_tags.json):", "");
             if (fileName === false || fileName === null) return; 
-            fileName = String(fileName).trim();
+            fileName = String(fileName).trim(); 
             if (!fileName) fileName = ""; 
             if (!fileName.toLowerCase().endsWith('.json')) fileName += '.json';
 
             let jsonString;
             if (node.properties._tagDataJSON !== undefined) {
-                jsonString = node.properties._tagDataJSON || "[]";
+                const tagData = parseTags(node.properties._tagDataJSON || "[]");
+                const flattenedData = await flattenTagData(tagData);
+                jsonString = JSON.stringify(flattenedData, null, 2);
             } else {
                 const tagData = parseTextToTagData(textWidget.value);
-                jsonString = JSON.stringify(tagData, null, 2);
+                const flattenedData = await flattenTagData(tagData);
+                jsonString = JSON.stringify(flattenedData, null, 2);
             }
 
             const response = await fetch('/erenodes/save_tag_group', {
@@ -774,91 +965,74 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         app.graph.setDirtyCanvas(true);
     };
 
-    const shiftActiveTags = (node, shift) => {
-        const tagData = parseTags(node.properties._tagDataJSON || "[]");
-        if (!tagData.length) return;
+    // const shiftActiveTags = async (node, shift) => {
+    //     const tagData = parseTags(node.properties._tagDataJSON || "[]");
+    //     if (!tagData.length) return;
 
-        const usableTags = tagData.filter(t => t.type !== 'separator' && t.name);
-        if (!usableTags.length) return;
+    //     const usableTags = tagData.filter(t => t.type !== 'separator' && t.name);
+    //     if (!usableTags.length) return;
         
-        const activeIndices = [];
-        usableTags.forEach((tag, index) => {
-            if (tag.active) {
-                activeIndices.push(index);
-            }
-        });
+    //     const activeIndices = [];
+    //     usableTags.forEach((tag, index) => {
+    //         if (tag.active) {
+    //             activeIndices.push(index);
+    //         }
+    //     });
 
-        if (activeIndices.length === 0) return;
+    //     if (activeIndices.length === 0) return;
 
-        usableTags.forEach(t => t.active = false);
+    //     usableTags.forEach(t => t.active = false);
 
-        const newActiveIndices = activeIndices.map(index => (index + shift + usableTags.length) % usableTags.length);
+    //     const newActiveIndices = activeIndices.map(index => (index + shift + usableTags.length) % usableTags.length);
         
-        newActiveIndices.forEach(newIndex => {
-            if (usableTags[newIndex]) {
-                usableTags[newIndex].active = true;
-            }
-        });
+    //     newActiveIndices.forEach(newIndex => {
+    //         if (usableTags[newIndex]) {
+    //             usableTags[newIndex].active = true;
+    //         }
+    //     });
 
-        node.properties._tagDataJSON = JSON.stringify(tagData, null, 2);
-        node.onUpdateTextWidget(node);
-        app.graph.setDirtyCanvas(true);
-    };
+    //     node.properties._tagDataJSON = JSON.stringify(tagData, null, 2);
+    //     await node.onUpdateTextWidget(node);
+    //     app.graph.setDirtyCanvas(true);
+    // };
 
-    node.onIncrement = () => {
-        shiftActiveTags(node, 1);
-    };
+    // node.onIncrement = () => {
+    //     shiftActiveTags(node, 1);
+    // };
 
-    node.onDecrement = () => {
-        shiftActiveTags(node, -1);
-    };
+    // node.onDecrement = () => {
+    //     shiftActiveTags(node, -1);
+    // };
 
     node.onAddTag = (e, pos) => {
-        const addTags = (textToAdd) => {
-            if (!textToAdd || !textToAdd.trim()) return;
+        const addTagObject = async (tagObject) => {
+            if (!tagObject || !tagObject.name) return;
 
-            if (node.type !== "ErePromptMultiline") {
-                const newTagStrings = (textToAdd.replace(/\n/g, ',').split(/,(?![^()]*\))/g) || [])
-                    .map(s => s.trim())
-                    .filter(s => s);
-                if (!newTagStrings.length) return;
-                const existingTagData = parseTags(node.properties._tagDataJSON || "[]");
-                const existingTagNames = new Set(existingTagData.map(t => t.name));
+            const existingTagData = parseTags(node.properties._tagDataJSON || "[]");
+            const existingTagNames = new Set(existingTagData.map(t => t.name));
 
-                const uniqueNewTags = newTagStrings
-                    .map(parseTag)
-                    .filter(Boolean)
-                    .filter(tagObj => tagObj.name && !existingTagNames.has(tagObj.name));
-
-                if (!uniqueNewTags.length) return;
-                
-                const combinedTagData = existingTagData.concat(uniqueNewTags);
-                node.properties._tagDataJSON = JSON.stringify(combinedTagData, null, 2);
-                node.onUpdateTextWidget(node);
-            } else {
-                const textWidget = node.widgets.find(w => w.name === "text");
-                if (textWidget) {
-                    textWidget.value += (textWidget.value ? "\n" : "") + textToAdd;
-                }
+            if (existingTagNames.has(tagObject.name)) {
+                return; // Tag already exists, do nothing
             }
+
+            const newTag = { ...tagObject, active: true };
+            
+            const combinedTagData = existingTagData.concat(newTag);
+            node.properties._tagDataJSON = JSON.stringify(combinedTagData, null, 2);
+            await node.onUpdateTextWidget(node);
             app.graph.setDirtyCanvas(true);
         };
         
         let existingTagNames = [];
-        if (node.type !== "ErePromptMultiline") {
-            const existingTagData = parseTags(node.properties._tagDataJSON || "[]");
-            existingTagNames = existingTagData.map(t => t.name).filter(Boolean);
-        } else {
-            const textWidget = node.widgets.find(w => w.name === "text");
-            if (textWidget && textWidget.value) {
-                existingTagNames = textWidget.value.split(/[,\n]/).map(tag => tag.trim()).filter(Boolean);
-            }
+        const textWidget = node.widgets.find(w => w.name === "text");
+        if (textWidget && textWidget.value) {
+            existingTagNames = textWidget.value.split(/[,\n]/).map(tag => tag.trim()).filter(Boolean);
         }
         
-        new TagContextMenuInsert(e, addTags, existingTagNames);
+        new TagContextMenuInsert(e, addTagObject, existingTagNames);
     };
 
-    node.onTagPillClick = (e, pos, clickedPill) => {
+    node.onTagPillClick = async (e, pos, clickedPill) => {
         if (!clickedPill) return;
         
         if (clickedPill.label === "button_menu") {
@@ -879,172 +1053,85 @@ export function initializeSharedPromptFunctions(node, textWidget) {
 
         clickedTag.active = !clickedTag.active;
         node.properties._tagDataJSON = JSON.stringify(tagData, null, 2);
-        node.onUpdateTextWidget(node);
+        await node.onUpdateTextWidget(node);
         app.graph.setDirtyCanvas(true);
     };
     
-    node.onTagQuickEdit = (e, pos, clickedPill) => {
+    node.onTagQuickEdit = async function(event, nodeInstance, clickedPill, nodeScreenWidth) { // Added nodeScreenWidth
         if (!clickedPill) return;
 
-        const tagData = parseTags(node.properties._tagDataJSON || "[]");
-        const clickedTag = tagData.find(t => t.name === clickedPill.label);
-
-        if (!clickedTag) return;
-
-        const deleteTag = () => {
-            const newTagData = tagData.filter(t => t.name !== clickedTag.name);
-            node.properties._tagDataJSON = JSON.stringify(newTagData, null, 2);
-            node.onUpdateTextWidget(node);
-            app.graph.setDirtyCanvas(true);
-        };
-
-        const updateTag = () => {
-            const currentTagData = parseTags(node.properties._tagDataJSON || "[]");
-            const tagIndex = currentTagData.findIndex(t => t.name === clickedTag.name && t.type === clickedTag.type && t.strength === clickedTag.strength);
-
-            const inputText = input.value.trim();
-            const newStrengthValue = strengthInput.value.trim();
-
-            // Parse the input text which might contain multiple new tags
-            // We pass an empty array as oldTagData to parseTextToTagData because we are replacing, not merging with existing list context here.
-            const newTags = parseTextToTagData(inputText, []); 
-
-            if (tagIndex !== -1) {
-                if (newTags.length > 0) {
-                    // If the input resulted in one or more tags
-                    // Apply the strength from the strength input to the first new tag if it's not a LORA with its own strength
-                    // or if the new tag is a LORA and the strength input is not empty.
-                    if (newTags[0].type !== 'lora' || (newTags[0].type === 'lora' && newStrengthValue !== "")) {
-                         const strength = parseFloat(newStrengthValue);
-                         if (!isNaN(strength) && strength !== 1.0) {
-                            newTags[0].strength = strength;
-                         } else if (newTags[0].type === 'lora' && newTags[0].strength === undefined && newStrengthValue === "") {
-                            // If it's a LORA parsed without strength and strength input is empty, keep it undefined
-                            newTags[0].strength = undefined;
-                         } else if (newTags[0].type !== 'lora'){
-                            newTags[0].strength = undefined; // Default for non-lora or strength 1
-                         }
-                    }
-                    // Replace the old tag with the new one(s)
-                    currentTagData.splice(tagIndex, 1, ...newTags);
-                } else {
-                    // If input is empty, effectively delete the tag
-                    currentTagData.splice(tagIndex, 1);
-                }
-            } else if (newTags.length > 0) {
-                // If original tag not found (shouldn't happen ideally, but as a fallback), append new tags
-                // Apply strength to the first new tag as above
-                if (newTags[0].type !== 'lora' || (newTags[0].type === 'lora' && newStrengthValue !== "")) {
-                    const strength = parseFloat(newStrengthValue);
-                    if (!isNaN(strength) && strength !== 1.0) {
-                        newTags[0].strength = strength;
-                    }
-                     else if (newTags[0].type === 'lora' && newTags[0].strength === undefined && newStrengthValue === "") {
-                        newTags[0].strength = undefined;
-                     } else if (newTags[0].type !== 'lora'){
-                        newTags[0].strength = undefined; 
-                     }
-                }
-                currentTagData.push(...newTags);
-            }
-
-            node.properties._tagDataJSON = JSON.stringify(currentTagData, null, 2);
-            node.onUpdateTextWidget(node);
-            app.graph.setDirtyCanvas(true);
-            menu.close();
-        };
-
-        const menu = new LiteGraph.ContextMenu([], { event: e, className: "dark" });
-        const container = document.createElement("div");
-        container.className = "litegraph-menu-item";
-        container.style.display = "flex";
-        container.style.margin = "0";
-
-        const input = document.createElement("textarea");
-        input.value = formatTag(clickedTag);
-        input.style.border = "none";
-        input.style.background = LiteGraph.WIDGET_BGCOLOR;
-        input.style.fieldSizing = "content";
-        input.style.padding = "5px 10px";
-        input.style.marginBottom = "-3px";
-        input.style.minWidth = "128px";
-        input.style.maxWidth = "384px";
-        input.style.lineHeight = "1.5";
-        input.style.margin = "0";
-        input.addEventListener('focus', () => {
-            input.style.outline = "1px solid #666";
-            // Autocomplete will be handled by the global focusin listener
-        });
-
-        const strengthInput = document.createElement("input");
-        strengthInput.type = "number";
-        strengthInput.style.setProperty('background', 'none', 'important');
-        strengthInput.style.cursor = "pointer";
-        strengthInput.placeholder = "💪";
-        strengthInput.value = clickedTag.strength || "";
-        strengthInput.step = 0.05;
-        strengthInput.style.fieldSizing = "content";
-        strengthInput.style.padding = "5px";
-        strengthInput.style.border = "none";
-        strengthInput.addEventListener('focus', () => {
-            strengthInput.style.outline = "1px solid #666";
-            strengthInput.style.background = LiteGraph.WIDGET_BGCOLOR;
-            if(strengthInput.value === "") strengthInput.value = "1";
-        });
-        strengthInput.addEventListener('blur', () => {
-            strengthInput.style.setProperty('background', 'none', 'important');
-            if(strengthInput.value === "1") strengthInput.value = "";
-        });
-
-        const saveButton = document.createElement("button");
-        saveButton.textContent = "✅";
-        saveButton.style.background = "none";
-        saveButton.style.border = "none";
-        saveButton.style.cursor = "pointer";
-        saveButton.style.fontSize = "16px";
-        saveButton.addEventListener('focus', () => {
-            saveButton.style.outline = "1px solid #666";
-            saveButton.style.background = LiteGraph.WIDGET_BGCOLOR;
-        });
-        saveButton.addEventListener('blur', () => {
-            saveButton.style.background = "none"
-        });
+        const tagData = parseTags(nodeInstance.properties._tagDataJSON || "[]");
+        let tagIndex = tagData.findIndex(t => t.name === clickedPill.label);
+        if (tagIndex === -1) return;
         
-        const deleteButton = document.createElement("button");
-        deleteButton.textContent = "🗑️";
-        deleteButton.style.background = "none";
-        deleteButton.style.border = "none";
-        deleteButton.style.cursor = "pointer";
-        deleteButton.style.fontSize = "16px";
-        deleteButton.addEventListener('focus', () => {
-            deleteButton.style.outline = "1px solid #666";
-            deleteButton.style.background = LiteGraph.WIDGET_BGCOLOR;
-        });
-        deleteButton.addEventListener('blur', () => {
-            deleteButton.style.background = "none"
-        });
+        let clickedTag = tagData[tagIndex];
 
-        saveButton.addEventListener("click", (e) => { e.stopPropagation(); e.preventDefault(); updateTag(); });
-        deleteButton.addEventListener("click", (e) => { e.stopPropagation(); e.preventDefault(); deleteTag(); menu.close(); });
-        input.addEventListener("click", (e) => { e.stopPropagation(); e.preventDefault(); });
-        strengthInput.addEventListener("click", (e) => { e.stopPropagation(); e.preventDefault(); });
-        input.addEventListener("keydown", (e) => { if (e.key === "Enter") updateTag(); e.stopPropagation(); });
-        strengthInput.addEventListener("keydown", (e) => { if (e.key === "Enter") updateTag(); e.stopPropagation(); });
+        const saveCallback = async (editedTag) => {
+            const currentTagData = parseTags(nodeInstance.properties._tagDataJSON || "[]");
+            
+            // Use the stored index instead of searching by name
+            if (tagIndex < 0 || tagIndex >= currentTagData.length) {
+                console.error("[EreNodes] Quick-edit save failed: invalid tag index.", tagIndex);
+                return;
+            }
 
-        container.appendChild(input);
-        container.appendChild(strengthInput);
-        container.appendChild(saveButton);
-        container.appendChild(deleteButton);
-        menu.root.prepend(container);
-        menu.onClose = () => { // Ensure detachment when the context menu itself is closed
-            if (quickEditAutocompleteInstance) {
-                quickEditAutocompleteInstance.detach();
-                quickEditAutocompleteInstance = null;
+            let finalTag;
+            const isSpecialType = ['lora', 'embedding', 'group'].includes(clickedTag.type);
+
+            if (isSpecialType) {
+                // For special types, the name/type are not editable from the input,
+                // but the name can change if a different file is selected.
+                finalTag = { ...clickedTag, ...editedTag };
+            } else {
+                // For normal tags, parse the full input value as it might have changed.
+                const parsed = parseTag(editedTag.name.trim());
+                if (!parsed) {
+                    deleteCallback(); // If parsing fails (e.g., empty input), delete the tag.
+                    return;
+                }
+                // Combine the original tag's properties (like 'active' state) with the newly parsed data and edited properties.
+                finalTag = { ...clickedTag, ...parsed, strength: editedTag.strength, triggers: editedTag.triggers, active: clickedTag.active };
+            }
+            
+            currentTagData[tagIndex] = finalTag;
+            nodeInstance.properties._tagDataJSON = JSON.stringify(currentTagData, null, 2);
+            await nodeInstance.onUpdateTextWidget(nodeInstance);
+            app.graph.setDirtyCanvas(true);
+
+            // After a successful save, update the reference for the next save operation from the same menu.
+            clickedTag = JSON.parse(JSON.stringify(finalTag));
+        };
+
+        const deleteCallback = async () => {
+            const currentTagData = parseTags(nodeInstance.properties._tagDataJSON || "[]");
+            if (tagIndex >= 0 && tagIndex < currentTagData.length) {
+                currentTagData.splice(tagIndex, 1);
+                nodeInstance.properties._tagDataJSON = JSON.stringify(currentTagData, null, 2);
+                await nodeInstance.onUpdateTextWidget(nodeInstance);
+                app.graph.setDirtyCanvas(true);
             }
         };
-        setTimeout(() => input.focus(), 50);
 
-        return;
+        const moveCallback = async (direction) => {
+            const currentTagData = parseTags(nodeInstance.properties._tagDataJSON || "[]");
+            if (tagIndex < 0 || tagIndex >= currentTagData.length) return;
+            const newIndex = tagIndex + direction;
+            if (newIndex < 0 || newIndex >= currentTagData.length) return;
+            
+            const [item] = currentTagData.splice(tagIndex, 1);
+            currentTagData.splice(newIndex, 0, item);
+            
+            // Update the index to track the moved item
+            tagIndex = newIndex;
+            
+            nodeInstance.properties._tagDataJSON = JSON.stringify(currentTagData, null, 2);
+            await nodeInstance.onUpdateTextWidget(nodeInstance);
+            app.graph.setDirtyCanvas(true);
+        };
+
+        // The 'event' parameter (which is positionEvent from applyContextMenuPatch)
+        // now has clientX and clientY correctly set.
+        new TagEditContextMenu(event, clickedTag, saveCallback, deleteCallback, moveCallback, tagIndex, nodeScreenWidth); // Pass nodeScreenWidth
     };
     
 }
