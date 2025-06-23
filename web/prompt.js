@@ -1,6 +1,10 @@
 import { app } from "../../scripts/app.js";
 // import { TagContextMenuInsert, TagContextMenuQuickEdit } from "./prompt_autocomplete.js";
-import { TagContextMenuInsert, TagEditContextMenu } from "./prompt_autocomplete.js";
+// Make sure DynamicContextMenu is exported from prompt_autocomplete.js
+// e.g., export class DynamicContextMenu { ... }
+// Then import it here:
+import { TagContextMenuInsert, TagEditContextMenu, DynamicContextMenu } from "./prompt_autocomplete.js";
+
 
 const parseTags = value => {
     try {
@@ -127,31 +131,7 @@ function parseTextToTagData(text, oldTagData = []) {
     return finalTagData;
 }
 
-async function flattenTagData(tagData, seen = new Set()) {
-    const flattened = [];
-
-    for (const tag of tagData) {
-        if (tag.type === 'group' && !seen.has(tag.name)) {
-            seen.add(tag.name);
-            try {
-                const response = await fetch(`/erenodes/get_tag_group?filename=${encodeURIComponent(tag.name)}`);
-                if (response.ok) {
-                    const groupTags = await response.json();
-                    const recursivelyFlattened = await flattenTagData(groupTags, seen);
-                    flattened.push(...recursivelyFlattened);
-                } else {
-                    flattened.push(tag);
-                }
-            } catch (error) {
-                console.error(`[EreNodes] Error flattening group ${tag.name}:`, error);
-                flattened.push(tag);
-            }
-        } else if (tag.type !== 'group') {
-            flattened.push(tag);
-        }
-    }
-    return flattened;
-}
+// flattenTagData function removed as per request
 
 const getTextInput = async (title, promptMessage, defaultValue = "") => {
     const value = prompt(promptMessage, defaultValue);
@@ -353,13 +333,13 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             null, 
             { content: "Edit Tags", callback: () => node.onEdit?.() },
             { content: "Toggle All Tags", callback: () => node.onToggleTags?.() },
-            { content: "Remove all tags", callback: () => node.onRemoveTags?.() },
+            { content: "Remove All Tags", callback: () => node.onRemoveTags?.() },
             null, 
-            { content: "Load Tag Group...", callback: () => node.onLoadTagGroup?.(actionEvent, "")  },
-            { content: "Save Tag Group...", callback: () => node.onSaveTagGroup?.(actionEvent, "")  },
+            { content: "Load Tag Group", callback: () => node.onLoadTagGroup?.(actionEvent, "")  },
+            { content: "Save Tag Group", callback: () => node.onSaveTagGroup?.(actionEvent, "")  },
             null, 
-            { content: "Export Tags (.json)...", callback: () => node.onExportTags?.() },
-            { content: "Import Tags (.json)...", callback: () => node.onImportTags?.() },
+            { content: "Export Tags (.json)", callback: () => node.onExportTags?.() },
+            { content: "Import Tags (.json)", callback: () => node.onImportTags?.() },
             null, 
             { content: "Convert to Prompt Cloud", callback: () => node.convertTo("ErePromptCloud") },
             { content: "Convert to Prompt MultiSelect", callback: () => node.convertTo("ErePromptMultiSelect") },
@@ -788,8 +768,18 @@ export function initializeSharedPromptFunctions(node, textWidget) {
 
     node.onOverwriteTagGroup = async (fullItemPath) => {
         const tagData = parseTags(node.properties._tagDataJSON || "[]");
-        const flattenedData = await flattenTagData(tagData);
-        const tagsToSave = JSON.stringify(flattenedData, null, 2);
+
+        // Check for nested groups before overwriting
+        if (tagData.some(tag => tag.type === 'group')) {
+            app.extensionManager.toast.add({
+                severity: "error",
+                summary: "Overwrite Aborted",
+                detail: "Nested tag groups are not allowed. Please remove groups from this set before overwriting.",
+                life: 6000
+            });
+            return; // Abort overwrite
+        }
+        const tagsToSave = JSON.stringify(tagData, null, 2);
 
         let directoryPath = "";
         let fileName = fullItemPath;
@@ -805,18 +795,45 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         }
 
         try {
+            const formData = new FormData();
+            formData.append('path', directoryPath);
+            formData.append('filename', fileName);
+            formData.append('tags_json', tagsToSave);
+            // No image_file for overwrite, but backend handles its absence
+
             const response = await fetch('/erenodes/save_tag_group', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    path: directoryPath,
-                    filename: fileName,
-                    tags_json: tagsToSave,
-                })
+                body: formData, // Use FormData, browser sets Content-Type
             });
             const result = await response.json();
+            if (!response.ok) {
+                const errorMessage = result.error || result.message || "Unknown error overwriting tag group.";
+                console.error('[EreNodes] Error overwriting tag group:', errorMessage);
+                app.extensionManager.toast.add({
+                    severity: "error",
+                    summary: "Overwrite Error",
+                    detail: errorMessage,
+                    life: 5000
+                });
+            } else {
+                // Shorthand for creating an alert toast
+                app.extensionManager.toast.addAlert("This is an important message");
+                const successMessage = result.message || `Tag group '${fileName}' overwritten successfully.`;
+                app.extensionManager.toast.add({
+                    severity: "success",
+                    summary: "Overwritten",
+                    detail: successMessage,
+                    life: 4000
+                });
+            }
         } catch (error) {
-            console.error('[EreNodes] Error saving/overwriting tag group:', error);
+            console.error('[EreNodes] Error overwriting tag group:', error);
+            app.extensionManager.toast.add({
+                severity: "error",
+                summary: "Overwrite Operation Error",
+                detail: error.message,
+                life: 5000
+            });
         }
     };
 
@@ -825,7 +842,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
 
         saveSubMenu.push({
             content: "💾 Save Here...",
-            callback: () => node.promptForFilenameAndSave(currentPath)
+            callback: () => node.promptForFilenameAndSave(actionEvent, currentPath)
         });
 
         saveSubMenu.push({
@@ -903,40 +920,215 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         }
     };
     
-    node.promptForFilenameAndSave = async (savePath) => {
-        let fileName;
-        try {
-            fileName = await getTextInput("Save Tag Group", "Enter filename (e.g., my_tags.json):", "");
-            if (fileName === false || fileName === null) return; 
-            fileName = String(fileName).trim(); 
-            if (!fileName) fileName = ""; 
-            if (!fileName.toLowerCase().endsWith('.json')) fileName += '.json';
+class TagGroupSaveContextMenu extends DynamicContextMenu {
+    constructor(event, savePath, nodeInstance, onSaveActualCallback) {
+        super(event, null); // Base class onSelect is not used directly for this dialog's primary action
+        this.savePath = savePath;
+        this.nodeInstance = nodeInstance; // Store the node instance
+        this.onSaveActual = onSaveActualCallback;
+        this.currentImageFile = null;
+        this.currentFileName = ""; // Store filename from input for convenience
 
+        // Override onItemSelected to prevent default close behavior for some items
+        this.onItemSelected = (option) => {
+            if (option && !option.disabled && option.callback) {
+                option.callback();
+            }
+        };
+        this.show();
+    }
+
+    show() {
+        this.close(); // Close any existing menu
+        this.root = document.createElement("div");
+        this.root.className = "litegraph litecontextmenu litemenubar-panel dark";
+        this.root.close = this.close.bind(this);
+        
+        const { clientX: x, clientY: y } = this.event;
+        Object.assign(this.root.style, {
+            left: `${x}px`,
+            top: `${y}px`,
+        });
+        if (this.nodeScreenWidth && this.nodeScreenWidth > 0) {
+            this.root.style.maxWidth = this.nodeScreenWidth - 28 + 'px';
+        }
+
+        document.body.appendChild(this.root);
+
+        this.updateOptionsAndRender();
+        this.setupEventListeners();
+        
+        if (this.filterBox) {
+            this.filterBox.focus();
+            this.filterBox.value = this.currentFileName; // Restore previous filename if any
+        }
+
+        if (LiteGraph.currentMenu && LiteGraph.currentMenu !== this && typeof LiteGraph.currentMenu.close === 'function') {
+            LiteGraph.currentMenu.close();
+        }
+        LiteGraph.currentMenu = this;
+    }
+    
+    updateOptionsAndRender() {
+        this.options = [
+            {
+                type: 'filter',
+                placeholder: 'Filename',
+                onInput: (value) => {
+                    this.currentFileName = value;
+                }
+            },
+            { type: 'separator' },
+            {
+                name: `🖼️ ${this.currentImageFile ? `Image: ${this.currentImageFile.name}` : "Select Image..."}`,
+                callback: async () => {
+                    const imageFile = await this._selectImageFile();
+                    this.currentImageFile = imageFile;
+                    // Re-render by re-calling show, which will call updateOptionsAndRender
+                    this.show();
+                }
+            },
+            { type: 'separator' },
+            {
+                name: "💾 Save",
+                callback: () => {
+                    const filenameFromInput = this.filterBox ? this.filterBox.value.trim() : this.currentFileName.trim();
+                    if (!filenameFromInput) {
+                        alert("Filename cannot be empty.");
+                        if (this.filterBox) this.filterBox.focus();
+                        return;
+                    }
+                    let finalFileName = filenameFromInput;
+                    if (!finalFileName.toLowerCase().endsWith('.json')) {
+                        finalFileName += '.json';
+                    }
+                    this.onSaveActual(finalFileName, this.currentImageFile, this.savePath, this.nodeInstance);
+                    this.close();
+                }
+            },
+            {
+                name: "❌ Cancel",
+                callback: () => {
+                    this.close();
+                }
+            }
+        ];
+        this.renderItems();
+        
+        if (this.filterBox) {
+            this.filterBox.value = this.currentFileName; // Ensure value is set after render
+            setTimeout(() => this.filterBox.focus(), 0); // Ensure focus after render
+        }
+    }
+
+    async _selectImageFile() {
+        return new Promise((resolve) => {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'image/*';
+            input.style.display = 'none';
+            let resolved = false;
+            const cleanupAndResolve = (file) => {
+                if (resolved) return;
+                resolved = true;
+                window.removeEventListener('focus', handleFocus);
+                if (document.body.contains(input)) document.body.removeChild(input);
+                resolve(file);
+            };
+            const handleChange = (event) => cleanupAndResolve(event.target.files && event.target.files.length > 0 ? event.target.files[0] : null);
+            const handleFocus = () => setTimeout(() => { if (!resolved && (!input.files || input.files.length === 0)) cleanupAndResolve(null); }, 100);
+            input.addEventListener('change', handleChange);
+            window.addEventListener('focus', handleFocus, { once: true });
+            document.body.appendChild(input);
+            try { input.click(); } catch (err) { console.error("[EreNodes] Error triggering file input click:", err); cleanupAndResolve(null); }
+        });
+    }
+
+    handleKeyboard(e) {
+        // Allow DynamicContextMenu to handle Enter key based on highlighted item.
+        // Do not trigger save directly from filterBox on Enter.
+        if (this.filterBox && e.target === this.filterBox && e.key === 'Enter') {
+             // If enter is pressed in the filter box, we want the default behavior of DynamicContextMenu,
+             // which is to activate the currently highlighted item.
+             // So, we let the event propagate to the parent's handler.
+             // However, we still want to prevent default browser action for Enter in an input if not handled by menu.
+            e.preventDefault();
+        }
+        return super.handleKeyboard(e);
+    }
+}
+
+
+node.promptForFilenameAndSave = async (actionEvent, savePath) => {
+    const onSaveActualCallback = async (fileName, imageFile, path, graphNode) => {
+        try {
             let jsonString;
-            if (node.properties._tagDataJSON !== undefined) {
-                const tagData = parseTags(node.properties._tagDataJSON || "[]");
-                const flattenedData = await flattenTagData(tagData);
-                jsonString = JSON.stringify(flattenedData, null, 2);
+            let tagDataToSave;
+            if (graphNode.properties._tagDataJSON !== undefined) {
+                tagDataToSave = parseTags(graphNode.properties._tagDataJSON || "[]");
             } else {
-                const tagData = parseTextToTagData(textWidget.value);
-                const flattenedData = await flattenTagData(tagData);
-                jsonString = JSON.stringify(flattenedData, null, 2);
+                const textWidget = graphNode.widgets.find(w => w.name === "text");
+                tagDataToSave = parseTextToTagData(textWidget ? textWidget.value : "");
+            }
+
+            // Check for nested groups before saving
+            if (tagDataToSave.some(tag => tag.type === 'group')) {
+                app.extensionManager.toast.add({
+                    severity: "error",
+                    summary: "Save Aborted",
+                    detail: "Nested tag groups are not allowed. Please remove groups from this set before saving.",
+                    life: 6000
+                });
+                return; // Abort save
+            }
+            jsonString = JSON.stringify(tagDataToSave, null, 2);
+
+            const formData = new FormData();
+            formData.append('path', path);
+            formData.append('filename', fileName);
+            formData.append('tags_json', jsonString);
+
+            if (imageFile) {
+                formData.append('image_file', imageFile, imageFile.name);
             }
 
             const response = await fetch('/erenodes/save_tag_group', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    path: savePath, 
-                    filename: fileName,
-                    tags_json: jsonString,
-                }),
+                body: formData,
             });
+            
             const result = await response.json();
+            if (!response.ok) {
+                const errorMessage = result.error || result.message || "Unknown error saving tag group.";
+                console.error('[EreNodes] Error saving tag group:', errorMessage);
+                app.extensionManager.toast.add({
+                    severity: "error",
+                    summary: "Save Error",
+                    detail: errorMessage,
+                    life: 5000
+                });
+            } else {
+                const successMessage = result.message || `Tag group '${fileName}' saved successfully.`;
+                // console.log('[EreNodes] Tag group saved:', successMessage);
+                app.extensionManager.toast.add({
+                    severity: "success",
+                    summary: "Saved",
+                    detail: successMessage,
+                    life: 4000
+                });
+            }
         } catch (error) {
             console.error('Error saving tag group:', error);
+            app.extensionManager.toast.add({
+                severity: "error",
+                summary: "Save Operation Error",
+                detail: error.message,
+                life: 5000
+            });
         }
     };
+    new TagGroupSaveContextMenu(actionEvent, savePath, node, onSaveActualCallback);
+};
 
     node.onRandomize = (e, pos) => {
         const tagData = parseTags(node.properties._tagDataJSON || "[]");
@@ -964,45 +1156,6 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         node.onUpdateTextWidget(node);
         app.graph.setDirtyCanvas(true);
     };
-
-    // const shiftActiveTags = async (node, shift) => {
-    //     const tagData = parseTags(node.properties._tagDataJSON || "[]");
-    //     if (!tagData.length) return;
-
-    //     const usableTags = tagData.filter(t => t.type !== 'separator' && t.name);
-    //     if (!usableTags.length) return;
-        
-    //     const activeIndices = [];
-    //     usableTags.forEach((tag, index) => {
-    //         if (tag.active) {
-    //             activeIndices.push(index);
-    //         }
-    //     });
-
-    //     if (activeIndices.length === 0) return;
-
-    //     usableTags.forEach(t => t.active = false);
-
-    //     const newActiveIndices = activeIndices.map(index => (index + shift + usableTags.length) % usableTags.length);
-        
-    //     newActiveIndices.forEach(newIndex => {
-    //         if (usableTags[newIndex]) {
-    //             usableTags[newIndex].active = true;
-    //         }
-    //     });
-
-    //     node.properties._tagDataJSON = JSON.stringify(tagData, null, 2);
-    //     await node.onUpdateTextWidget(node);
-    //     app.graph.setDirtyCanvas(true);
-    // };
-
-    // node.onIncrement = () => {
-    //     shiftActiveTags(node, 1);
-    // };
-
-    // node.onDecrement = () => {
-    //     shiftActiveTags(node, -1);
-    // };
 
     node.onAddTag = (e, pos) => {
         const addTagObject = async (tagObject) => {
