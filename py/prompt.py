@@ -1,5 +1,4 @@
 import os
-import time
 
 class ErePrompt:
     @classmethod
@@ -18,24 +17,14 @@ class ErePrompt:
     FUNCTION = "process"
     CATEGORY = "EreNodes"
 
-    @classmethod
-    def IS_CHANGED(cls, text, prefix="", extra_pnginfo="", unique_id=""):
-        # Include separator in the hash to force re-execution
-        for node in extra_pnginfo["workflow"]["nodes"]:
-            if node["id"] == int(unique_id):
-                prefix_separator = node["properties"].get("_prefixSeparator", ",\n\n")
-                return hash((text, prefix, prefix_separator))
-        return hash((text, prefix))
-        
     def process(self, text, prefix="", extra_pnginfo="", unique_id=""):
 
-        node_found = False
-        for node in extra_pnginfo["workflow"]["nodes"]:
-            if node["id"] == int(unique_id):
-                prefix_separator = node["properties"].get("_prefixSeparator")
-                tag_separator = node["properties"].get("_tagSeparator")
-                node_found = True
-                break
+        prefix_separator = ",\n\n"
+        if extra_pnginfo and "workflow" in extra_pnginfo and "nodes" in extra_pnginfo["workflow"]:
+            for node in extra_pnginfo["workflow"]["nodes"]:
+                if str(node.get("id")) == str(unique_id):
+                    prefix_separator = node["properties"].get("_prefixSeparator", ",\n\n")
+                    break
         
         separator = str(prefix_separator).replace("\\n", "\n")
         
@@ -52,6 +41,7 @@ class ErePromptToggle(ErePrompt): pass
 class ErePromptCloud(ErePrompt): pass
 class ErePromptMultiline(ErePrompt): pass
 class ErePromptRandomizer(ErePrompt): pass
+class ErePromptGallery(ErePrompt): pass
 
 NODE_CLASS_MAPPINGS = {
     "ErePromptMultiSelect": ErePromptMultiSelect,
@@ -59,6 +49,7 @@ NODE_CLASS_MAPPINGS = {
     "ErePromptCloud": ErePromptCloud,
     "ErePromptMultiline": ErePromptMultiline,
     "ErePromptRandomizer": ErePromptRandomizer,
+    "ErePromptGallery": ErePromptGallery,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -67,6 +58,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ErePromptCloud": "Prompt Cloud",
     "ErePromptMultiline": "Prompt Multiline",
     "ErePromptRandomizer": "Prompt Randomizer",
+    "ErePromptGallery": "Prompt Gallery",
 }
 
 def scripts():
@@ -76,6 +68,7 @@ def scripts():
         "ErePromptCloud": "prompt_cloud.js",
         "ErePromptMultiline": "prompt_multiline.js",
         "ErePromptRandomizer": "prompt_randomizer.js",
+        "ErePromptLoader": "prompt_loader.js",
     }
 
 __all__ = [

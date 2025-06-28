@@ -1,91 +1,172 @@
-# ComfyUI EreNodes
+# 🎨 ComfyUI-EreNodes
 
-A collection of custom nodes for ComfyUI that enhance prompt management and organization. These nodes provide various ways to handle and manipulate prompts in your ComfyUI workflows and are designed to be used together. 
+> A powerful collection of custom nodes for ComfyUI that improve prompt management and organization
 
-## Nodes
-![Image](https://github.com/user-attachments/assets/8e021dc6-c623-446a-990c-3bd72b08553f)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![ComfyUI](https://img.shields.io/badge/ComfyUI-Compatible-brightgreen)](https://github.com/comfyanonymous/ComfyUI)
 
-### Prompt Cloud
-A tag cloud visualization node that displays your prompts as interactive tags. Click on tags to toggle them on/off. Perfect for quickly managing prompts in a visual way.
+ComfyUI-EreNodes provides an intuitive and feature-rich solution for handling prompts in your ComfyUI workflows. These nodes are designed to work seamlessly together, offering everything from intelligent autocomplete to visual tag management.
 
-### Prompt Toggle
-A simple list of toggleable tags that can be easily enabled or disabled. Great for managing a smaller set of frequently used prompts.
+![Image](https://github.com/user-attachments/assets/7701cdb9-cef2-4dc4-8a3b-ed0dc5f164b6)
 
-### Prompt MultiSelect
-A multi-select field implementation that allows you to select multiple tags from a list. Ideal for when you need to choose from a larger predefined set of prompts.
+## 📚 Table of Contents
 
-### Prompt Randomizer
-A node that allows you to randomize your prompt tags. It includes a manual randomize button and an option to automatically randomize after each generation, giving you more control over creative exploration.
+- [Available Nodes](#-available-nodes)
+- [Key Features](#-key-features)
+- [Installation](#-installation)
+- [Getting Started](#-getting-started)
+- [Changelog](#-changelog)
+- [Contributing](#-contributing)
+- [License](#-license)
+- [Acknowledgments](#-acknowledgments)
 
-### Prompt Multiline
-A complementary standard text edit node that includes all prompt managing features from other nodes. 
+## 🧩 Available Nodes
 
-### Prompt Filter
-Node that filters your prompts through autocomplete CSV file and return only valid tags from your prompt. 
+| Node | Description | Key Features |
+|------|-------------|-------------|
+| **Prompt Gallery** | Grid-based visual browser for LoRAs, Embeddings and Tag Groups | Image previews, intuitive selection |
+| **Prompt Cloud** | Interactive tag cloud visualization | Dynamic sizing, click-to-select |
+| **Prompt Toggle** | Simple toggleable tag list | Easy enable/disable, clean interface |
+| **Prompt MultiSelect** | Multi-selection field for tags | Bulk selection, organized lists |
+| **Prompt Randomizer** | Randomize your prompt tags | Manual randomization button, Control after generate |
+| **Prompt Multiline** | Enhanced text input with EreNodes features | Full autocomplete, tag management |
+| **Prompt Filter** | CSV-based prompt validation | Tag filtering, validation |
 
-> **Note:**  CSV files are located in __autocomplete__ folder in node directory. Adding additional CSV there will make them avaliable for both autocomplete setting and filter node.
+## ✨ Key Features
 
-## Installation
+### 👁️ Visual Previews
+- **Node Integration**: Direct image previews on Prompt Gallery node
+- **Quick Edit Previews**: Preview support in editing interfaces
+- **Selection Previews**: Visual feedback during file selection
+- **Custom Previews**: Easy custom preview image assignment
 
-Install from ComfyUI Manager or:
+### 📁 Tag Groups Management
+- **Favorite Prompts**: Save and organize your most-used prompts with tags, LoRAs, and trigger words
+- **Direct Node Integration**: Create tag groups directly from nodes with subfolder organization
+- **Quick Application**: Easy loading of saved tag groups as convenient pills or their content
+- **Import/Export**: Seamless sharing and backup of your tag collections
 
-1. Navigate to your ComfyUI custom nodes directory:
+### ✏️ Advanced Tag Editing
+- **Effortless Replacement**: Quick edit tags or replacement of LoRAs, embeddings and Tag Groups
+- **Strength Control**: Precise tag strength adjustment via buttons or intuitive click-dragging
+- **Rich Previews**: Set and view preview images for all content types
+- **Dynamic Triggers**: Toggle LoRA trigger words with familiar tag pill interface
+
+![Image](https://github.com/user-attachments/assets/ef65357f-88cd-4cfd-bf5d-0b9e0a7a0c78)
+
+### 🔍 Smart Autocomplete
+- **Comprehensive Dictionaries**: Built-in tag lists from Danbooru and e621, plus support for custom CSV files in the `__autocomplete__` folder
+- **Intelligent Aliases**: Automatic tag alias detection and replacement with canonical terms
+- **Flexible Search**: Partial matching support, including multi-word tag recognition
+- **Visual Highlighting**: Clear highlighting of filtered terms for enhanced clarity
+
+![Image](https://github.com/user-attachments/assets/42deb9e3-73fa-4891-9ec5-cfbd497f9d9e)
+
+## 📦 Installation
+
+### Quick Install (Recommended)
+
+**Via ComfyUI Manager:**
+1. Open ComfyUI Manager in your ComfyUI interface
+2. Search for "EreNodes" 
+3. Click Install
+4. Restart ComfyUI
+
+### Manual Installation
+
 ```bash
-cd ComfyUI/custom_nodes/
-```
+# Navigate to your ComfyUI custom_nodes directory
+cd /path/to/ComfyUI/custom_nodes
 
-2. Clone this repository:
-```bash
+# Clone the repository
 git clone https://github.com/erehr/ComfyUI-EreNodes.git
+
+# Restart ComfyUI
 ```
 
-3. Restart ComfyUI
+> **Tip**: After installation, you'll find the new nodes under the "EreNodes" category in your ComfyUI node browser.
 
-## Features
+## 🚀 Getting Started
 
-### Autocomplete
-Enhance your workflow with intelligent autocompletion. Suggestions are provided globally as you type, and can also be triggered via a dedicated button on each prompt node. 
+### Quick Setup
 
-### Advanced Tag Parsing
-All prompt nodes are compatible with LoRAs, and embeddings. The parsers correctly handle complex prompts containing a mix of syntaxes.
+1. **Custom Autocomplete**: Place your custom CSV tag files in the `__autocomplete__` folder within the EreNodes directory or choose existing one from Settings
+2. **Preview Images**: Add preview images to enhance your tag browsing experience
+3. **Create Your First Tag Group**: Use any EreNodes prompt node to save your favorite tag combinations
 
-- **Lora and Embedding Support**: Tags are intelligently parsed to recognize lora and embeddings. Tags are color-coded by type for easy identification: 
-- **Clipboard Integration**: You can quickly add tags by pasting them directly from your clipboard. The nodes support replacing the existing set or appending to it.
+### 🎮 Basic Usage
 
-### Tag Management & Editing
-A robust set of features for managing, saving, and editing your tags.
+**Using Autocomplete:**
+- Start typing in any EreNodes text or add tag field
+- Use Tab or arrow keys to navigate suggestions
+- Press Enter to select
+- Enjoy intelligent tag completion with aliases
 
-- **Save and Load Tag Groups**: Manage your prompts by saving or loading entire tag groups. This includes options to easily create subfolders and convinient search filter. 
-- **Tag Group as its own tag** And your tag group back to prompt as a single clean tag. Preview of its content avaliable in Quick Edit menu. 
-- **Quick Editing**: `Right Click` on any tag pill to open a quick-edit menu. This allows you to instantly change the tag (or switch lora etc.) strength (now with drag support), or delete it entirely without entering the main editor. 
-- **Quick Editing Tag Group** Easily preview the content of your tag group. Add image to tag group file location to show it in preview (both in quick edit and file browser when adding tags)
-- **Quick Editing Lora** Not only view potential Lora Trigger Words but also activate them! directly from quick edit just like on the main node.
-- **Custom separator**: Option to set custom separator between tags and chained nodes under Properties.
-- **Convertible**: All prompt nodes can be converted to another type under menu dropdown. 
+**Managing Tag Groups:**
+- Right-click any tag in EreNodes → "Save as Tag Group"
+- Access saved groups through the Menu or + button
+- Import/export tag groups for sharing with the community
 
-> **Note:** Converting to Prompt Multiline will result in permanent loss of inactive tags.
-> **Note** As in ComfyUI Lora is not recognized in prompt node like [lora tag loader/](https://github.com/badjeff/comfyui_lora_tag_loader/) is needed.
+**Lora Loading:**
+- For loading Lora directly from prompt node like [Lora Tag Loader](https://github.com/badjeff/comfyui_lora_tag_loader/) is required
 
-![Image](https://github.com/user-attachments/assets/b9c49015-b338-4d78-9e6c-e1ecf178292f)
+### 💡 Pro Tips
 
-## Changelog
-- 2.0 Code refactored - Quick Edit, Tag Groups, Autocomplete
-- 1.5 Code refactoring and cleanup
-- 1.4 Added folder browser to aAutocomplete Lora and Embedding
-- 1.3 Added Lora and Embedding support for Autocomplete 
-- 1.2 Added Randomizer node
-- 1.1 Added to Comfy Registry and Manager
+- **Search Efficiently**: Use partial matches or space for multi word phrases
+- **Visual Organization**: Set preview images for your most-used ta groups
+- **Quick Edits**: Right-click any tag for instant editing options
+- **Experiment**: Use the Randomizer node to discover new prompt combinations
+- **Convertible**: All tag nodes can be converted to another under ≡ menu
+- **Customize output**: Separators between nodes and individual tags can be set customized in node Properties
 
-## Contributing
+## 📋 Changelog
+
+### Version 2.1 - Latest
+- **New Node: Prompt Gallery**: Powerful and intuitive grid-based gallery for browsing and selecting tags
+- **Tag Group Image on Save**: You can now set a preview image when saving a Tag Group
+- **Change Image in Quick Edit**: Added the ability to change the preview image directly from the quick edit menu
+- **Performance Boost**: Implemented caching for previews, trigger words, and Tag Group content for a smoother experience
+
+### Version 2.0 - Major Overhaul
+- **Major Refactor**: Major overhaul of the codebase with rebuilt Autocomplete and Quick Edit systems
+
+### Version 1.4 - Enhanced Browsing
+- **New Features**: Folder browser for LoRAs, Embeddings and Tag Groups
+
+### Version 1.3 - Extended Support
+- **New Features**: LoRA and Embedding support for Autocomplete
+
+### Version 1.2 - Core Features
+- **New Features**: Introduced Randomizer node and Autocomplete functionality
+
+### Version 1.1 - Initial Release
+- **Launch**: Published to ComfyUI Registry and Manager
+
+---
+
+## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+## 📄 License
 
-## Acknowledgments
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
 
-- Thanks to the ComfyUI community for their support and feedback.
-- [DraconicDragon](https://github.com/DraconicDragon) for the comprehensive tag lists in the [dbr-e621-lists-archive](https://github.com/DraconicDragon/dbr-e621-lists-archive/) repository.
-- [kambara](https://github.com/kambara) for the initial inspiration and code concepts from the [ComfyUI-PromptPalette](https://github.com/kambara/ComfyUI-PromptPalette) repository.
+## 🙏 Acknowledgments
+
+Special thanks to the amazing open-source community:
+
+- **ComfyUI Community** - For their continuous support and valuable feedback
+- **[ComfyUI-PromptPalette](https://github.com/kambara/ComfyUI-PromptPalette)** - Initial inspiration and foundational code
+- **[ComfyUI-EZ-AF-Nodes](https://github.com/ez-af/ComfyUI-EZ-AF-Nodes)** - Prompt Gallery node inspiration
+- **[DraconicDragon](https://github.com/DraconicDragon)** - Comprehensive tag lists and data
+
+---
+
+<div align="center">
+
+**⭐ If you find this project helpful, please consider giving it a star! ⭐**
+
+[Report Bug](https://github.com/erehr/ComfyUI-EreNodes/issues) • [Request Feature](https://github.com/erehr/ComfyUI-EreNodes/issues) • [Discussions](https://github.com/erehr/ComfyUI-EreNodes/discussions)
+
+</div>

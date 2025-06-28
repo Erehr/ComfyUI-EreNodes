@@ -1,7 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import { initializeSharedPromptFunctions, applyContextMenuPatch } from "./prompt.js";
-// import { initializeSharedPromptFunctions } from "./prompt.js";
 
 app.registerExtension({
     name: "ErePromptRandomizer",
@@ -37,7 +36,15 @@ app.registerExtension({
 
     beforeRegisterNodeDef(nodeType, nodeData, app) {
         if (nodeData.name !== "ErePromptRandomizer") return;
-        
+
+        // Shared layout constants
+        const pillX = 10, 
+              pillY = 30,
+              pillH = 20,
+              radius = 5,
+              spacing = 5, 
+              padding = 5;
+
         const parseTags = value => {
             try {
                 const parsed = JSON.parse(value || "[]");
@@ -51,7 +58,6 @@ app.registerExtension({
             if (origCreated) origCreated.apply(this, arguments);
 
             const node = this;
-            node.isEditMode = false;
 
             const textWidget = node.widgets?.find(w => w.name === "text");
             textWidget.computeSize = () => [0, 0];
@@ -59,14 +65,13 @@ app.registerExtension({
 
             // Randomize control
             const controlWidget = node.addWidget("combo", "control after generate", "fixed", "control_after_generate", { values: ["fixed", "increment", "decrement", "randomize"] });
-            
+
             node.onMouseDown = (e, pos) => {
-                if (node.isEditMode) return;
 
                 const [x, y] = pos;
 
                 // Get background area
-                const bgX = 10, bgY = 35;
+                const bgX = 10, bgY = 30;
                 const bgW = node.size[0] - bgX * 2;
                 const bgH = node._tagAreaBottom - bgY;
                 if (x >= bgX && x <= bgX + bgW && y >= bgY && y <= bgY + bgH) {
@@ -76,6 +81,7 @@ app.registerExtension({
                     for (const pill of node._pillMap || []) {
                         if (x >= pill.x && x <= pill.x + pill.w && y >= pill.y && y <= pill.y + pill.h) {
                             clickedPill = pill;
+                            pos = [pill.x, pill.y + pill.h];
                             break;
                         }
                     }
@@ -95,9 +101,7 @@ app.registerExtension({
                                 const entry = tagData.find(t => t.name === tag.name);
                                 if (entry) entry.active = true;
                                 node.properties._tagDataJSON = JSON.stringify(tagData, null, 2);
-                                const separator = (node.properties._tagSeparator !== "") ? node.properties._tagSeparator : ", ";
-                                textWidget.value = tagData.filter(t => t.active).map(t => t.name).join(separator);
-                                app.graph.setDirtyCanvas(true);
+                                this.onUpdateTextWidget(this);
                             }
                         }));
         
@@ -110,7 +114,7 @@ app.registerExtension({
                 }
                 
             };
-            
+
             // Initialize all other functions shared between prompt nodes
             initializeSharedPromptFunctions(this, textWidget);
 
@@ -124,16 +128,15 @@ app.registerExtension({
             if (origDraw) origDraw.call(this, ctx);
 
             const textWidget = this.widgets?.find(w => w.name === "text");
-            if (!textWidget || this.isEditMode || this.flags?.collapsed) return;
+            if (!textWidget || this.flags?.collapsed) return;
 
             const tagData = parseTags(this.properties._tagDataJSON || textWidget.value);
 
             ctx.font = "12px monospace";
 
-            const pillX = 10, pillY = 25, spacing = 5, pillPadding = 5;
-            const pillMaxWidth = this.size[0] - pillX * 2;
-            let currentX = pillX + pillPadding;
-            let currentY = pillY + pillPadding;
+            const pillMaxWidth = this.size[0] - pillX * 2 - padding * 2;
+            let currentX = pillX + padding;
+            let currentY = pillY + padding;
 
             const positions = [];
             const specialTags = [
@@ -144,27 +147,24 @@ app.registerExtension({
               
             // Creating buttons
             for (const { display, label } of specialTags) {
-                if (currentX + 20 > pillX + pillMaxWidth - pillPadding) {
-                    currentX = pillX + pillPadding;
-                    currentY += 20 + spacing;
+                if (currentX + pillH > pillX + pillMaxWidth - padding) {
+                    currentX = pillX + padding;
+                    currentY += pillH + spacing;
                 }
                 positions.push({ x: currentX, y: currentY, w: 20, h: 20, label, display, button: true });
-                currentX += 20 + spacing;
+                currentX += pillH + spacing;
             }
 
             // Creating pills
             for (const tag of tagData) {
-                if (tag.type === "separator") {
-                    currentX = pillX + pillPadding;
-                    currentY += 20 + 10 + 4;
-                    continue; 
-                }
-                if (!tag.active) continue; // we don't render inactive tags
+                
+                // don't draw inactive tags
+                if (!tag.active) continue;
 
                 let label = tag.name;
                 let displayName = tag.name;
                 if (tag.type === 'lora') {
-                    // displayName = displayName.substring(Math.max(displayName.lastIndexOf('\\'), displayName.lastIndexOf('/')) + 1);
+                    // displayName = displayName.substring(Math.max(displayName.lastIndexOf('\\'), displayName.lastIndexOf('/')) + 1); // remove folders from name
                     const dotIndex = displayName.lastIndexOf('.');
                     if (dotIndex !== -1) displayName = displayName.substring(0, dotIndex);
                     if (tag.triggers && tag.triggers.length > 0) {
@@ -173,7 +173,7 @@ app.registerExtension({
                 } else if (tag.type === 'embedding') {
                     displayName = displayName.replace(/^embedding:/, '');
                 } else if (tag.type === 'group') {
-                    // displayName = displayName.substring(Math.max(displayName.lastIndexOf('\\'), displayName.lastIndexOf('/')) + 1);
+                    // displayName = displayName.substring(Math.max(displayName.lastIndexOf('\\'), displayName.lastIndexOf('/')) + 1); // remove folders from name
                     const dotIndex = displayName.lastIndexOf('.');
                     if (dotIndex !== -1) displayName = displayName.substring(0, dotIndex);
                 }
@@ -189,43 +189,45 @@ app.registerExtension({
                 let textWidth = ctx.measureText(display).width + strengthWidth;
             
                 // Trim and append ellipsis if too wide
-                if (textWidth > pillMaxWidth - pillPadding * 2) {
+                const maxTextWidth = pillMaxWidth - padding * 2;
+                if (textWidth > pillMaxWidth - padding * 2) {
                     let i = display.length;
-                    const dots = "...";
-                    const dotsWidth = ctx.measureText("...").width;
-                    while (i > 0 && ctx.measureText(display.slice(0, i)).width + dotsWidth + strengthWidth > pillMaxWidth - dotsWidth / 2 - pillPadding * 2 ) i--;
+                    const dots = "…";
+                    const dotsWidth = ctx.measureText("…").width;
+                    while (i > 0 && ctx.measureText(display.slice(0, i)).width + dotsWidth + strengthWidth > maxTextWidth ) i--;
                     display = display.slice(0, i) + dots;
                 }
 
                 // calculate pill width
-                const w = Math.min(textWidth + 12, pillMaxWidth - pillPadding * 2);
+                const pillW = Math.min(textWidth + padding * 2, pillMaxWidth);
             
-                if (currentX + w > pillX + pillMaxWidth - pillPadding) {
-                    currentX = pillX + pillPadding;
-                    currentY += 20 + spacing;
+                if (currentX + pillW > pillX + pillMaxWidth + padding) {
+                    currentX = pillX + padding;
+                    currentY += pillH + spacing;
                 }
             
-                positions.push({ x: currentX, y: currentY, w, h: 20, label, display, active: !tag.active, type: tag.type, strength: tag.strength });
-                currentX += w + spacing;
+                positions.push({ x: currentX, y: currentY, w: pillW, h: pillH, label, display, active: !tag.active, type: tag.type, strength: tag.strength });
+                currentX += pillW + spacing;
             }
 
-            const pillHeight = (currentY + 20 + pillPadding) - pillY;
-            this._tagAreaBottom = pillY + pillHeight;
 
             this._pillMap = [];
 
-            // Draw background around pills
+            const pillBackgroundHeight = (currentY + pillH + padding) - pillY;
+            // // Draw background around pills
             ctx.beginPath();
             ctx.fillStyle = LiteGraph.WIDGET_BGCOLOR;
             ctx.strokeStyle = "#444";
             ctx.lineWidth = 1;
-            ctx.roundRect(pillX, pillY, pillMaxWidth, pillHeight, 6);
+            ctx.roundRect(pillX, pillY, pillMaxWidth + padding * 2, pillBackgroundHeight, radius);
             ctx.fill();
             ctx.stroke();
 
             // Drawing pills
             for (const p of positions) {
                 ctx.beginPath();
+                ctx.globalAlpha = p.button ? 1 : (p.active ? 0.75 : 1);
+
                 let pillFill = "#414650"; // Default
                 if (p.type === 'lora') {
                     pillFill = "#415041"; // Muted green-cyan
@@ -234,41 +236,51 @@ app.registerExtension({
                 } else if (p.type === 'group') {
                     pillFill = "#504C41"; // Muted orange/brown
                 }
-
-                ctx.fillStyle = p.button ? LiteGraph.WIDGET_OUTLINE_COLOR  : pillFill;
-                ctx.roundRect(p.x, p.y, p.w, p.h, 6);
+                ctx.fillStyle = p.button ? LiteGraph.NODE_DEFAULT_BOXCOLOR : (p.active ? LiteGraph.WIDGET_BGCOLOR : pillFill);
+                ctx.roundRect(p.x, p.y, p.w, p.h, radius);
                 ctx.fill();
-
-                ctx.strokeStyle = p.button ? LiteGraph.WIDGET_OUTLINE_COLOR  : pillFill;
+            
+                ctx.strokeStyle = p.button ? LiteGraph.NODE_DEFAULT_BOXCOLOR : (p.active ? "#444" : pillFill);
                 ctx.lineWidth = 1;
                 ctx.stroke();
 
                 ctx.textBaseline = "middle";
-                ctx.textAlign = p.button ? "center" : "left";
-                ctx.fillStyle = (p.active || p.button ? LiteGraph.WIDGET_TEXT_COLOR : "#FFF");
-
-                const textX = p.x + (p.button ? p.w / 2 : 6);
+                const textX = p.x + (p.button ? p.w / 2 : padding);
                 const textY = p.y + p.h / 2 + 1;
-                ctx.fillText(p.display, textX, textY);
+                
+                if(p.button) {
+                    ctx.textAlign = "center";
+                    ctx.fillStyle = LiteGraph.WIDGET_TEXT_COLOR;
+                    ctx.fillText(p.display, textX, textY);
+                } else {
+                    ctx.textAlign = "left";
+                    ctx.fillStyle = (p.active ? LiteGraph.WIDGET_TEXT_COLOR : "#FFF");
+                    ctx.fillText(p.display, textX, textY);
 
-                if (p.strength && p.strength !== 1.0) {
-                    const nameWidth = ctx.measureText(p.display).width;
-                    const strengthText = ` ${p.strength}`;
-                    ctx.globalAlpha = 0.5;
-                    ctx.fillText(strengthText, textX + nameWidth, textY);
-                    ctx.globalAlpha = 1;
+                    if (p.strength && p.strength !== 1.0) {
+                        const nameWidth = ctx.measureText(p.display).width;
+                        const strengthText = ` ${p.strength}`;
+                        ctx.globalAlpha = 0.5;
+                        ctx.fillText(strengthText, textX + nameWidth, textY);
+                        ctx.globalAlpha = 1;
+                    }
                 }
 
                 ctx.textBaseline = "alphabetic";
-
+            
                 this._pillMap.push({ x: p.x, y: p.y, w: p.w, h: p.h, label: p.label, button: p.button });
             }
             
-            this._measuredHeight = pillY + pillHeight + 10 + 25;
-            // height correction
-            if (!this.isEditMode) {
-                textWidget.computeSize = () => [0, pillHeight];
-                this.setSize([this.size[0], this.size[1]]);
+            this._tagAreaBottom = currentY + pillH + padding;
+            this._measuredHeight = currentY + pillH + pillX + padding + 25; // extra for randomizer widget
+
+            // set hidden textWidget size to push randomize inpput down
+            textWidget.computeSize = () => [0, (currentY + pillH + padding * 2) - pillY];
+
+            // Height correction
+            if (isFinite(this._measuredHeight) && this._measuredHeight && this.size[1] !== this._measuredHeight) {
+                this.setSize([this.size[0], this._measuredHeight]);
+				this.setDirtyCanvas(true, true);
             }
 
         };
@@ -276,19 +288,11 @@ app.registerExtension({
         const origResize = nodeType.prototype.onResize;
         nodeType.prototype.onResize = function () {
             if (!this._measuredHeight) return;
-            
-            const lockedHeight = this._measuredHeight;
         
-            if (!this.isEditMode && this.size[1] !== lockedHeight) {
-                this.setSize([this.size[0], lockedHeight]);
-                return; // to stop infinite resize loop
+            if (this.size[1] !== this._measuredHeight) {
+                this.setSize([this.size[0], this._measuredHeight]);
+                return;
             }
-
-            // todo:
-            // calculate max height by each input height + each widget height
-
-            if (origResize) origResize.call(this);
-            app.graph.setDirtyCanvas(true);
         };
 
     }
