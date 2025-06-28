@@ -198,6 +198,9 @@ async def save_tag_group_handler(request):
             except Exception as e:
                 print(f"[EreNodes] Error saving image for tag group '{filename}': {e}")
                 message += f" Failed to save associated image: {str(e)}"
+
+
+
         else:
             # This block is hit if the image field isn't as expected or not present
             if image_file_field is not None: # Check if the field itself was found
@@ -456,12 +459,12 @@ async def view_file_handler(request):
         return web.Response(status=400, text="Missing type or path")
 
     # Determine base directories
-    if type_name == 'groups':
+    if type_name == 'group':
         # The 'prompts_dir' is already an absolute path.
         base_dirs = [prompts_dir]
     else:
         # folder_paths uses plural for loras, embeddings, etc.
-        base_dirs = folder_paths.get_folder_paths(type_name)
+        base_dirs = folder_paths.get_folder_paths(type_name + 's')
 
     if not base_dirs:
         return web.Response(status=404, text=f"No folder configured for type '{type_name}'")
@@ -487,3 +490,82 @@ async def view_file_handler(request):
     
     # If we get here, no file was found in any of the directories
     return web.Response(status=404, text="Preview image not found")
+
+@server.PromptServer.instance.routes.post("/erenodes/save_file_image")
+async def save_file_image_handler(request):
+    try:
+        form_data = await request.post()
+        file_type = form_data.get("type")
+        file_name = form_data.get("name")
+        image_file_field = form_data.get("image_file", None)
+
+        if not file_type or not file_name or not image_file_field:
+            return web.json_response({"error": "Type, name, or image file not provided"}, status=400)
+
+        if not hasattr(image_file_field, 'file') or not image_file_field.file:
+            return web.json_response({"error": "Invalid image file"}, status=400)
+
+        # Determine the base directory based on file type
+        type_configs = {
+            'lora': {
+                'roots': folder_paths.get_folder_paths("loras"),
+                'extensions': ('.safetensors', '.pt', '.ckpt', '.lora'),
+            },
+            'embedding': {
+                'roots': folder_paths.get_folder_paths("embeddings"),
+                'extensions': ('.pt', '.bin', '.safetensors', '.embedding'),
+            },
+            'group': {
+                'roots': [prompts_dir],
+                'extensions': ('.json',),
+            }
+        }
+
+        config = type_configs.get(file_type)
+        if not config:
+            return web.json_response({"error": f"Invalid file type: {file_type}"}, status=400)
+
+        # Find the actual file path
+        file_path = None
+        for root_dir in config['roots']:
+            for ext in config['extensions']:
+                potential_path = os.path.join(root_dir, file_name + ext)
+                if os.path.exists(potential_path):
+                    file_path = potential_path
+                    break
+            if file_path:
+                break
+
+        if not file_path:
+            return web.json_response({"error": f"File not found: {file_name}"}, status=404)
+
+        # Get the directory and base name of the file
+        file_dir = os.path.dirname(file_path)
+        file_basename = os.path.splitext(os.path.basename(file_path))[0]
+
+        # Get image extension from the uploaded file
+        image_original_filename = image_file_field.filename
+        if not image_original_filename:
+            return web.json_response({"error": "Image file has no original filename"}, status=400)
+
+        _, image_extension = os.path.splitext(image_original_filename)
+        if not image_extension:
+            return web.json_response({"error": "Image file has no extension"}, status=400)
+
+        # Create the image filename with the same base name as the file
+        image_filename = file_basename + image_extension
+        image_path = os.path.join(file_dir, image_filename)
+
+        # Save the image
+        with open(image_path, 'wb') as f_img:
+            image_file_field.file.seek(0)
+            import shutil
+            shutil.copyfileobj(image_file_field.file, f_img)
+
+        message = f"Image '{image_filename}' saved successfully for {file_type} '{file_name}'."
+        return web.json_response({"message": message})
+
+    except Exception as e:
+        import traceback
+        print(f"[EreNodes] Error in save_file_image_handler: {traceback.format_exc()}")
+        return web.json_response({"error": str(e)}, status=500)

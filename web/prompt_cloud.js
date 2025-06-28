@@ -1,6 +1,5 @@
 import { app } from "../../scripts/app.js";
 import { initializeSharedPromptFunctions, applyContextMenuPatch } from "./prompt.js";
-// import { initializeSharedPromptFunctions } from "./prompt.js";
 
 app.registerExtension({
     name: "ErePromptCloud",
@@ -12,7 +11,13 @@ app.registerExtension({
     beforeRegisterNodeDef(nodeType, nodeData, app) {
         if (nodeData.name !== "ErePromptCloud") return;
 
-        console.log(`[ErePromptCloud] Applying custom logic to ${nodeData.name}.`);
+        // Shared layout constants
+        const pillX = 10, 
+              pillY = 30,
+              pillH = 20,
+              radius = 5,
+              spacing = 5, 
+              padding = 5;
 
         const parseTags = value => {
             try {
@@ -27,14 +32,12 @@ app.registerExtension({
             if (origCreated) origCreated.apply(this, arguments);
 
             const node = this;
-            node.isEditMode = false;
 
             const textWidget = node.widgets?.find(w => w.name === "text");
             textWidget.computeSize = () => [0, 0];
             textWidget.hidden = true;
 
             node.onMouseDown = (e, pos) => {
-                if (node.isEditMode) return;
 
                 const [x, y] = pos;
 
@@ -72,14 +75,14 @@ app.registerExtension({
         const origDraw = nodeType.prototype.onDrawForeground;
         nodeType.prototype.onDrawForeground = function (ctx) {
             if (origDraw) origDraw.call(this, ctx);
+
             const textWidget = this.widgets?.find(w => w.name === "text");
-            if (!textWidget || this.isEditMode || this.flags?.collapsed) return;
+            if (!textWidget || this.flags?.collapsed) return;
             
             const tagData = parseTags(this.properties?._tagDataJSON || "[]");
 
             ctx.font = "12px monospace";
 
-            const pillX = 10, pillY = 30, spacing = 5, pillPadding = 5;
             const pillMaxWidth = this.size[0] - pillX * 2;
             let currentX = pillX;
             let currentY = pillY;
@@ -92,25 +95,21 @@ app.registerExtension({
     
             // Creating buttons
             for (const { display, label } of specialTags) {
-                if (currentX + 20 > pillX + pillMaxWidth - pillPadding) {
-                    currentX = pillX + pillPadding;
-                    currentY += 20 + spacing;
+                if (currentX + pillH > pillX + pillMaxWidth - padding) {
+                    currentX = pillX + padding;
+                    currentY += pillH + spacing;
                 }
                 positions.push({ x: currentX, y: currentY, w: 20, h: 20, label, display, button: true });
-                currentX += 20 + spacing;
+                currentX += pillH + spacing;
             }
 
+            // Creating pills
             for (const tag of tagData) {
-                if (tag.type === "separator") {
-                    currentX = pillX + pillPadding;
-                    currentY += 20 + 10 + 4;
-                    continue; 
-                }
 
                 let label = tag.name;
                 let displayName = tag.name;
                 if (tag.type === 'lora') {
-                    // displayName = displayName.substring(Math.max(displayName.lastIndexOf('\\'), displayName.lastIndexOf('/')) + 1);
+                    // displayName = displayName.substring(Math.max(displayName.lastIndexOf('\\'), displayName.lastIndexOf('/')) + 1); // remove folders from name
                     const dotIndex = displayName.lastIndexOf('.');
                     if (dotIndex !== -1) displayName = displayName.substring(0, dotIndex);
                     if (tag.triggers && tag.triggers.length > 0) {
@@ -119,7 +118,7 @@ app.registerExtension({
                 } else if (tag.type === 'embedding') {
                     displayName = displayName.replace(/^embedding:/, '');
                 } else if (tag.type === 'group') {
-                    // displayName = displayName.substring(Math.max(displayName.lastIndexOf('\\'), displayName.lastIndexOf('/')) + 1);
+                    // displayName = displayName.substring(Math.max(displayName.lastIndexOf('\\'), displayName.lastIndexOf('/')) + 1); // remove folders from name
                     const dotIndex = displayName.lastIndexOf('.');
                     if (dotIndex !== -1) displayName = displayName.substring(0, dotIndex);
                 }
@@ -135,28 +134,26 @@ app.registerExtension({
                 let textWidth = ctx.measureText(display).width + strengthWidth;
             
                 // Trim and append ellipsis if too wide
-                if (textWidth > pillMaxWidth - pillPadding * 2) {
+                let maxTextWidth = pillMaxWidth - padding * 2;
+                if (textWidth > pillMaxWidth - padding * 2) {
                     let i = display.length;
-                    const dots = "...";
-                    const dotsWidth = ctx.measureText("...").width;
-                    while (i > 0 && ctx.measureText(display.slice(0, i)).width + dotsWidth + strengthWidth > pillMaxWidth - dotsWidth / 2 - pillPadding * 2 ) i--;
+                    const dots = "…";
+                    const dotsWidth = ctx.measureText("…").width;
+                    while (i > 0 && ctx.measureText(display.slice(0, i)).width + dotsWidth + strengthWidth > maxTextWidth ) i--;
                     display = display.slice(0, i) + dots;
                 }
 
                 // calculate pill width
-                const w = Math.min(textWidth + 12, pillMaxWidth);
+                const pillW = Math.min(textWidth + padding * 2, pillMaxWidth);
             
-                if (currentX + w > pillX + pillMaxWidth) {
+                if (currentX + pillW > pillX + pillMaxWidth) {
                     currentX = pillX;
-                    currentY += 20 + spacing;
+                    currentY += pillH + spacing;
                 }
             
-                positions.push({ x: currentX, y: currentY, w, h: 20, label, display, active: !tag.active, type: tag.type, strength: tag.strength });
-                currentX += w + spacing;
+                positions.push({ x: currentX, y: currentY, w: pillW, h: pillH, label, display, active: !tag.active, type: tag.type, strength: tag.strength });
+                currentX += pillW + spacing;
             }
-
-            const pillHeight = (currentY + 20 + pillPadding) - pillY;
-            this._tagAreaBottom = pillY + pillHeight;
 
             // Store pill positions for click handling
             this._pillMap = [];
@@ -182,7 +179,7 @@ app.registerExtension({
                 ctx.stroke();
 
                 ctx.textBaseline = "middle";
-                const textX = p.x + (p.button ? p.w / 2 : 6);
+                const textX = p.x + (p.button ? p.w / 2 : padding);
                 const textY = p.y + p.h / 2 + 1;
                 
                 if(p.button) {
@@ -208,27 +205,25 @@ app.registerExtension({
                 this._pillMap.push({ x: p.x, y: p.y, w: p.w, h: p.h, label: p.label, button: p.button });
             }
             
-            this._measuredHeight = pillY + pillHeight + 8;
-            // height correction
-            if (!this.isEditMode) {
-                textWidget.computeSize = () => [0, pillHeight];
-                this.setSize([this.size[0], this.size[1]]);
+            this._tagAreaBottom = currentY + pillH + padding;
+            this._measuredHeight = currentY + pillH + pillX;
+
+            // Height correction
+            if (isFinite(this._measuredHeight) && this._measuredHeight && this.size[1] !== this._measuredHeight) {
+                this.setSize([this.size[0], this._measuredHeight]);
+				this.setDirtyCanvas(true, true);
             }
+
         };
         
         const origResize = nodeType.prototype.onResize;
         nodeType.prototype.onResize = function () {
             if (!this._measuredHeight) return;
-
-            const lockedHeight = this._measuredHeight;
         
-            if (!this.isEditMode && this.size[1] !== lockedHeight) {
-                this.setSize([this.size[0], lockedHeight]);
+            if (this.size[1] !== this._measuredHeight) {
+                this.setSize([this.size[0], this._measuredHeight]);
                 return;
             }
-        
-            if (origResize) origResize.call(this);
-            app.graph.setDirtyCanvas(true);
         };
 
     }

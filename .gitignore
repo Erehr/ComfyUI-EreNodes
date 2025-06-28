@@ -42,3 +42,4 @@ __prompts__/
 __autocomplete__/booru_complete.csv
 py/settings.json
 .cursor/rules/guidelines.mdc
+documentation.txt

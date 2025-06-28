@@ -12,12 +12,10 @@ app.registerExtension({
             if (origCreated) origCreated.apply(this, arguments);
 
             const node = this;
-            node.isEditMode = false;
 
             const textWidget = node.widgets?.find(w => w.name === "text");
             
             node.onMouseDown = (e, pos) => {
-                if (node.isEditMode) return;
 
                 const [x, y] = pos;
 

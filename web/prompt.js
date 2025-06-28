@@ -1,9 +1,6 @@
 import { app } from "../../scripts/app.js";
-// import { TagContextMenuInsert, TagContextMenuQuickEdit } from "./prompt_autocomplete.js";
-// Make sure DynamicContextMenu is exported from prompt_autocomplete.js
-// e.g., export class DynamicContextMenu { ... }
-// Then import it here:
-import { TagContextMenuInsert, TagEditContextMenu, DynamicContextMenu } from "./prompt_autocomplete.js";
+import { TagContextMenuInsert, TagEditContextMenu, TagGroupContextMenu, DynamicContextMenu } from "./js/contextmenu.js";
+import { getCache, updateCache, clearCache } from "./js/cache.js";
 
 
 const parseTags = value => {
@@ -18,7 +15,7 @@ function parseTag(tagString) {
     let originalString = (tagString || "").trim();
     if (!originalString) return null;
 
-    const groupMatch = originalString.match(/^group:(.+)$/);
+        const groupMatch = originalString.match(/^group:(.+)$/);
     if (groupMatch) {
         return { name: groupMatch[1], type: 'group', active: true };
     }
@@ -54,18 +51,18 @@ function parseTag(tagString) {
 }
 
 function formatTag(tag) {
-    if (tag.type === 'separator') {
-        return "";
-    }
+
     if (tag.type === 'lora') {
         const strength = (tag.strength === undefined) ? 1.0 : tag.strength;
         const strengthStr = (strength % 1 === 0) ? strength.toFixed(1) : strength;
         const filename = tag.extension ? `${tag.name}${tag.extension}` : tag.name;
         return `<lora:${filename}:${strengthStr}>`;
     }
+
     if (tag.type === 'embedding') {
         return `embedding:${tag.name}`;
     }
+
     if (tag.type === 'group') {
         const filename = tag.extension ? `${tag.name}${tag.extension}` : tag.name;
         return `group:${filename}`;
@@ -74,6 +71,7 @@ function formatTag(tag) {
     if (tag.strength && tag.strength !== 1.0) {
         return `(${tag.name}:${tag.strength})`;
     }
+
     return tag.name;
 }
 
@@ -85,53 +83,38 @@ function parseTextToTagData(text, oldTagData = []) {
 
     for (const line of lines) {
         const trimmedLine = line.trim();
-        if (trimmedLine === "") {
-            if (!lastLineWasEmpty) {
-                tagData.push({ name: "", type: 'separator', active: false });
-                lastLineWasEmpty = true;
-            }
-        } else {
-            const tagStrings = (trimmedLine.split(/,(?![^()]*\))/g) || [])
-                .map(s => s.trim())
-                .filter(s => s);
-            
-            const newTags = tagStrings.map(parseTag).filter(Boolean);
 
-            if (newTags.length > 0) {
-                for (const tag of newTags) {
-                    const oldTag = oldTagsByName.get(tag.name);
-                    if (oldTag) {
-                        tag.active = oldTag.active;
-                    } else {
-                        tag.active = true; 
-                    }
+        const tagStrings = (trimmedLine.split(/,(?![^()]*\))/g) || [])
+            .map(s => s.trim())
+            .filter(s => s);
+        
+        const newTags = tagStrings.map(parseTag).filter(Boolean);
+
+        if (newTags.length > 0) {
+            for (const tag of newTags) {
+                const oldTag = oldTagsByName.get(tag.name);
+                if (oldTag) {
+                    tag.active = oldTag.active;
+                } else {
+                    tag.active = true; 
                 }
-                tagData.push(...newTags);
-                lastLineWasEmpty = false;
             }
+            tagData.push(...newTags);
+            lastLineWasEmpty = false;
         }
     }
     
     const finalTagData = [];
     const seenNames = new Set();
     for (const tag of tagData) {
-        if (tag.type === 'separator') {
-            finalTagData.push(tag);
-            continue;
-        }
         if (tag.name && !seenNames.has(tag.name)) {
             finalTagData.push(tag);
             seenNames.add(tag.name);
         }
     }
-    
-    if (finalTagData.length > 0 && finalTagData[finalTagData.length - 1].type === 'separator') {
-        finalTagData.pop();
-    }
     return finalTagData;
 }
 
-// flattenTagData function removed as per request
 
 const getTextInput = async (title, promptMessage, defaultValue = "") => {
     const value = prompt(promptMessage, defaultValue);
@@ -142,7 +125,7 @@ const getTextInput = async (title, promptMessage, defaultValue = "") => {
 
 // Custom hijack of the context menu to allow for quick edit of tags on right click
 let contextMenuPatched = false;
-const ERE_TAG_NODE_TYPES = ["ErePromptCloud", "ErePromptToggle", "ErePromptMultiSelect", "ErePromptRandomizer"];
+const ERE_TAG_NODE_TYPES = ["ErePromptCloud", "ErePromptToggle", "ErePromptMultiSelect", "ErePromptRandomizer", "ErePromptGallery"];
 
 let stylesInjected = false;
 function injectSpinnerHidingStyles() {
@@ -245,8 +228,11 @@ export function initializeSharedPromptFunctions(node, textWidget) {
     
     // Capture existing onPropertyChanged to allow chaining
     const existingOnPropertyChanged = node.onPropertyChanged;
-
     node.onPropertyChanged = function(name, value) {
+        if (existingOnPropertyChanged) {
+            existingOnPropertyChanged.apply(this, arguments);
+        }
+        
         // Handle _tagSeparator property changes
         if (name === "_tagSeparator") {
             // Trigger text widget update when tag separator changes
@@ -254,6 +240,11 @@ export function initializeSharedPromptFunctions(node, textWidget) {
                 this.onUpdateTextWidget(this);
             }
         }
+
+        if (name === "_tagImageWidth" || name === "_tagImageHeight") {
+            this.setDirtyCanvas(true, true);
+        }
+
     };
 
     node.convertTo = function(targetNodeType) {
@@ -285,8 +276,6 @@ export function initializeSharedPromptFunctions(node, textWidget) {
     
         if (targetNodeType === "ErePromptMultiline") {
             if (newNode.properties) delete newNode.properties._tagDataJSON;
-            // if (newNode.properties) delete newNode.properties._prefixSeparator;
-            // if (newNode.properties) delete newNode.properties._tagSeparator;
         }
         
         newNode.pos = [this.pos[0], this.pos[1]]; 
@@ -326,17 +315,19 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         app.graph.setDirtyCanvas(true, true);
     };
 
-    node.onActionMenu = (actionEvent, node) => { 
+    node.onActionMenu = (e, node) => { 
+        const tagData = parseTags(node.properties._tagDataJSON || "[]");
+
         let options = [
             { content: "Replace Tags from Clipboard", callback: () => node.onClipboardReplace?.() },
             { content: "Add Tags from Clipboard", callback: () => node.onClipboardAppend?.() },
             null, 
-            { content: "Edit Tags", callback: () => node.onEdit?.() },
             { content: "Toggle All Tags", callback: () => node.onToggleTags?.() },
             { content: "Remove All Tags", callback: () => node.onRemoveTags?.() },
+            { content: "Remove Inactive Tags", callback: () => node.onRemoveTags?.('inactive') },
             null, 
-            { content: "Load Tag Group", callback: () => node.onLoadTagGroup?.(actionEvent, "")  },
-            { content: "Save Tag Group", callback: () => node.onSaveTagGroup?.(actionEvent, "")  },
+            { content: "Load Tag Group", callback: () => node.onLoadTagGroup?.(e) },
+            { content: "Save Tag Group", callback: () => node.onSaveTagGroup?.(e), disabled: tagData.filter(t => t.type !== 'group').length < 2 },
             null, 
             { content: "Export Tags (.json)", callback: () => node.onExportTags?.() },
             { content: "Import Tags (.json)", callback: () => node.onImportTags?.() },
@@ -346,189 +337,198 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             { content: "Convert to Prompt Toggle", callback: () => node.convertTo("ErePromptToggle") },
             { content: "Convert to Prompt Multiline", callback: () => node.convertTo("ErePromptMultiline") },
             { content: "Convert to Prompt Randomizer", callback: () => node.convertTo("ErePromptRandomizer") },
+            { content: "Convert to Prompt Gallery", callback: () => node.convertTo("ErePromptGallery") },
         ];
 
         if (node.type === "ErePromptMultiline") {
-            options = options.filter(option => !option || option.content !== "Edit Tags");
             options = options.filter(option => !option || option.content !== "Toggle All Tags");
         }
+
         options = options.filter(option => !option || option.content !== "Convert to " + node.title);
 
-                new LiteGraph.ContextMenu(options, { event: actionEvent, className: "dark", node }, window);
+        new LiteGraph.ContextMenu(options, { event: e, className: "dark", node }, window);
+
     };
 
-    node.onEdit = () => {
-        node.isEditMode = true;
-        textWidget.hidden = false;
-        textWidget.computeSize = null;
+    node.onLoadTagGroup = (e) => {
         
-        // Add save button widget
-        let saveButton = node.addWidget("button", "Save", "edit_text", () => {
-            
-            // Save to JSON
-            const finalTagData = parseTextToTagData(textWidget.value, parseTags(node.properties._tagDataJSON || "[]"));
-            node.properties._tagDataJSON = JSON.stringify(finalTagData, null, 2);
+        const addTagObject = async (tagObject) => {
+            if (!tagObject || !tagObject.name) return;
 
-            // Disable edit mode and remove button
-            node.isEditMode = false;
-            textWidget.hidden = true;
-
-            const widgetIndex = node.widgets.indexOf(saveButton);
-            if (widgetIndex > -1) {
-                node.widgets.splice(widgetIndex, 1); // Use splice instead of removeWidget
-            } 
-
-            // Update output
-            node.onUpdateTextWidget(node);
-        });
-
-        // Set editor size
-        const minEditorHeight = 256;
-        if (node.size[1] < minEditorHeight) {
-            node.setSize([node.size[0], minEditorHeight]);
-        }
-
-        // Parse tags into editor value
-        const tagData = parseTags(node.properties._tagDataJSON || "[]");
-        
-        let lines = [];
-        let currentLine = [];
-
-        // Insert tags and separators
-        for (const tag of tagData) {
-            if (tag.type === 'separator') {
-                if (currentLine.length > 0) {
-                    const separator = (node.properties._tagSeparator !== undefined && node.properties._tagSeparator !== "") ? node.properties._tagSeparator : ", ";
-                    lines.push(currentLine.join(separator));
-                }
-                lines.push(""); 
-                currentLine = [];
-            } else if (tag.name) {
-                currentLine.push(formatTag(tag));
+            let resolvedGroupTags;
+            try {
+                let url;
+                url = `/erenodes/get_tag_group?filename=${encodeURIComponent(tagObject.name + tagObject.extension)}`;
+                const groupTags = getCache(url, 'json');
+                resolvedGroupTags = groupTags instanceof Promise ? await groupTags : groupTags;
+            } catch (error) {
+                console.error("[EreNodes] Error loading tag group.", error);
+                return;
             }
-        }
-        
-        // Join with tag separator
-        if (currentLine.length > 0) {
-            const separator = (node.properties._tagSeparator !== undefined && node.properties._tagSeparator !== "") ? node.properties._tagSeparator : ", ";
-            lines.push(currentLine.join(separator));
-        }
 
-        textWidget.value = lines.join("\n");
-        app.graph.setDirtyCanvas(true);
-    };
+            if (!Array.isArray(resolvedGroupTags)) {
+                throw new Error('Loaded tag group is not a valid array.');
+            }
 
-    node.onUpdateTextWidget = async (node) => {
-        const textWidget = node.widgets.find(w => w.name === "text");
-        if (!textWidget) return;
+            if (node.type !== "ErePromptMultiline") {
+                const existingTagData = parseTags(node.properties._tagDataJSON || "[]");
+                const existingTagNames = new Set(existingTagData.map(t => t.name));
 
-        const tagData = parseTags(node.properties._tagDataJSON || "[]");
-        const activeTagsAndSeparators = tagData.filter(t => (t.active && t.name) || t.type === 'separator');
+                // Check if tag group already exists by name and type
+                const existingTagSet = new Set(existingTagData.map(t => `${t.name}_${t.type || 'tag'}`));
+                const uniqueNewTagObjects = resolvedGroupTags.filter(tagObj => 
+                    tagObj.name && !existingTagSet.has(`${tagObj.name}_${tagObj.type || 'tag'}`)
+                );
 
-        let tagSeparator = (node.properties._tagSeparator || ", ").replace(/\\n/g, "\n");
+                if (!uniqueNewTagObjects.length) return;
 
-        const parts = [];
-        let currentLineTags = [];
-
-        for (const tag of activeTagsAndSeparators) {
-            if (tag.type === 'separator') {
-                if (currentLineTags.length > 0) {
-                    const line = currentLineTags.join(tagSeparator);
-
-                    // If there are already parts, and the last part is content (not a separator/newline),
-                    // then we need to add a separator before adding this new line of content.
-                    if (parts.length > 0 && parts[parts.length - 1] !== tagSeparator && parts[parts.length - 1].trim() !== '') {
-                        parts.push(tagSeparator);
-                    }
-                    parts.push(line);
-                    currentLineTags = [];
-                }
-            } else if (tag.type === 'group') {
-                // If we have pending tags, join and add them before processing the group.
-                if (currentLineTags.length > 0) {
-                    const line = currentLineTags.join(tagSeparator);
-
-                    // If there are already parts, and the last part is content (not a separator/newline),
-                    // then we need to add a separator before adding this new line of content.
-                    if (parts.length > 0 && parts[parts.length - 1] !== tagSeparator && parts[parts.length - 1].trim() !== '') {
-                        parts.push(tagSeparator);
-                    }
-                    parts.push(line);
-                    currentLineTags = [];
-                }
-                try {
-                    const filename = tag.extension ? `${tag.name}${tag.extension}` : tag.name;
-                    const response = await fetch(`/erenodes/get_tag_group?filename=${encodeURIComponent(filename)}`);
-                    if (response.ok) {
-                        const groupTagData = await response.json();
-                        if (Array.isArray(groupTagData)) {
-                            const activeGroupTags = groupTagData.filter(t => t.active && t.name);
-                            if (activeGroupTags.length > 0) {
-                                if (parts.length > 0 && parts[parts.length - 1].trim() !== '') {
-                                    parts.push(tagSeparator);
-                                }
-                                
-                                const groupParts = [];
-                                activeGroupTags.forEach(gTag => {
-                                    groupParts.push(formatTag(gTag));
-                                    if (gTag.type === 'lora' && gTag.triggers && gTag.triggers.length > 0) {
-                                        groupParts.push(...gTag.triggers);
-                                    }
-                                });
-                                let groupPart = groupParts.join(tagSeparator);
-
-                                if (tag.strength && tag.strength !== 1.0) {
-                                    const strengthValue = parseFloat(tag.strength);
-                                    if (!isNaN(strengthValue) && strengthValue !== 1.0) {
-                                        groupPart = `(${groupPart}:${strengthValue.toFixed(2)})`;
-                                    }
-                                }
-                                parts.push(groupPart);
-                            }
+                const combinedTagData = existingTagData.concat(uniqueNewTagObjects);
+                node.properties._tagDataJSON = JSON.stringify(combinedTagData, null, 2);
+                node.onUpdateTextWidget(node);
+            } else { // Handles ErePromptMultiline
+                const textWidget = node.widgets.find(w => w.name === "text");
+                if (textWidget) {
+                    // Use the node's specified tagSeparator, defaulting to ", "
+                    // And ensure \n in the separator string becomes an actual newline
+                    const separator = (node.properties._tagSeparator || ", ").replace(/\\n/g, "\n");
+                    const newTagsString = resolvedGroupTags.map(formatTag).join(separator);
+                    
+                    if (textWidget.value) {
+                        let cleanedExistingText = textWidget.value.replace(/[, \t\n]+$/, "");
+                        if (cleanedExistingText) { // If anything remains after cleaning
+                            textWidget.value = cleanedExistingText + separator + newTagsString;
+                        } else { // Existing text was only separators/whitespace
+                            textWidget.value = newTagsString;
                         }
+                    } else {
+                        // If the text widget is empty, just set it to the new tags.
+                        textWidget.value = newTagsString;
                     }
-                } catch (error) {
-                    console.error(`[EreNodes] Failed to load and parse tag group: ${tag.name}`, error);
-                }
-            } else {
-                currentLineTags.push(formatTag(tag));
-                if (tag.type === 'lora' && tag.triggers && tag.triggers.length > 0) {
-                    currentLineTags.push(...tag.triggers);
                 }
             }
-        }
 
-        if (currentLineTags.length > 0) {
-            const line = currentLineTags.join(tagSeparator);
+            app.graph.setDirtyCanvas(true);
+        };
 
-            // If there are already parts, and the last part is content (not a separator/newline),
-            // then we need to add a separator before adding this new line of content.
-            if (parts.length > 0 && parts[parts.length - 1] !== tagSeparator && parts[parts.length - 1].trim() !== '') {
-                parts.push(tagSeparator);
+        const LoadGroupMenu = new TagGroupContextMenu(e, addTagObject, 'group', 'load'); // open in load mode
+        LoadGroupMenu.show();
+
+    };
+
+    node.onSaveTagGroup = (e) => {
+
+        const saveTagObject = async (tagObject) => {
+            try {
+                let tagDataToSave;
+                if (node.properties._tagDataJSON !== undefined) {
+                    tagDataToSave = parseTags(node.properties._tagDataJSON || "[]");
+                } else {
+                    const textWidget = node.widgets.find(w => w.name === "text");
+                    tagDataToSave = parseTextToTagData(textWidget ? textWidget.value : "");
+                }
+
+                const originalTagData = [...tagDataToSave];
+                // Only filter out group tags if we're actually saving a tag group (not individual tags)
+                const groupTags = tagDataToSave.filter(tag => tag.type === 'group');
+                if (groupTags.length > 0) {
+                    tagDataToSave = tagDataToSave.filter(tag => tag.type !== 'group');
+                    app.extensionManager.toast.add({
+                        severity: "warn",
+                        summary: "Nested tag groups not allowed.",
+                        detail: `${groupTags.length} tag group(s) skipped in saving.`,
+                        life: 6000
+                    });
+                }
+
+                const jsonString = JSON.stringify(tagDataToSave, null, 2);
+                const fullPath = tagObject.path ? `${tagObject.path}/${tagObject.filename}` : tagObject.filename;
+                
+                // Check if file already exists and confirm overwrite
+                const checkResponse = await fetch(`/erenodes/get_tag_group?filename=${encodeURIComponent(fullPath)}`);
+                if (checkResponse.ok) {
+                    const confirmed = await app.ui.dialog.show({
+                        type: "confirm",
+                        title: "File Exists",
+                        message: `Tag group '${tagObject.filename}' already exists. Do you want to overwrite it?`
+                    });
+                    if (!confirmed) return;
+                }
+
+                clearCache(`/erenodes/get_tag_group?filename=${encodeURIComponent(fullPath)}`);
+
+                const formData = new FormData();
+                formData.append('path', tagObject.path || '');
+                formData.append('filename', tagObject.filename);
+                formData.append('tags_json', jsonString);
+
+                if (tagObject.imageFile) {
+                    formData.append('image_file', tagObject.imageFile, tagObject.imageFile.name);
+                }
+
+                const response = await fetch('/erenodes/save_tag_group', {
+                    method: 'POST',
+                    body: formData,
+                });
+                
+                const result = await response.json();
+                if (!response.ok) {
+                    const errorMessage = result.error || result.message || "Unknown error saving tag group.";
+                    console.error('[EreNodes] Error saving tag group:', errorMessage);
+                    app.extensionManager.toast.add({
+                        severity: "error",
+                        summary: "Save Error",
+                        detail: errorMessage,
+                        life: 5000
+                    });
+                } else {
+                    const successMessage = result.message || `Tag group '${tagObject.filename}' saved successfully.`;
+                    app.extensionManager.toast.add({
+                        severity: "success",
+                        summary: "Saved",
+                        detail: successMessage,
+                        life: 4000
+                    });
+
+                    // Replace saved tags with new group tag if requested
+                    if (tagObject.shouldReplace) {
+                        const remainingTags = originalTagData.filter(tag => tag.type === 'group');
+                        const groupName = tagObject.path ? `${tagObject.path}/${tagObject.filename.replace('.json', '')}` : tagObject.filename.replace('.json', '');
+                        const newGroupTag = { name: groupName, type: 'group', active: true, extension: '.json' };
+                        const finalTagData = [...remainingTags, newGroupTag];
+
+                        node.properties._tagDataJSON = JSON.stringify(finalTagData, null, 2);
+                        if (node.onUpdateTextWidget) {
+                            node.onUpdateTextWidget(node);
+                        }
+                        app.graph.setDirtyCanvas(true);
+                    }
+                }
+            } catch (error) {
+                console.error('[EreNodes] Error saving tag group:', error);
+                app.extensionManager.toast.add({
+                    severity: "error",
+                    summary: "Save Operation Error",
+                    detail: error.message,
+                    life: 5000
+                });
             }
-            parts.push(line);
         }
 
-        // Remove trailing separator if 'parts' ends with it and has more than one element.
-        if (parts.length > 1 && parts[parts.length - 1] === tagSeparator) {
-            parts.pop();
-        }
+        const SaveGroupMenu = new TagGroupContextMenu(e, saveTagObject, 'group', 'save'); // open in load mode
+        SaveGroupMenu.show();
 
-        // For multiline nodes, don't modify the text widget content when updating separators
-        if (node.type !== "ErePromptMultiline") {
-            // Filter out any empty strings that might result from consecutive separators
-            // or separators at the beginning/end without content.
-            let currentText = parts.filter(part => part.trim() !== '' || part === tagSeparator)
-                                   .join('');
-            // If the final result is just the separator itself (e.g. only a separator was active), make it empty.
-            if (currentText === tagSeparator && activeTagsAndSeparators.filter(t => t.type !== 'separator' && t.type !== 'group').length === 0) {
-                currentText = '';
-            }
 
-            // Python will now handle prefix logic, so we just set the current text
-            textWidget.value = currentText;
-        }
-        // For multiline nodes, preserve the existing text content
+        /// ** Or is this maybe alternative way to show it and set callback too I think.
+        // const SaveGroupMenu = new TagGroupContextMenu(e, async (selectedFile) => {
+        //     // Update the tag object with the new file info
+        //     this.tag.name = selectedFile.name;
+        //     this.tag.extension = selectedFile.extension;
+
+        //     if (this.onSelect) {
+        //     }
+        // }, 'group', 'save);
+        
+
     };
 
     node.onClipboardReplace = () => {
@@ -587,12 +587,29 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         if (!tagData.length) return;
 
         const anyActive = tagData.some(tag => tag.active && tag.name);
-        const allTargetState = !anyActive; 
+        const allTargetState = !anyActive;
 
         const updatedTagData = tagData.map(tag => ({ ...tag, active: tag.name ? allTargetState : tag.active }));
 
         node.properties._tagDataJSON = JSON.stringify(updatedTagData, null, 2);
         await node.onUpdateTextWidget(node);
+        app.graph.setDirtyCanvas(true);
+    };
+    
+    node.onRemoveTags = (mode = 'all') => {
+        if(node.properties._tagDataJSON !== undefined) {
+            if (mode === 'all') {
+                node.properties._tagDataJSON = "[]"; 
+            } else if (mode === 'inactive') {
+                const tagData = parseTags(node.properties._tagDataJSON || "[]");
+                const activeTags = tagData.filter(t => t.active);
+                node.properties._tagDataJSON = JSON.stringify(activeTags);
+            }
+        }
+        if (textWidget && mode === 'all') {
+            textWidget.value = ""; 
+        }
+        node.setDirtyCanvas(true);
         app.graph.setDirtyCanvas(true);
     };
 
@@ -620,17 +637,6 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-    };
-    
-    node.onRemoveTags = () => {
-        if(node.properties._tagDataJSON !== undefined) {
-            node.properties._tagDataJSON = "[]"; 
-        }
-        if (textWidget) {
-            textWidget.value = ""; 
-        }
-        node.setDirtyCanvas(true);
-        app.graph.setDirtyCanvas(true);
     };
 
     node.onImportTags = () => {
@@ -680,485 +686,20 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         input.click();
     };
 
-    node.onLoadTagGroupFile = async (fileName, filePath = "") => {
-        const fullPath = filePath ? `${filePath}/${fileName}` : fileName;
-        try {
-            const response = await fetch(`/erenodes/get_tag_group?filename=${encodeURIComponent(fullPath)}`);
-            if (!response.ok) {
-                const errorResult = await response.json().catch(() => ({ error: 'Failed to fetch tag group details.' }));
-                throw new Error(errorResult.error || `HTTP error! status: ${response.status}`);
-            }
-            const newTagData = await response.json();
-            if (!Array.isArray(newTagData)) {
-                throw new Error('Loaded tag group is not a valid array.');
-            }
-
-            if (node.type !== "ErePromptMultiline") {
-                const existingTagData = parseTags(node.properties._tagDataJSON || "[]");
-                const existingTagNames = new Set(existingTagData.map(t => t.name));
-                const uniqueNewTagObjects = newTagData.filter(tagObj => tagObj.name && !existingTagNames.has(tagObj.name));
-
-                if (!uniqueNewTagObjects.length) return;
-
-                const combinedTagData = existingTagData.concat(uniqueNewTagObjects);
-                node.properties._tagDataJSON = JSON.stringify(combinedTagData, null, 2);
-                node.onUpdateTextWidget(node);
-            } else { // Handles ErePromptMultiline
-                const textWidget = node.widgets.find(w => w.name === "text");
-                if (textWidget) {
-                    // Use the node's specified tagSeparator, defaulting to ", "
-                    // And ensure \n in the separator string becomes an actual newline
-                    const separator = (node.properties._tagSeparator || ", ").replace(/\\n/g, "\n");
-                    const newTagsString = newTagData.map(formatTag).join(separator);
-                    
-                    if (textWidget.value) {
-                        let cleanedExistingText = textWidget.value.replace(/[, \t\n]+$/, "");
-                        if (cleanedExistingText) { // If anything remains after cleaning
-                            textWidget.value = cleanedExistingText + separator + newTagsString;
-                        } else { // Existing text was only separators/whitespace
-                            textWidget.value = newTagsString;
-                        }
-                    } else {
-                        // If the text widget is empty, just set it to the new tags.
-                        textWidget.value = newTagsString;
-                    }
-                }
-            }
-            app.graph.setDirtyCanvas(true);
-        } catch (error) {
-            console.error('[EreNodes] Error loading tag group file:', error);
-        }
-    };
-
-    node.onLoadTagGroup = async (actionEvent, currentPath = "") => {
-        const loadSubMenu = [];
-        try {
-            const response = await fetch(`/erenodes/list_tag_groups?path=${encodeURIComponent(currentPath)}`);
-            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-            const groups = await response.json();
-
-            if (currentPath !== "") {
-                const parentPath = currentPath.substring(0, currentPath.lastIndexOf('/'));
-                loadSubMenu.push({
-                    content: "⬅️ .. (Up)",
-                    callback: () => node.onLoadTagGroup(actionEvent, parentPath)
-                });
-            }
-            if (Array.isArray(groups) && groups.length > 0) {
-                groups.forEach(item => {
-                    const fullItemPath = currentPath ? `${currentPath}/${item.name}` : item.name;
-                    if (item.type === "folder") {
-                        loadSubMenu.push({
-                            content: "📂 " + item.name,
-                            callback: () => node.onLoadTagGroup(actionEvent, fullItemPath)
-                        });
-                    } else if (item.type === "file") {
-                        loadSubMenu.push({
-                            content: "📄 " + item.name,
-                            callback: () => node.onLoadTagGroupFile(item.name, currentPath)
-                        });
-                    }
-                });
-            } else if (groups.length === 0 && currentPath === "") {
-                loadSubMenu.push({ content: "(No tag groups found)", disabled: true });
-            } else if (groups.length === 0) {
-                 loadSubMenu.push({ content: "(Empty folder)", disabled: true });
-            }
-        } catch (error) {
-            console.error("Error fetching tag groups:", error);
-            loadSubMenu.push({ content: "(Error fetching tag groups)", disabled: true });
-        }
-
-        new LiteGraph.ContextMenu(loadSubMenu, {
-            event: actionEvent,
-            className: "dark",
-            node: node, 
-        }, window);
-    };
-
-    node.onOverwriteTagGroup = async (fullItemPath) => {
-        const tagData = parseTags(node.properties._tagDataJSON || "[]");
-
-        // Check for nested groups before overwriting
-        if (tagData.some(tag => tag.type === 'group')) {
-            app.extensionManager.toast.add({
-                severity: "error",
-                summary: "Overwrite Aborted",
-                detail: "Nested tag groups are not allowed. Please remove groups from this set before overwriting.",
-                life: 6000
-            });
-            return; // Abort overwrite
-        }
-        const tagsToSave = JSON.stringify(tagData, null, 2);
-
-        let directoryPath = "";
-        let fileName = fullItemPath;
-        const lastSlashIndex = fullItemPath.lastIndexOf('/');
-        if (lastSlashIndex !== -1) {
-            directoryPath = fullItemPath.substring(0, lastSlashIndex);
-            fileName = fullItemPath.substring(lastSlashIndex + 1);
-        }
-
-        if (!fileName.endsWith(".json")) {
-            console.error("[EreNodes] Error: Attempting to overwrite a non-JSON file.");
-            return;
-        }
-
-        try {
-            const formData = new FormData();
-            formData.append('path', directoryPath);
-            formData.append('filename', fileName);
-            formData.append('tags_json', tagsToSave);
-            // No image_file for overwrite, but backend handles its absence
-
-            const response = await fetch('/erenodes/save_tag_group', {
-                method: 'POST',
-                body: formData, // Use FormData, browser sets Content-Type
-            });
-            const result = await response.json();
-            if (!response.ok) {
-                const errorMessage = result.error || result.message || "Unknown error overwriting tag group.";
-                console.error('[EreNodes] Error overwriting tag group:', errorMessage);
-                app.extensionManager.toast.add({
-                    severity: "error",
-                    summary: "Overwrite Error",
-                    detail: errorMessage,
-                    life: 5000
-                });
-            } else {
-                // Shorthand for creating an alert toast
-                app.extensionManager.toast.addAlert("This is an important message");
-                const successMessage = result.message || `Tag group '${fileName}' overwritten successfully.`;
-                app.extensionManager.toast.add({
-                    severity: "success",
-                    summary: "Overwritten",
-                    detail: successMessage,
-                    life: 4000
-                });
-            }
-        } catch (error) {
-            console.error('[EreNodes] Error overwriting tag group:', error);
-            app.extensionManager.toast.add({
-                severity: "error",
-                summary: "Overwrite Operation Error",
-                detail: error.message,
-                life: 5000
-            });
-        }
-    };
-
-    node.onSaveTagGroup = async (actionEvent, currentPath = "") => {
-        const saveSubMenu = [];
-
-        saveSubMenu.push({
-            content: "💾 Save Here...",
-            callback: () => node.promptForFilenameAndSave(actionEvent, currentPath)
-        });
-
-        saveSubMenu.push({
-            content: "📂 Create New Folder...",
-            callback: () => node.promptForNewFolder(actionEvent, currentPath)
-        });
-
-        saveSubMenu.push(null); 
-
-        if (currentPath !== "") {
-            const parentPath = currentPath.substring(0, currentPath.lastIndexOf('/'));
-            saveSubMenu.push({
-                content: "⬅️ .. (Up)",
-                callback: () => node.onSaveTagGroup(actionEvent, parentPath)
-            });
-        }
-
-        try {
-            const response = await fetch(`/erenodes/list_tag_groups?path=${encodeURIComponent(currentPath)}`);
-            if (response.ok) {
-                const items = await response.json();
-                if (Array.isArray(items)) {
-                    items.forEach(item => {
-                        const fullItemPath = currentPath ? `${currentPath}/${item.name}` : item.name;
-                        if (item.type === "folder") {
-                            saveSubMenu.push({
-                                content: "📁 " + item.name,
-                                callback: () => node.onSaveTagGroup(actionEvent, fullItemPath)
-                            });
-                        } else if (item.type === "file" && item.name.endsWith(".json")) {
-                            saveSubMenu.push({
-                                content: "📄 " + item.name + " (Overwrite)",
-                                callback: () => node.onOverwriteTagGroup(fullItemPath)
-                            });
-                        }
-                    });
-                }
-            } else {
-                console.error("Failed to fetch folder list for saving, status:", response.status);
-                saveSubMenu.push({ content: "(Error fetching folders)", disabled: true });
-            }
-        } catch (error) {
-            console.error("Error fetching folder list for saving:", error);
-            saveSubMenu.push({ content: "(Error fetching folders)", disabled: true });
-        }
-
-        new LiteGraph.ContextMenu(saveSubMenu, {
-            event: actionEvent,
-            className: "dark",
-            node: node, 
-        }, window);
-    };
-    
-    node.promptForNewFolder = async (actionEvent, currentPath) => {
-        const folderName = await getTextInput("Create New Folder", "Enter new folder name:", "New Folder");
-        if (!folderName || folderName.trim() === "") return;
-
-        try {
-            const response = await fetch('/erenodes/create_folder', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    path: currentPath,
-                    folderName: folderName.trim(),
-                }),
-            });
-            if (response.ok) {
-                node.onSaveTagGroup(actionEvent, currentPath);
-            } else {
-                const error = await response.json();
-                console.error("Error creating folder:", error.error);
-            }
-        } catch (error) {
-            console.error("Error creating folder:", error);
-        }
-    };
-    
-class TagGroupSaveContextMenu extends DynamicContextMenu {
-    constructor(event, savePath, nodeInstance, onSaveActualCallback) {
-        super(event, null); // Base class onSelect is not used directly for this dialog's primary action
-        this.savePath = savePath;
-        this.nodeInstance = nodeInstance; // Store the node instance
-        this.onSaveActual = onSaveActualCallback;
-        this.currentImageFile = null;
-        this.currentFileName = ""; // Store filename from input for convenience
-
-        // Override onItemSelected to prevent default close behavior for some items
-        this.onItemSelected = (option) => {
-            if (option && !option.disabled && option.callback) {
-                option.callback();
-            }
-        };
-        this.show();
-    }
-
-    show() {
-        this.close(); // Close any existing menu
-        this.root = document.createElement("div");
-        this.root.className = "litegraph litecontextmenu litemenubar-panel dark";
-        this.root.close = this.close.bind(this);
-        
-        const { clientX: x, clientY: y } = this.event;
-        Object.assign(this.root.style, {
-            left: `${x}px`,
-            top: `${y}px`,
-        });
-        if (this.nodeScreenWidth && this.nodeScreenWidth > 0) {
-            this.root.style.maxWidth = this.nodeScreenWidth - 28 + 'px';
-        }
-
-        document.body.appendChild(this.root);
-
-        this.updateOptionsAndRender();
-        this.setupEventListeners();
-        
-        if (this.filterBox) {
-            this.filterBox.focus();
-            this.filterBox.value = this.currentFileName; // Restore previous filename if any
-        }
-
-        if (LiteGraph.currentMenu && LiteGraph.currentMenu !== this && typeof LiteGraph.currentMenu.close === 'function') {
-            LiteGraph.currentMenu.close();
-        }
-        LiteGraph.currentMenu = this;
-    }
-    
-    updateOptionsAndRender() {
-        this.options = [
-            {
-                type: 'filter',
-                placeholder: 'Filename',
-                onInput: (value) => {
-                    this.currentFileName = value;
-                }
-            },
-            { type: 'separator' },
-            {
-                name: `🖼️ ${this.currentImageFile ? `Image: ${this.currentImageFile.name}` : "Select Image..."}`,
-                callback: async () => {
-                    const imageFile = await this._selectImageFile();
-                    this.currentImageFile = imageFile;
-                    // Re-render by re-calling show, which will call updateOptionsAndRender
-                    this.show();
-                }
-            },
-            { type: 'separator' },
-            {
-                name: "💾 Save",
-                callback: () => {
-                    const filenameFromInput = this.filterBox ? this.filterBox.value.trim() : this.currentFileName.trim();
-                    if (!filenameFromInput) {
-                        alert("Filename cannot be empty.");
-                        if (this.filterBox) this.filterBox.focus();
-                        return;
-                    }
-                    let finalFileName = filenameFromInput;
-                    if (!finalFileName.toLowerCase().endsWith('.json')) {
-                        finalFileName += '.json';
-                    }
-                    this.onSaveActual(finalFileName, this.currentImageFile, this.savePath, this.nodeInstance);
-                    this.close();
-                }
-            },
-            {
-                name: "❌ Cancel",
-                callback: () => {
-                    this.close();
-                }
-            }
-        ];
-        this.renderItems();
-        
-        if (this.filterBox) {
-            this.filterBox.value = this.currentFileName; // Ensure value is set after render
-            setTimeout(() => this.filterBox.focus(), 0); // Ensure focus after render
-        }
-    }
-
-    async _selectImageFile() {
-        return new Promise((resolve) => {
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.accept = 'image/*';
-            input.style.display = 'none';
-            let resolved = false;
-            const cleanupAndResolve = (file) => {
-                if (resolved) return;
-                resolved = true;
-                window.removeEventListener('focus', handleFocus);
-                if (document.body.contains(input)) document.body.removeChild(input);
-                resolve(file);
-            };
-            const handleChange = (event) => cleanupAndResolve(event.target.files && event.target.files.length > 0 ? event.target.files[0] : null);
-            const handleFocus = () => setTimeout(() => { if (!resolved && (!input.files || input.files.length === 0)) cleanupAndResolve(null); }, 100);
-            input.addEventListener('change', handleChange);
-            window.addEventListener('focus', handleFocus, { once: true });
-            document.body.appendChild(input);
-            try { input.click(); } catch (err) { console.error("[EreNodes] Error triggering file input click:", err); cleanupAndResolve(null); }
-        });
-    }
-
-    handleKeyboard(e) {
-        // Allow DynamicContextMenu to handle Enter key based on highlighted item.
-        // Do not trigger save directly from filterBox on Enter.
-        if (this.filterBox && e.target === this.filterBox && e.key === 'Enter') {
-             // If enter is pressed in the filter box, we want the default behavior of DynamicContextMenu,
-             // which is to activate the currently highlighted item.
-             // So, we let the event propagate to the parent's handler.
-             // However, we still want to prevent default browser action for Enter in an input if not handled by menu.
-            e.preventDefault();
-        }
-        return super.handleKeyboard(e);
-    }
-}
-
-
-node.promptForFilenameAndSave = async (actionEvent, savePath) => {
-    const onSaveActualCallback = async (fileName, imageFile, path, graphNode) => {
-        try {
-            let jsonString;
-            let tagDataToSave;
-            if (graphNode.properties._tagDataJSON !== undefined) {
-                tagDataToSave = parseTags(graphNode.properties._tagDataJSON || "[]");
-            } else {
-                const textWidget = graphNode.widgets.find(w => w.name === "text");
-                tagDataToSave = parseTextToTagData(textWidget ? textWidget.value : "");
-            }
-
-            // Check for nested groups before saving
-            if (tagDataToSave.some(tag => tag.type === 'group')) {
-                app.extensionManager.toast.add({
-                    severity: "error",
-                    summary: "Save Aborted",
-                    detail: "Nested tag groups are not allowed. Please remove groups from this set before saving.",
-                    life: 6000
-                });
-                return; // Abort save
-            }
-            jsonString = JSON.stringify(tagDataToSave, null, 2);
-
-            const formData = new FormData();
-            formData.append('path', path);
-            formData.append('filename', fileName);
-            formData.append('tags_json', jsonString);
-
-            if (imageFile) {
-                formData.append('image_file', imageFile, imageFile.name);
-            }
-
-            const response = await fetch('/erenodes/save_tag_group', {
-                method: 'POST',
-                body: formData,
-            });
-            
-            const result = await response.json();
-            if (!response.ok) {
-                const errorMessage = result.error || result.message || "Unknown error saving tag group.";
-                console.error('[EreNodes] Error saving tag group:', errorMessage);
-                app.extensionManager.toast.add({
-                    severity: "error",
-                    summary: "Save Error",
-                    detail: errorMessage,
-                    life: 5000
-                });
-            } else {
-                const successMessage = result.message || `Tag group '${fileName}' saved successfully.`;
-                // console.log('[EreNodes] Tag group saved:', successMessage);
-                app.extensionManager.toast.add({
-                    severity: "success",
-                    summary: "Saved",
-                    detail: successMessage,
-                    life: 4000
-                });
-            }
-        } catch (error) {
-            console.error('Error saving tag group:', error);
-            app.extensionManager.toast.add({
-                severity: "error",
-                summary: "Save Operation Error",
-                detail: error.message,
-                life: 5000
-            });
-        }
-    };
-    new TagGroupSaveContextMenu(actionEvent, savePath, node, onSaveActualCallback);
-};
-
     node.onRandomize = (e, pos) => {
         const tagData = parseTags(node.properties._tagDataJSON || "[]");
-        if (!tagData.length) return;
+        const activeCount = tagData.filter(t => t.active).length;
 
-        const allTags = tagData.filter(t => t.type !== 'separator' && t.name);
-        if (!allTags.length) return;
+        tagData.forEach(t => t.active = false);
 
-        const activeCount = allTags.filter(t => t.active).length;
-
-        allTags.forEach(t => t.active = false);
-
-        for (let i = allTags.length - 1; i > 0; i--) {
+        for (let i = tagData.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
-            [allTags[i], allTags[j]] = [allTags[j], allTags[i]];
+            [tagData[i], tagData[j]] = [tagData[j], tagData[i]];
         }
 
         for (let i = 0; i < activeCount; i++) {
-            if (allTags[i]) {
-                allTags[i].active = true;
+            if (tagData[i]) {
+                tagData[i].active = true;
             }
         }
         
@@ -1186,13 +727,10 @@ node.promptForFilenameAndSave = async (actionEvent, savePath) => {
             app.graph.setDirtyCanvas(true);
         };
         
-        let existingTagNames = [];
-        const textWidget = node.widgets.find(w => w.name === "text");
-        if (textWidget && textWidget.value) {
-            existingTagNames = textWidget.value.split(/[,\n]/).map(tag => tag.trim()).filter(Boolean);
-        }
+        const existingTags = parseTags(node.properties._tagDataJSON || "[]")
+            .map(tag => ({ name: tag.name, type: tag.type }));
         
-        new TagContextMenuInsert(e, addTagObject, existingTagNames);
+        new TagContextMenuInsert(e, addTagObject, existingTags);
     };
 
     node.onTagPillClick = async (e, pos, clickedPill) => {
@@ -1242,9 +780,26 @@ node.promptForFilenameAndSave = async (actionEvent, savePath) => {
             const isSpecialType = ['lora', 'embedding', 'group'].includes(clickedTag.type);
 
             if (isSpecialType) {
-                // For special types, the name/type are not editable from the input,
-                // but the name can change if a different file is selected.
-                finalTag = { ...clickedTag, ...editedTag };
+                // Start with clickedTag to preserve properties like 'active', 'extension', etc.
+                finalTag = { ...clickedTag };
+                // Overwrite with all defined properties from editedTag
+                // This includes name (if changed by file selection) and potentially strength (if not 1.0)
+                for (const key in editedTag) {
+                    if (editedTag.hasOwnProperty(key)) {
+                        finalTag[key] = editedTag[key];
+                    }
+                }
+                // If updateTag deleted strength from editedTag (because it was 1.0),
+                // ensure it's also removed/undefined in finalTag.
+                if (editedTag.strength === undefined) {
+                    delete finalTag.strength;
+                }
+                // Ensure triggers from editedTag are used, or default to empty if not present in either
+                if (editedTag.hasOwnProperty('triggers')) {
+                    finalTag.triggers = editedTag.triggers;
+                } else if (!finalTag.hasOwnProperty('triggers')) {
+                    finalTag.triggers = [];
+                }
             } else {
                 // For normal tags, parse the full input value as it might have changed.
                 const parsed = parseTag(editedTag.name.trim());
@@ -1255,7 +810,7 @@ node.promptForFilenameAndSave = async (actionEvent, savePath) => {
                 // Combine the original tag's properties (like 'active' state) with the newly parsed data and edited properties.
                 finalTag = { ...clickedTag, ...parsed, strength: editedTag.strength, triggers: editedTag.triggers, active: clickedTag.active };
             }
-            
+
             currentTagData[tagIndex] = finalTag;
             nodeInstance.properties._tagDataJSON = JSON.stringify(currentTagData, null, 2);
             await nodeInstance.onUpdateTextWidget(nodeInstance);
@@ -1292,9 +847,121 @@ node.promptForFilenameAndSave = async (actionEvent, savePath) => {
             app.graph.setDirtyCanvas(true);
         };
 
+        const imageCallback = () => {
+            if (nodeInstance) {
+                // Redraw the node to reflect the new image
+                nodeInstance.setDirtyCanvas(true, true);
+            }
+        };
+
+        // Calculate existing tags for file filtering
+        const existingTags = tagData.map(tag => ({ name: tag.name, type: tag.type }));
+        
         // The 'event' parameter (which is positionEvent from applyContextMenuPatch)
         // now has clientX and clientY correctly set.
-        new TagEditContextMenu(event, clickedTag, saveCallback, deleteCallback, moveCallback, tagIndex, nodeScreenWidth); // Pass nodeScreenWidth
+        new TagEditContextMenu(event, clickedTag, saveCallback, deleteCallback, moveCallback, imageCallback, tagIndex, nodeScreenWidth, existingTags);
     };
     
+    node.onUpdateTextWidget = async (node) => {
+        const textWidget = node.widgets.find(w => w.name === "text");
+        if (!textWidget) return;
+
+        const tagData = parseTags(node.properties._tagDataJSON || "[]");
+        if (tagData.length === 0) return;
+        const activeTags = tagData.filter(t => (t.active && t.name) );
+
+        let tagSeparator = (node.properties._tagSeparator || ", ").replace(/\\n/g, "\n");
+
+        const parts = [];
+        let currentLineTags = [];
+
+        for (const tag of activeTags) {
+            if (tag.type === 'group') {
+                // If we have pending tags, join and add them before processing the group.
+                if (currentLineTags.length > 0) {
+                    const line = currentLineTags.join(tagSeparator);
+
+                    // If there are already parts, and the last part is content (not a separator/newline),
+                    // then we need to add a separator before adding this new line of content.
+                    if (parts.length > 0 && parts[parts.length - 1] !== tagSeparator && parts[parts.length - 1].trim() !== '') {
+                        parts.push(tagSeparator);
+                    }
+                    parts.push(line);
+                    currentLineTags = [];
+                }
+                try {
+                    const filename = tag.extension ? `${tag.name}${tag.extension}` : tag.name;
+                    const groupTagDataResult = getCache(`/erenodes/get_tag_group?filename=${encodeURIComponent(filename)}`, 'json');
+                    const groupTagData = groupTagDataResult instanceof Promise ? await groupTagDataResult : groupTagDataResult;
+                    if (groupTagData) {
+                        if (Array.isArray(groupTagData)) {
+                            const activeGroupTags = groupTagData.filter(t => t.active && t.name);
+                            if (activeGroupTags.length > 0) {
+                                if (parts.length > 0 && parts[parts.length - 1].trim() !== '') {
+                                    parts.push(tagSeparator);
+                                }
+                                
+                                const groupParts = [];
+                                activeGroupTags.forEach(gTag => {
+                                    groupParts.push(formatTag(gTag));
+                                    if (gTag.type === 'lora' && gTag.triggers && gTag.triggers.length > 0) {
+                                        groupParts.push(...gTag.triggers);
+                                    }
+                                });
+                                let groupPart = groupParts.join(tagSeparator);
+
+                                if (tag.strength && tag.strength !== 1.0) {
+                                    const strengthValue = parseFloat(tag.strength);
+                                    if (!isNaN(strengthValue) && strengthValue !== 1.0) {
+                                        groupPart = `(${groupPart}:${strengthValue.toFixed(2)})`;
+                                    }
+                                }
+                                parts.push(groupPart);
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error(`[EreNodes] Failed to load and parse tag group: ${tag.name}`, error);
+                }
+            } else {
+                currentLineTags.push(formatTag(tag));
+                if (tag.type === 'lora' && tag.triggers && tag.triggers.length > 0) {
+                    currentLineTags.push(...tag.triggers);
+                }
+            }
+        }
+
+        if (currentLineTags.length > 0) {
+            const line = currentLineTags.join(tagSeparator);
+
+            // If there are already parts, and the last part is content (not a separator/newline),
+            // then we need to add a separator before adding this new line of content.
+            if (parts.length > 0 && parts[parts.length - 1] !== tagSeparator && parts[parts.length - 1].trim() !== '') {
+                parts.push(tagSeparator);
+            }
+            parts.push(line);
+        }
+
+        // Remove trailing separator if 'parts' ends with it and has more than one element.
+        if (parts.length > 1 && parts[parts.length - 1] === tagSeparator) {
+            parts.pop();
+        }
+
+        // For multiline nodes, don't modify the text widget content when updating separators
+        if (node.type !== "ErePromptMultiline") {
+            // Filter out any empty strings that might result from consecutive separators
+            // or separators at the beginning/end without content.
+            let currentText = parts.filter(part => part.trim() !== '' || part === tagSeparator).join('');
+            // If the final result is just the separator itself (e.g. only a separator was active), make it empty.
+            if (currentText === tagSeparator && activeTags.filter(t.type !== 'group').length === 0) {
+                currentText = '';
+            }
+
+            // Python will now handle prefix logic, so we just set the current text
+            textWidget.value = currentText;
+        }
+        // For multiline nodes, preserve the existing text content
+    };
+
 }
+
