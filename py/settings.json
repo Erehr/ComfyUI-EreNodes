@@ -3,5 +3,7 @@
     "other_settings": {},
     "autocomplete.global": true,
     "autocomplete.csv_file": "danbooru.csv",
-    "autocomplete.csv": "danbooru.csv"
+    "autocomplete.csv": "danbooru.csv",
+    "paste_behaviour": "Replace tags",
+    "node.paste": "Replace tags"
 }

@@ -1,4 +1,4 @@
-import { app } from "../../../scripts/app.js";
+import { app } from "../../../../scripts/app.js";
 
 app.registerExtension({
     name: "EreNodes.Autocomplete",
@@ -35,6 +35,21 @@ app.registerExtension({
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ key: "autocomplete.csv", value: newVal }),
+                });
+            },
+        });
+
+        app.ui.settings.addSetting({
+            id: "EreNodes.Nodes.PasteAction",
+            name: "Paste Action",
+            type: "combo",
+            defaultValue: "Replace tags",
+            options: ["Replace tags", "Append tags"].map(v => ({ text: v, value: v })),
+            onChange: (newVal) => {
+                fetch("/erenodes/set_setting", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ key: "node.paste", value: newVal }),
                 });
             },
         });

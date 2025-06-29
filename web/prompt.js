@@ -153,6 +153,30 @@ export function applyContextMenuPatch() {
 
     injectSpinnerHidingStyles();
 
+    document.addEventListener("keydown", (e) => {
+        if (e.ctrlKey && (e.key === 'v' || e.key === 'V')) {
+            const activeElement = document.activeElement;
+            if (activeElement && (activeElement.nodeName === 'INPUT' || activeElement.nodeName === 'TEXTAREA' || activeElement.hasAttribute('contenteditable'))) {
+                return;
+            }
+
+            const selectedNodes = Object.values(app.canvas.selected_nodes || {});
+            if (selectedNodes.length === 1) {
+                const node = selectedNodes[0];
+                if (node && ERE_TAG_NODE_TYPES.includes(node.constructor.type)) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const pasteBehaviour = app.ui.settings.getSettingValue('EreNodes.Nodes.PasteAction', 'Replace tags');
+                    if (pasteBehaviour === 'Append tags') {
+                        node.onClipboardAppend();
+                    } else {
+                        node.onClipboardReplace();
+                    }
+                }
+            }
+        }
+    });
+
     const canvasPrototype = app.canvas.constructor.prototype;
     const orig_processContextMenu = canvasPrototype.processContextMenu;
 

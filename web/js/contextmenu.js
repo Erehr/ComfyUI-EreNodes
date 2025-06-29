@@ -179,11 +179,13 @@ export class DynamicContextMenu { // Added export
 
         const keyboardHandler = (e) => {
             if (this.filterBox && e.target === this.filterBox) {
-                if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown' && e.key !== 'Enter' && e.key !== 'Escape' && e.key !== 'Tab') {
+                const isNavKey = ['ArrowUp', 'ArrowDown', 'Enter', 'Escape', 'Tab'].includes(e.key);
+                const isOverridden = this.filterBoxOverrides && this.filterBoxOverrides.includes(e.key);
+
+                if (!isNavKey && !isOverridden) {
                     return;
                 }
             }
-            
             const handledByMenu = this.handleKeyboard(e);
             if (handledByMenu) {
                 e.preventDefault();
@@ -253,13 +255,8 @@ export class DynamicContextMenu { // Added export
     }
 
     setInitialHighlight() {
-        // First, try to find a "real" suggestion that isn't an "add" action.
-        let firstHighlight = this.options.findIndex(o => !o.disabled && o.type !== 'filter' && o.type !== 'separator' && o.type !== 'title' && o.type !== 'folder_up' && o.name && !o.name.startsWith('➕'));
-        
-        // If no "real" suggestion is found, fall back to highlighting the first available option (which could be "➕ Add tag...").
-        if (firstHighlight === -1) {
-            firstHighlight = this.options.findIndex(o => !o.disabled && o.type !== 'filter' && o.type !== 'separator' && o.type !== 'title');
-        }
+        // First, try to find a "real" suggestion that isn't an action.
+        let firstHighlight = this.options.findIndex(o => !o.disabled && o.type !== 'filter' && o.type !== 'separator' && o.type !== 'title' && o.type !== 'action');
 
         // Set the highlight. If nothing is found, this will correctly be -1.
         this.setHighlight(firstHighlight);
@@ -516,7 +513,7 @@ export class FileContextMenu extends DynamicContextMenu {
         if (this.currentPath) {
             this.options.push({
                 name: "⬆️ Up",
-                type: 'folder_up',
+                type: 'action',
                 callback: () => {
                     this.updateOptions(parentPath !== undefined ? parentPath : "", "");
                 }
@@ -679,7 +676,7 @@ export class TagContextMenuInsert extends TagContextMenu {
         if (query && (!exactMatch || tagSuggestions.length > 1)) {
             tagOptions.push({
                 name: `➕ Add tag: "${query}"`,
-                type: 'tag',
+                type: 'action',
                 callback: () => { this.onSelect({ name: query, type: 'tag' }); this.searchTags(""); }
             });
         }
@@ -736,6 +733,7 @@ export class TagEditContextMenu extends DynamicContextMenu {
         this.existingTags = existingTags; // Store existing tags for file filtering
         this.isSpecialType = ['lora', 'embedding', 'group'].includes(this.tag.type);
         this.previewImage = null;
+        this.filterBoxOverrides = ['ArrowLeft', 'ArrowRight'];
 
         // Ensure defaults
         if (this.tag.strength === undefined) this.tag.strength = 1.0;
@@ -762,7 +760,7 @@ export class TagEditContextMenu extends DynamicContextMenu {
 
         // 2. Strength Control (not for groups)
         if (this.tag.type !== 'group') {
-             this.options.push({ type: 'strength_control' });
+             this.options.push({ name: 'strength', type: 'strength_control' });
         }
         
         // 3. Info Panel (for lora triggers, group contents)
@@ -835,6 +833,7 @@ export class TagEditContextMenu extends DynamicContextMenu {
                 element = document.createElement("textarea");
                 element.className = "comfy-context-menu-filter";
                 element.value = this.tag.name;
+                element.style.background = "#222";
                 element.style.minWidth = "100%";
                 element.style.margin = "0";
                 element.style.width = "fit-content";
@@ -847,6 +846,10 @@ export class TagEditContextMenu extends DynamicContextMenu {
                     if (element.value.trim()) {
                         this.onSelect(this.updateTag());
                     }
+                });
+
+                element.addEventListener("click", () => {
+                    this.setHighlight(-1);
                 });
                 
                 this.filterBox = element;
@@ -897,6 +900,10 @@ export class TagEditContextMenu extends DynamicContextMenu {
                 const decBtn = createButton("◀", (e) => { this.tag.strength = parseFloat((this.tag.strength - (e.shiftKey ? 0.1 : 0.05)).toFixed(2)); updateDisplay(); });
                 const incBtn = createButton("▶", (e) => { this.tag.strength = parseFloat((this.tag.strength + (e.shiftKey ? 0.1 : 0.05)).toFixed(2)); updateDisplay(); });
                 item.append(decBtn, textSpan, incBtn);
+
+                item.addEventListener("mouseenter", () => {
+                    if (!option.disabled) this.setHighlight(index);
+                });
 
                 // Add drag functionality
                 item.addEventListener('mousedown', (e) => {
@@ -1110,10 +1117,6 @@ export class TagEditContextMenu extends DynamicContextMenu {
         }
         return tagCopy;
     }
-
-
-
-
 
 }
 
