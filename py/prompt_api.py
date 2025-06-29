@@ -10,8 +10,7 @@ from safetensors import safe_open
 from .prompt_csv import TAG_TYPES, DEFAULT_ENCODING, CSV_FILES_PATH, load_tags_from_csv
 from .settings import get_erenodes_settings, save_erenodes_settings
 
-# Debug: Confirm module is loading
-print("[EreNodes] prompt_api.py module loaded successfully")
+
 
 # --- Tag Group API Endpoints --- #
 
@@ -58,7 +57,6 @@ async def set_setting_handler(request):
         except Exception as e:
             # It's okay if this fails (e.g., file not found during a temporary state)
             # The setting is still saved.
-            print(f"[EreNodes] Non-critical error reloading CSV on setting change: {e}")
             pass
 
     return web.json_response({"status": "ok"})
@@ -189,7 +187,6 @@ async def save_tag_group_handler(request):
                 if not image_extension:
                     # Decide handling: skip, default, or error. Prompt implies using original.
                     # If truly no extension, it's safer to note it or skip.
-                    print(f"[EreNodes] Warning: Image '{image_original_filename}' has no extension. Skipping image save for '{filename}'.")
                     message += f" Image '{image_original_filename}' was not saved as it has no extension."
                 else:
                     json_basename_no_ext, _ = os.path.splitext(safe_filename)
@@ -202,45 +199,17 @@ async def save_tag_group_handler(request):
                     
                     message += f" Image '{image_save_filename}' also saved."
             except Exception as e:
-                print(f"[EreNodes] Error saving image for tag group '{filename}': {e}")
-                message += f" Failed to save associated image: {str(e)}"
-
-
-
+                message += " Failed to save associated image."
         else:
             # This block is hit if the image field isn't as expected or not present
             if image_file_field is not None: # Check if the field itself was found
-                print(f"[EreNodes] Debug: 'image_file' field was received but did not pass validation for saving.")
-                print(f"[EreNodes] Debug: Type of image_file_field: {type(image_file_field)}")
-                print(f"[EreNodes] Debug: image_file_field attributes: {dir(image_file_field)}")
-                if hasattr(image_file_field, 'filename'):
-                    print(f"[EreNodes] Debug: image_file_field.filename: {image_file_field.filename}")
-                else:
-                    print(f"[EreNodes] Debug: image_file_field does not have 'filename' attribute.")
-                
-                if hasattr(image_file_field, 'file'):
-                    print(f"[EreNodes] Debug: image_file_field.file: {image_file_field.file}")
-                    if image_file_field.file:
-                        print(f"[EreNodes] Debug: image_file_field.file is truthy.")
-                    else:
-                        print(f"[EreNodes] Debug: image_file_field.file is falsy (e.g., None or empty).")
-                else:
-                    print(f"[EreNodes] Debug: image_file_field does not have 'file' attribute.")
                 message += " (Image was provided but not saved due to an issue)."
-            else:
-                # This means form_data.get("image_file", None) returned None
-                print(f"[EreNodes] Debug: 'image_file' field was not found in the form data.")
-                # If associateImage was true on frontend, this indicates an issue.
-                # We don't know associateImage state here, so can't definitively say it's an error yet.
-                # If an image was meant to be sent, this is the problem point.
         
         return web.json_response({"message": message})
     except json.JSONDecodeError:
         return web.json_response({"message": "Invalid JSON format for tags_json."}, status=400)
     except Exception as e:
-        import traceback
-        print(f"[EreNodes] Error in save_tag_group_handler: {traceback.format_exc()}")
-        return web.json_response({"error": str(e)}, status=500)
+        return web.json_response({"error": "Internal server error"}, status=500)
 
 
 # --- LORA API Endpoints --- #
@@ -249,7 +218,7 @@ def get_robust_model_paths(model_type):
     # Get model paths from multiple sources to handle different ComfyUI installations.
     # 1. ComfyUI's folder_paths (default)
     # 2. extra_model_paths.yaml (used by Stability Matrix and other managers)
-    print(f"[EreNodes] get_robust_model_paths called for model_type: '{model_type}'")
+
     paths = []
     
     # Method 1: Use ComfyUI's built-in folder_paths (works for standard installations)
@@ -258,7 +227,7 @@ def get_robust_model_paths(model_type):
         if default_paths:
             paths.extend(default_paths)
     except Exception as e:
-        print(f"[EreNodes] Warning: Could not get default {model_type} paths: {e}")
+        pass
     
     # Method 2: Check extra_model_paths.yaml (used by Stability Matrix)
     try:
@@ -269,27 +238,25 @@ def get_robust_model_paths(model_type):
         
         # Single universal path that works for all installations
         yaml_path = os.path.join(comfyui_root, 'extra_model_paths.yaml')
-        print(f"[EreNodes] Debug: Checking for YAML file at: {yaml_path}")
+
         
         extra_paths_file = None
         if os.path.exists(yaml_path):
             extra_paths_file = yaml_path
-            print(f"[EreNodes] Debug: YAML file found at: {yaml_path}")
+
         
         if extra_paths_file:
-            print(f"[EreNodes] Debug: YAML file found, loading...")
+
             with open(extra_paths_file, 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
             
             # Check all configurations in the YAML file
-            print(f"[EreNodes] Debug: YAML config loaded with {len(config)} configurations")
             for config_name, config_data in config.items():
-                print(f"[EreNodes] Debug: Processing config '{config_name}'")
                 
                 if isinstance(config_data, dict) and model_type in config_data:
                     base_path = config_data.get('base_path', '')
                     model_paths = config_data[model_type]
-                    print(f"[EreNodes] Debug: Found {model_type} in {config_name} with {len(model_paths) if isinstance(model_paths, list) else 1} path(s)")
+
                     
                     # Handle both string and list formats
                     if isinstance(model_paths, str):
@@ -315,14 +282,11 @@ def get_robust_model_paths(model_type):
                             
                             if os.path.exists(full_path) and full_path not in paths:
                                 paths.append(full_path)
-                                print(f"[EreNodes] Debug: Added path: {full_path}")
-                            elif not os.path.exists(full_path):
-                                print(f"[EreNodes] Debug: Path does not exist: {full_path}")
-        else:
-            print(f"[EreNodes] Debug: YAML file not found at: {yaml_path}")
+
+
                                 
     except Exception as e:
-        print(f"[EreNodes] Warning: Could not read extra_model_paths.yaml: {e}")
+        pass
     
     # Remove duplicates while preserving order
     unique_paths = []
@@ -331,7 +295,6 @@ def get_robust_model_paths(model_type):
             unique_paths.append(path)
     
     if not unique_paths:
-        print(f"[EreNodes] Warning: No {model_type} paths found. Using fallback.")
         # Fallback to common default locations
         fallback_paths = [
             os.path.join(os.path.expanduser('~'), 'ComfyUI', 'models', model_type),
@@ -342,7 +305,7 @@ def get_robust_model_paths(model_type):
                 unique_paths.append(fallback)
                 break
     
-    print(f"[EreNodes] Found {model_type} paths: {unique_paths}")
+
     return unique_paths
 
 @server.PromptServer.instance.routes.get("/erenodes/get_lora_metadata")
@@ -387,7 +350,7 @@ async def search_files_handler(request):
     path_param = request.query.get("path", "")
     file_type = request.query.get("type")
     
-    print(f"[EreNodes] search_files_handler called with type='{file_type}', query='{raw_query}', path='{path_param}'")
+
 
     if not file_type:
         return web.json_response({"error": "File type not provided"}, status=400)
@@ -452,7 +415,7 @@ async def search_files_handler(request):
             if not collection_paths:
                 return web.json_response({"items": [], "parentPath": ""})
                 
-            print(f"[EreNodes] Debug: Scanning {len(collection_paths)} collection paths for {file_type}")
+
             
         # Scan all collection paths, not just the first one
         for root_path in collection_paths if not path_param else [scan_target_abs]:
@@ -466,7 +429,6 @@ async def search_files_handler(request):
                 current_collection_root_abs = current_scan_target
                 
             if not os.path.exists(current_scan_target):
-                print(f"[EreNodes] Debug: Directory does not exist: {current_scan_target}")
                 continue
                 
             for dirpath, dirnames_orig, filenames in os.walk(current_scan_target, topdown=True):
@@ -696,6 +658,4 @@ async def save_file_image_handler(request):
         return web.json_response({"message": message})
 
     except Exception as e:
-        import traceback
-        print(f"[EreNodes] Error in save_file_image_handler: {traceback.format_exc()}")
-        return web.json_response({"error": str(e)}, status=500)
+        return web.json_response({"error": "Internal server error"}, status=500)
