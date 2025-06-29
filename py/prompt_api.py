@@ -1,11 +1,17 @@
-import os
 import json
+import os
 import re
-import shutil # Added for saving image file stream
-import server # ComfyUI's server instance
+import shutil
+import server 
+import yaml
+import folder_paths
 from aiohttp import web
+from safetensors import safe_open
 from .prompt_csv import TAG_TYPES, DEFAULT_ENCODING, CSV_FILES_PATH, load_tags_from_csv
 from .settings import get_erenodes_settings, save_erenodes_settings
+
+# Debug: Confirm module is loading
+print("[EreNodes] prompt_api.py module loaded successfully")
 
 # --- Tag Group API Endpoints --- #
 
@@ -239,8 +245,105 @@ async def save_tag_group_handler(request):
 
 # --- LORA API Endpoints --- #
 
-import folder_paths # Import ComfyUI's folder_paths
-from safetensors import safe_open
+def get_robust_model_paths(model_type):
+    # Get model paths from multiple sources to handle different ComfyUI installations.
+    # 1. ComfyUI's folder_paths (default)
+    # 2. extra_model_paths.yaml (used by Stability Matrix and other managers)
+    print(f"[EreNodes] get_robust_model_paths called for model_type: '{model_type}'")
+    paths = []
+    
+    # Method 1: Use ComfyUI's built-in folder_paths (works for standard installations)
+    try:
+        default_paths = folder_paths.get_folder_paths(model_type)
+        if default_paths:
+            paths.extend(default_paths)
+    except Exception as e:
+        print(f"[EreNodes] Warning: Could not get default {model_type} paths: {e}")
+    
+    # Method 2: Check extra_model_paths.yaml (used by Stability Matrix)
+    try:
+        # Look for extra_model_paths.yaml in multiple possible locations
+        import os
+        # Use the directory where folder_paths module is located (ComfyUI root)
+        comfyui_root = os.path.dirname(folder_paths.__file__)
+        
+        # Single universal path that works for all installations
+        yaml_path = os.path.join(comfyui_root, 'extra_model_paths.yaml')
+        print(f"[EreNodes] Debug: Checking for YAML file at: {yaml_path}")
+        
+        extra_paths_file = None
+        if os.path.exists(yaml_path):
+            extra_paths_file = yaml_path
+            print(f"[EreNodes] Debug: YAML file found at: {yaml_path}")
+        
+        if extra_paths_file:
+            print(f"[EreNodes] Debug: YAML file found, loading...")
+            with open(extra_paths_file, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+            
+            # Check all configurations in the YAML file
+            print(f"[EreNodes] Debug: YAML config loaded with {len(config)} configurations")
+            for config_name, config_data in config.items():
+                print(f"[EreNodes] Debug: Processing config '{config_name}'")
+                
+                if isinstance(config_data, dict) and model_type in config_data:
+                    base_path = config_data.get('base_path', '')
+                    model_paths = config_data[model_type]
+                    print(f"[EreNodes] Debug: Found {model_type} in {config_name} with {len(model_paths) if isinstance(model_paths, list) else 1} path(s)")
+                    
+                    # Handle both string and list formats
+                    if isinstance(model_paths, str):
+                        # Check if string contains newlines (multiline format)
+                        if '\n' in model_paths:
+                            model_paths = [path.strip() for path in model_paths.strip().split('\n') if path.strip()]
+                        else:
+                            model_paths = [model_paths]
+                    elif isinstance(model_paths, list):
+                        pass  # Already a list
+                    else:
+                        # Handle YAML multiline format
+                        model_paths = str(model_paths).strip().split('\n')
+                    
+                    # Convert relative paths to absolute paths
+                    for model_path in model_paths:
+                        model_path = model_path.strip()
+                        if model_path:
+                            if os.path.isabs(model_path):
+                                full_path = model_path
+                            else:
+                                full_path = os.path.join(base_path, model_path)
+                            
+                            if os.path.exists(full_path) and full_path not in paths:
+                                paths.append(full_path)
+                                print(f"[EreNodes] Debug: Added path: {full_path}")
+                            elif not os.path.exists(full_path):
+                                print(f"[EreNodes] Debug: Path does not exist: {full_path}")
+        else:
+            print(f"[EreNodes] Debug: YAML file not found at: {yaml_path}")
+                                
+    except Exception as e:
+        print(f"[EreNodes] Warning: Could not read extra_model_paths.yaml: {e}")
+    
+    # Remove duplicates while preserving order
+    unique_paths = []
+    for path in paths:
+        if path not in unique_paths:
+            unique_paths.append(path)
+    
+    if not unique_paths:
+        print(f"[EreNodes] Warning: No {model_type} paths found. Using fallback.")
+        # Fallback to common default locations
+        fallback_paths = [
+            os.path.join(os.path.expanduser('~'), 'ComfyUI', 'models', model_type),
+            os.path.join('.', 'models', model_type)
+        ]
+        for fallback in fallback_paths:
+            if os.path.exists(fallback):
+                unique_paths.append(fallback)
+                break
+    
+    print(f"[EreNodes] Found {model_type} paths: {unique_paths}")
+    return unique_paths
 
 @server.PromptServer.instance.routes.get("/erenodes/get_lora_metadata")
 async def get_lora_metadata_handler(request):
@@ -283,17 +386,19 @@ async def search_files_handler(request):
     raw_query = request.query.get("query", "")
     path_param = request.query.get("path", "")
     file_type = request.query.get("type")
+    
+    print(f"[EreNodes] search_files_handler called with type='{file_type}', query='{raw_query}', path='{path_param}'")
 
     if not file_type:
         return web.json_response({"error": "File type not provided"}, status=400)
 
     type_configs = {
         'lora': {
-            'roots': folder_paths.get_folder_paths("loras"),
+            'roots': get_robust_model_paths("loras"),
             'extensions': ('.safetensors', '.pt', '.ckpt', '.lora'),
         },
         'embedding': {
-            'roots': folder_paths.get_folder_paths("embeddings"),
+            'roots': get_robust_model_paths("embeddings"),
             'extensions': ('.pt', '.bin', '.safetensors', '.embedding'),
         },
         'group': {
@@ -344,72 +449,90 @@ async def search_files_handler(request):
             if not scan_target_abs:
                 return web.json_response({"items": [], "parentPath": path_param})
         else:
-            if collection_paths:
-                scan_target_abs = os.path.abspath(collection_paths[0])
-                current_collection_root_abs = scan_target_abs
-            else:
-                 return web.json_response({"items": [], "parentPath": ""})
-
-        for dirpath, dirnames_orig, filenames in os.walk(scan_target_abs, topdown=True):
-            is_current_scan_level = (os.path.normpath(dirpath) == os.path.normpath(scan_target_abs))
-
-            # Process files
-            for filename in filenames:
-                if filename.lower().endswith(extensions):
-                    filename_no_ext, file_ext = os.path.splitext(filename)
-                    full_file_path_abs = os.path.join(dirpath, filename)
-                    relative_to_collection_root = os.path.relpath(full_file_path_abs, current_collection_root_abs)
-                    prompt_path = os.path.splitext(relative_to_collection_root)[0]
-
-                    item_data = {"name": filename_no_ext, "type": file_type, "path": prompt_path, "extension": file_ext}
-
-                    if query:
-                        if query in filename_no_ext.lower() or query in prompt_path.lower():
-                            if prompt_path not in found_relative_paths:
-                                items.append(item_data)
-                                found_relative_paths.add(prompt_path)
-                    else:
-                        if is_current_scan_level:
-                            if prompt_path not in found_relative_paths:
-                                items.append(item_data)
-                                found_relative_paths.add(prompt_path)
+            if not collection_paths:
+                return web.json_response({"items": [], "parentPath": ""})
+                
+            print(f"[EreNodes] Debug: Scanning {len(collection_paths)} collection paths for {file_type}")
             
-            # Process folders
-            current_level_dirnames_to_process = list(dirnames_orig)
-            dirnames_orig[:] = []
+        # Scan all collection paths, not just the first one
+        for root_path in collection_paths if not path_param else [scan_target_abs]:
+            if path_param:
+                # Use the already determined scan_target_abs for specific path navigation
+                current_scan_target = scan_target_abs
+                current_collection_root_abs = current_collection_root_abs
+            else:
+                # Scan each collection path when no specific path is requested
+                current_scan_target = os.path.abspath(root_path)
+                current_collection_root_abs = current_scan_target
+                
+            if not os.path.exists(current_scan_target):
+                print(f"[EreNodes] Debug: Directory does not exist: {current_scan_target}")
+                continue
+                
+            for dirpath, dirnames_orig, filenames in os.walk(current_scan_target, topdown=True):
+                 is_current_scan_level = (os.path.normpath(dirpath) == os.path.normpath(current_scan_target))
 
-            for dirname in current_level_dirnames_to_process:
-                if dirname.startswith('.') or dirname == "__pycache__":
-                    continue
+                 # Process files
+                 for filename in filenames:
+                     if filename.lower().endswith(extensions):
+                         filename_no_ext, file_ext = os.path.splitext(filename)
+                         full_file_path_abs = os.path.join(dirpath, filename)
+                         relative_to_collection_root = os.path.relpath(full_file_path_abs, current_collection_root_abs)
+                         prompt_path = os.path.splitext(relative_to_collection_root)[0]
 
-                full_folder_path_abs = os.path.join(dirpath, dirname)
-                relative_to_collection_root = os.path.relpath(full_folder_path_abs, current_collection_root_abs)
+                         item_data = {"name": filename_no_ext, "type": file_type, "path": prompt_path, "extension": file_ext}
+
+                         if query:
+                             if query in filename_no_ext.lower() or query in prompt_path.lower():
+                                 if prompt_path not in found_relative_paths:
+                                     items.append(item_data)
+                                     found_relative_paths.add(prompt_path)
+                         else:
+                             if is_current_scan_level:
+                                 if prompt_path not in found_relative_paths:
+                                     items.append(item_data)
+                                     found_relative_paths.add(prompt_path)
+                 
+                 # Process folders
+                 current_level_dirnames_to_process = list(dirnames_orig)
+                 dirnames_orig[:] = []
+
+                 for dirname in current_level_dirnames_to_process:
+                     if dirname.startswith('.') or dirname == "__pycache__":
+                         continue
+
+                     full_folder_path_abs = os.path.join(dirpath, dirname)
+                     relative_to_collection_root = os.path.relpath(full_folder_path_abs, current_collection_root_abs)
 
 
-                if query:
-                    if query in dirname.lower():
-                        if relative_to_collection_root not in found_relative_paths:
-                            items.append({"name": dirname, "type": "folder", "path": relative_to_collection_root})
-                            found_relative_paths.add(relative_to_collection_root)
-                    dirnames_orig.append(dirname)
-                else:
-                    if is_current_scan_level:
-                        if relative_to_collection_root not in found_relative_paths:
-                            items.append({"name": dirname, "type": "folder", "path": relative_to_collection_root})
-                            found_relative_paths.add(relative_to_collection_root)
+                     if query:
+                         if query in dirname.lower():
+                             if relative_to_collection_root not in found_relative_paths:
+                                 items.append({"name": dirname, "type": "folder", "path": relative_to_collection_root})
+                                 found_relative_paths.add(relative_to_collection_root)
+                         dirnames_orig.append(dirname)
+                     else:
+                         if is_current_scan_level:
+                            if relative_to_collection_root not in found_relative_paths:
+                                items.append({"name": dirname, "type": "folder", "path": relative_to_collection_root})
+                                found_relative_paths.add(relative_to_collection_root)
 
         items.sort(key=lambda x: (x["type"] != "folder", x["name"].lower()))
         
-        current_relative_path_for_client = os.path.relpath(scan_target_abs, current_collection_root_abs)
-
-        if current_relative_path_for_client == '.':
+        # Handle path information for response
+        if path_param:
+            current_relative_path_for_client = os.path.relpath(scan_target_abs, current_collection_root_abs)
+            if current_relative_path_for_client == '.':
+                current_relative_path_for_client = ""
+            parent_path_for_client = ""
+            if current_relative_path_for_client:
+                parent_path_for_client = os.path.dirname(current_relative_path_for_client)
+                if parent_path_for_client == '.':
+                    parent_path_for_client = ""
+        else:
+            # When scanning all paths, we're at the root level
             current_relative_path_for_client = ""
-
-        parent_path_for_client = ""
-        if current_relative_path_for_client:
-            parent_path_for_client = os.path.dirname(current_relative_path_for_client)
-            if parent_path_for_client == '.':
-                parent_path_for_client = ""
+            parent_path_for_client = ""
         
         response_data = {
             "items": items,
@@ -464,7 +587,7 @@ async def view_file_handler(request):
         base_dirs = [prompts_dir]
     else:
         # folder_paths uses plural for loras, embeddings, etc.
-        base_dirs = folder_paths.get_folder_paths(type_name + 's')
+        base_dirs = get_robust_model_paths(type_name + 's')
 
     if not base_dirs:
         return web.Response(status=404, text=f"No folder configured for type '{type_name}'")
@@ -473,7 +596,7 @@ async def view_file_handler(request):
     # It prevents using '..' to escape the intended directories.
     path_param = path_param.replace("..", "_")
 
-    potential_extensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif']
+    potential_extensions = ['.jpg', '.png', '.webp']
 
     for root_dir in base_dirs:
         abs_root_dir = os.path.abspath(root_dir)
@@ -483,10 +606,17 @@ async def view_file_handler(request):
 
         # Security check: ensure the requested path is within the intended directory
         if os.path.abspath(prospective_path_base).startswith(abs_root_dir):
+            # Check for both filename.extension and filename.preview.extension patterns
             for ext in potential_extensions:
+                # First try: filename.extension (original pattern)
                 image_path = prospective_path_base + ext
                 if os.path.isfile(image_path):
                     return web.FileResponse(image_path)
+                
+                # Second try: filename.preview.extension (new pattern)
+                preview_image_path = prospective_path_base + '.preview' + ext
+                if os.path.isfile(preview_image_path):
+                    return web.FileResponse(preview_image_path)
     
     # If we get here, no file was found in any of the directories
     return web.Response(status=404, text="Preview image not found")
@@ -508,11 +638,11 @@ async def save_file_image_handler(request):
         # Determine the base directory based on file type
         type_configs = {
             'lora': {
-                'roots': folder_paths.get_folder_paths("loras"),
+                'roots': get_robust_model_paths("loras"),
                 'extensions': ('.safetensors', '.pt', '.ckpt', '.lora'),
             },
             'embedding': {
-                'roots': folder_paths.get_folder_paths("embeddings"),
+                'roots': get_robust_model_paths("embeddings"),
                 'extensions': ('.pt', '.bin', '.safetensors', '.embedding'),
             },
             'group': {

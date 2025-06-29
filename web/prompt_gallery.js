@@ -334,6 +334,7 @@ app.registerExtension({
 
                 ctx.globalAlpha = 1;
                 ctx.textBaseline = "alphabetic";
+                ctx.font = "12px monospace";
             
                 this._pillMap.push({ x: p.x, y: p.y, w: p.w, h: p.h, label: p.label, button: p.button });
             }
