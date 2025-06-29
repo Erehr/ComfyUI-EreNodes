@@ -558,7 +558,7 @@ async def view_file_handler(request):
     # It prevents using '..' to escape the intended directories.
     path_param = path_param.replace("..", "_")
 
-    potential_extensions = ['.jpg', '.png', '.webp']
+    potential_extensions = ['.jpg', '.jpeg', '.png', '.webp']
 
     for root_dir in base_dirs:
         abs_root_dir = os.path.abspath(root_dir)
