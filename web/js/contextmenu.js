@@ -13,9 +13,10 @@ export class DynamicContextMenu { // Added export
         this.abortController = null;
     }
 
-    onItemSelected(option, event = null) {
+    onItemSelected(option, event = null, index = -1) {
         if (option && !option.disabled && option.callback) {
-            option.callback(event);
+            // Pass the index to the callback
+            option.callback(event, index);
         }
     }
 
@@ -63,7 +64,7 @@ export class DynamicContextMenu { // Added export
                 break;
             case "Enter":
                 if (this.highlighted !== -1) {
-                    this.onItemSelected(this.options[this.highlighted], e);
+                    this.onItemSelected(this.options[this.highlighted], e, this.highlighted);
                 }
                 handled = true;
                 break;
@@ -159,7 +160,7 @@ export class DynamicContextMenu { // Added export
                 item.addEventListener("click", (e) => {
                     e.stopPropagation();
                     e.preventDefault();
-                    this.onItemSelected(option, e);
+                    this.onItemSelected(option, e, index);
                 });
 
                 item.addEventListener("mouseenter", () => {
@@ -257,6 +258,11 @@ export class DynamicContextMenu { // Added export
     setInitialHighlight() {
         // First, try to find a "real" suggestion that isn't an action.
         let firstHighlight = this.options.findIndex(o => !o.disabled && o.type !== 'filter' && o.type !== 'separator' && o.type !== 'title' && o.type !== 'action');
+
+        // If no "real" suggestion is found, check for an actionable item (like "Add tag: ...")
+        if (firstHighlight === -1) {
+            firstHighlight = this.options.findIndex(o => !o.disabled && o.type === 'action');
+        }
 
         // Set the highlight. If nothing is found, this will correctly be -1.
         this.setHighlight(firstHighlight);
@@ -416,7 +422,7 @@ export class DynamicContextMenu { // Added export
                             });
                         }
                     } catch (error) {
-                        console.error('Error saving image:', error);
+                        console.error('[EreNodes] Error saving image:', error);
                         app.extensionManager.toast.add({
                             severity: 'error',
                             summary: 'Save Operation Error',
@@ -462,7 +468,7 @@ export class FileContextMenu extends DynamicContextMenu {
             const data = await response.json();
             return data;
         } catch (error) {
-            console.error(`Error searching ${this.type} files:`, error);
+            console.error(`[EreNodes] Error searching ${this.type} files:`, error);
             // On error, don't try to calculate a parent. Let the UI handle it gracefully.
             return { items: [], currentPath: path, parentPath: undefined };
         }
@@ -521,6 +527,30 @@ export class FileContextMenu extends DynamicContextMenu {
             this.options.push({ type: 'separator' });
         }
         
+        // Add "Load all from folder" option if applicable
+        const addableFiles = files.filter(f => !this.existingTags.some(tag => tag.name === f.path && tag.type === this.type));
+        if (addableFiles.length > 0) {
+            this.options.push({
+                name: "➕ Load all from folder",
+                type: 'action',
+                callback: () => {
+                    if (this.onSelect) {
+                        const filesToLoad = addableFiles.map(file => ({
+                            name: file.path,
+                            type: this.type,
+                            extension: file.extension
+                        }));
+                        this.onSelect(filesToLoad); // Pass array of addable files
+                        this.close();
+                    }
+                }
+            });
+            this.options.push({ type: 'separator' });
+        }
+
+        if (this.currentPath) {
+        }
+        
         folders.forEach(folder => {
             this.options.push({
                 name: "📁 " + folder.name,
@@ -539,11 +569,23 @@ export class FileContextMenu extends DynamicContextMenu {
                     type: this.type,
                     path: file.path,
                     extension: file.extension,
-                    callback: (e) => {
+                    callback: (e, index) => {
                         if (this.onSelect) {
                             this.onSelect({ name: file.path, type: this.type, extension: file.extension });
                         }
-                        if (!e || !e.shiftKey) {
+                        if (e?.shiftKey) {
+                            this.existingTags.push({ name: file.path, type: this.type });
+                            // After updating the options, we want to control the highlight
+                            this.updateOptions(this.currentPath, this.currentWord).then(() => {
+                                let newHighlight = index;
+                                // If the removed item was the last one, the index will be out of bounds.
+                                // In that case, we want to highlight the new last item.
+                                if (newHighlight >= this.options.length) {
+                                    newHighlight = this.options.length - 1;
+                                }
+                                this.setHighlight(newHighlight);
+                            });
+                        } else {
                             this.close();
                         }
                     }
@@ -579,10 +621,9 @@ export class TagContextMenu extends DynamicContextMenu {
             const response = await fetch(`/erenodes/search_tags?query=${encodeURIComponent(query)}&limit=20`);
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
             const tags = await response.json();
-            
             suggestions = tags.filter(tag => !this.existingTags.some(existingTag => existingTag.name === tag.name && existingTag.type === 'tag'));
         } catch (error) {
-            console.error("Error searching tags:", error);
+            console.error("[EreNodes] Error searching tags:", error);
         }
         this.updateOptions(suggestions);
     }
@@ -617,7 +658,7 @@ export class TagContextMenu extends DynamicContextMenu {
             item.addEventListener("click", (e) => {
                 e.stopPropagation();
                 e.preventDefault();
-                this.onItemSelected(option);
+                this.onItemSelected(option, e, index);
             });
 
             item.addEventListener("mouseenter", () => {
@@ -677,7 +718,12 @@ export class TagContextMenuInsert extends TagContextMenu {
             tagOptions.push({
                 name: `➕ Add tag: "${query}"`,
                 type: 'action',
-                callback: () => { this.onSelect({ name: query, type: 'tag' }); this.searchTags(""); }
+                callback: () => {
+                    const newTag = { name: query, type: 'tag' };
+                    this.onSelect(newTag);
+                    this.existingTags.push(newTag);
+                    this.searchTags("");
+                }
             });
         }
         
@@ -685,7 +731,12 @@ export class TagContextMenuInsert extends TagContextMenu {
         tagSuggestions.forEach(s => tagOptions.push({
             ...s,
             type: 'tag',
-            callback: () => { this.onSelect({ name: s.name, type: 'tag' }); this.searchTags(""); }
+            callback: () => {
+                const newTag = { name: s.name, type: 'tag' };
+                this.onSelect(newTag);
+                this.existingTags.push(newTag);
+                this.searchTags("");
+            }
         }));
         
         // Create our special options that appear at the top of this specific menu
@@ -711,10 +762,17 @@ export class TagContextMenuInsert extends TagContextMenu {
 
     switchToFileMenu(type) {
         this.close();
-        const fileMenu = new FileContextMenu(this.positioning.event, (selectedFileObject) => {
-            // selectedFileObject is already the correct {name, type} object passed from FileContextMenu
-            this.onSelect(selectedFileObject);
-            this.close(); // Close the parent TagContextMenuInsert as well
+        const fileMenu = new FileContextMenu(this.positioning.event, (selected) => {
+            // The callback can now receive a single object or an array of objects
+            const itemsToAdd = Array.isArray(selected) ? selected : [selected];
+            itemsToAdd.forEach(item => {
+                // Ensure we don't add duplicates if the user re-opens the menu
+                const alreadyExists = this.existingTags.some(tag => tag.name === item.name && tag.type === item.type);
+                if (!alreadyExists) {
+                    this.onSelect(item);
+                }
+            });
+            this.close(); // Close the parent TagContextMenuInsert
         }, type, this.existingTags);
         fileMenu.show();
     }
@@ -1292,7 +1350,7 @@ export class TagGroupContextMenu extends FileContextMenu {
                 this.updateOptions(this.currentPath, "");
             } else {
                 const error = await response.json();
-                console.error("Error creating folder:", error.error);
+                console.error("[EreNodes] Error creating folder:", error.error);
                 app.extensionManager.toast.add({
                     severity: "error",
                     summary: "Folder Creation Error",
@@ -1301,7 +1359,7 @@ export class TagGroupContextMenu extends FileContextMenu {
                 });
             }
         } catch (error) {
-            console.error("Error creating folder:", error);
+            console.error("[EreNodes] Error creating folder:", error);
             app.extensionManager.toast.add({
                 severity: "error",
                 summary: "Folder Creation Error",
