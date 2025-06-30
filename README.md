@@ -103,8 +103,8 @@ git clone https://github.com/erehr/ComfyUI-EreNodes.git
 - Enjoy intelligent tag completion with aliases
 
 **Managing Tag Groups:**
-- Right-click any tag in EreNodes → "Save as Tag Group"
-- Access saved groups through the Menu or + button
+- Click on any tag nodes ≡ menu button to "Save as Tag Group". Select (or create) folder, type filename and select optional image. 
+- Access saved groups through the ≡ 'Load Tag Group' (loading content of tag group) or + button 'Add tag' (loading tag group as single combined pill)
 - Import/export tag groups for sharing with the community
 
 **LoRA Loading:**
