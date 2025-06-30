@@ -30,6 +30,7 @@ ComfyUI-EreNodes provides an intuitive and feature-rich solution for handling pr
 | **Prompt Randomizer** | Randomize your prompt tags | Manual randomization button, Control after generate |
 | **Prompt Multiline** | Enhanced text input with EreNodes features | Full autocomplete, tag management |
 | **Prompt Filter** | CSV-based prompt validation | Tag filtering, validation |
+| **Prompt to Lora Stack** | Extracts and converts loras from prompt into  lora_stack
 
 ## ✨ Key Features
 
@@ -106,8 +107,14 @@ git clone https://github.com/erehr/ComfyUI-EreNodes.git
 - Access saved groups through the Menu or + button
 - Import/export tag groups for sharing with the community
 
-**Lora Loading:**
-- For loading Lora directly from prompt node like [Lora Tag Loader](https://github.com/badjeff/comfyui_lora_tag_loader/) is required
+**LoRA Loading:**
+
+EreNodes provides flexible LoRA loading options to fit different workflow preferences:
+
+| Method | Description | Compatible Nodes | Use Case |
+|--------|-------------|------------------|----------|
+| **LoRA Stack** | Use "Prompt to LoRA Stack" node to extract `<lora:name:strength>` tags and connect to stack-compatible nodes | • [Efficiency Nodes](https://github.com/jags111/efficiency-nodes-comfyui)<br>• [ComfyRoll Custom Nodes](https://github.com/Suzie1/ComfyUI_Comfyroll_CustomNodes)<br>• [LoRA Manager](https://github.com/willmiao/ComfyUI-Lora-Manager) | Best for mixing multiple sources of LoRAs |
+| **Direct Loading** | Use nodes that load LoRAs directly from prompt text in place of standard LoRA loaders. | • [LoRA Tag Loader](https://github.com/badjeff/comfyui_lora_tag_loader)<br>• [Impact Wildcard Encode](https://github.com/ltdrdata/ComfyUI-Impact-Pack)<br>• [PCLazyLoRALoader](https://github.com/asagi4/comfyui-prompt-control) | Best for simple workflows or when using wildcards |
 
 ### 💡 Pro Tips
 
