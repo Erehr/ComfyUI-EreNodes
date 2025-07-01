@@ -791,6 +791,48 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         
         let clickedTag = tagData[tagIndex];
 
+        const unpackCallback = async () => {
+            const currentTagData = parseTags(nodeInstance.properties._tagDataJSON || "[]");
+            const groupTag = currentTagData[tagIndex];
+            if (!groupTag || groupTag.type !== 'group') return;
+
+            try {
+                const filename = groupTag.extension ? `${groupTag.name}${groupTag.extension}` : groupTag.name;
+                const groupContentResult = getCache(`/erenodes/get_tag_group?filename=${encodeURIComponent(filename)}`, 'json');
+                const originalGroupTags = await (groupContentResult instanceof Promise ? groupContentResult : Promise.resolve(groupContentResult));
+
+                if (originalGroupTags && Array.isArray(originalGroupTags)) {
+                    const unpackedTags = JSON.parse(JSON.stringify(originalGroupTags));
+                    if (groupTag.modified) {
+                        unpackedTags.forEach(t => {
+                            if (groupTag.modified.hasOwnProperty(t.name)) {
+                                t.active = groupTag.modified[t.name];
+                            }
+                        });
+                    }
+                    
+                    // Replace the group tag with its unpacked contents
+                    currentTagData.splice(tagIndex, 1, ...unpackedTags);
+                    
+                    // Remove duplicates that might have been introduced
+                    const finalTagData = [];
+                    const seenNames = new Set();
+                    for (const tag of currentTagData) {
+                        if (!seenNames.has(tag.name)) {
+                            finalTagData.push(tag);
+                            seenNames.add(tag.name);
+                        }
+                    }
+
+                    nodeInstance.properties._tagDataJSON = JSON.stringify(finalTagData, null, 2);
+                    await nodeInstance.onUpdateTextWidget(nodeInstance);
+                    app.graph.setDirtyCanvas(true);
+                }
+            } catch (error) {
+                console.error(`[EreNodes] Failed to unpack tag group: ${groupTag.name}`, error);
+            }
+        };
+
         const saveCallback = async (editedTag) => {
             const currentTagData = parseTags(nodeInstance.properties._tagDataJSON || "[]");
             
@@ -883,7 +925,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         
         // The 'event' parameter (which is positionEvent from applyContextMenuPatch)
         // now has clientX and clientY correctly set.
-        new TagEditContextMenu(event, clickedTag, saveCallback, deleteCallback, moveCallback, imageCallback, tagIndex, nodeScreenWidth, existingTags);
+        new TagEditContextMenu(event, clickedTag, saveCallback, deleteCallback, moveCallback, imageCallback, unpackCallback, tagIndex, nodeScreenWidth, existingTags);
     };
     
     node.onUpdateTextWidget = async (node) => {
@@ -891,7 +933,10 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         if (!textWidget) return;
 
         const tagData = parseTags(node.properties._tagDataJSON || "[]");
-        if (tagData.length === 0) return;
+        if (tagData.length === 0) {
+            textWidget.value = "";
+            return;
+        }
         const activeTags = tagData.filter(t => (t.active && t.name) );
 
         let tagSeparator = (node.properties._tagSeparator || ", ").replace(/\\n/g, "\n");

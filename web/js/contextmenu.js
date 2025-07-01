@@ -780,13 +780,14 @@ export class TagContextMenuInsert extends TagContextMenu {
 
 // For tag quick edit
 export class TagEditContextMenu extends DynamicContextMenu {
-    constructor(event, tagObject, saveCallback, deleteCallback, moveCallback, imageCallback, tagIndex = null, nodeScreenWidth = null, existingTags = []) { // Added nodeScreenWidth and existingTags
+    constructor(event, tagObject, saveCallback, deleteCallback, moveCallback, imageCallback, unpackCallback, tagIndex = null, nodeScreenWidth = null, existingTags = []) { // Added nodeScreenWidth and existingTags
         super(event, saveCallback); // The primary callback on save.
         this.tag = JSON.parse(JSON.stringify(tagObject)); // Deep copy to edit safely
         this.nodeScreenWidth = nodeScreenWidth; // Store node screen width
         this.deleteCallback = deleteCallback;
         this.moveCallback = moveCallback;
         this.imageCallback = imageCallback;
+        this.unpackCallback = unpackCallback;
         this.tagIndex = tagIndex; // Track by index instead of name
         this.existingTags = existingTags; // Store existing tags for file filtering
         this.isSpecialType = ['lora', 'embedding', 'group'].includes(this.tag.type);
@@ -804,7 +805,8 @@ export class TagEditContextMenu extends DynamicContextMenu {
         this.options = [];
 
         // Add dynamic title based on tag type
-        this.options.push({ name: 'Edit ' + this.tag.type, type: 'title' });
+        const title = this.tag.type === 'group' ? 'Preview ' + this.tag.type : 'Edit ' + this.tag.type;
+        this.options.push({ name: title, type: 'title' });
 
         // 1. Name Control (conditional)
         if (this.isSpecialType) {
@@ -838,6 +840,17 @@ export class TagEditContextMenu extends DynamicContextMenu {
                 callback: () => this.setPreview()
             });
         }
+        
+        if (this.tag.type === 'group') {
+            this.options.push({
+                name: "📦 Unpack",
+                callback: () => {
+                    if (this.unpackCallback) this.unpackCallback();
+                    this.close();
+                }
+            });
+        }
+
         // 5. Action Buttons
         const createCallback = (cb) => () => { cb(); this.close(); };
         this.options.push(
@@ -980,7 +993,11 @@ export class TagEditContextMenu extends DynamicContextMenu {
             
             case 'info_panel':
                 item.className = "litemenu-entry submenu disabled";
-                item.style.cssText = "max-width: 256px; display: flex; flex-wrap: wrap; gap: 2.5px; opacity: 1";
+                item.style.cssText = "max-width: 256px; display: flex; flex-wrap: wrap; gap: 2.5px; opacity: 1;";
+                // Apply half opacity only for non-interactive group previews
+                if (this.tag.type === 'group') {
+                    item.style.opacity = "0.6";
+                }
                 if (Array.isArray(option.content)) {
                     option.content.forEach(pill => item.appendChild(pill));
                 }
@@ -1104,8 +1121,12 @@ export class TagEditContextMenu extends DynamicContextMenu {
     processGroupTags(groupTags) {
         const pills = [];
         if (groupTags && Array.isArray(groupTags) && groupTags.length > 0) {
-            const activeTags = groupTags.filter(t => t.active && t.name);
-            if (activeTags.length > 0) activeTags.forEach(tag => pills.push(this.createPill(tag, false)));
+            // Show all tags, not just active ones
+            groupTags.forEach(tag => {
+                if (tag.name) { // Ensure tag has a name
+                    pills.push(this.createPill(tag, false));
+                }
+            });
         }
         return pills;
     }
@@ -1137,11 +1158,18 @@ export class TagEditContextMenu extends DynamicContextMenu {
         } else {
             const tag = tagOrTrigger;
             displayName = tag.name;
-            pillFill = "#414650"; 
+            
+            if (tag.active === false) {
+                pillFill = "#262626";
+                pillEl.style.boxShadow = "0px 0px 0px 1px #444 inset";
+            } else {
+                pillFill = "#414650"; 
+                if (tag.type === 'lora') pillFill = "#415041"; // Dark green-ish
+                else if (tag.type === 'embedding') pillFill = "#504149"; // Dark purple-ish
+                else if (tag.type === 'group') pillFill = "#504c41"; // Dark orange-ish
+            }
+
             pillEl.style.cursor = "default";
-            if (tag.type === 'lora') pillFill = "#415041"; // Dark green-ish
-            else if (tag.type === 'embedding') pillFill = "#504149"; // Dark purple-ish
-            else if (tag.type === 'group') pillFill = "#504c41"; // Dark orange-ish
             if (tag.strength && tag.strength !== 1.0) displayName += `:${parseFloat(tag.strength).toFixed(2)}`;
         }
         pillEl.style.background = pillFill;
