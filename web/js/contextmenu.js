@@ -718,11 +718,22 @@ export class TagContextMenuInsert extends TagContextMenu {
             tagOptions.push({
                 name: `➕ Add tag: "${query}"`,
                 type: 'action',
-                callback: () => {
+                callback: (e, index) => {
                     const newTag = { name: query, type: 'tag' };
                     this.onSelect(newTag);
-                    this.existingTags.push(newTag);
-                    this.searchTags("");
+
+                    if (e?.shiftKey) {
+                        this.existingTags.push(newTag);
+                        this.searchTags(this.currentWord).then(() => {
+                            let newHighlight = index;
+                            if (newHighlight >= this.options.length) {
+                                newHighlight = this.options.length - 1;
+                            }
+                            this.setHighlight(newHighlight);
+                        });
+                    } else {
+                        this.close();
+                    }
                 }
             });
         }
@@ -731,11 +742,22 @@ export class TagContextMenuInsert extends TagContextMenu {
         tagSuggestions.forEach(s => tagOptions.push({
             ...s,
             type: 'tag',
-            callback: () => {
+            callback: (e, index) => {
                 const newTag = { name: s.name, type: 'tag' };
                 this.onSelect(newTag);
-                this.existingTags.push(newTag);
-                this.searchTags("");
+
+                if (e?.shiftKey) {
+                    this.existingTags.push(newTag);
+                    this.searchTags(this.currentWord).then(() => {
+                        let newHighlight = index;
+                        if (newHighlight >= this.options.length) {
+                            newHighlight = this.options.length - 1;
+                        }
+                        this.setHighlight(newHighlight);
+                    });
+                } else {
+                    this.close();
+                }
             }
         }));
         
