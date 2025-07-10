@@ -721,9 +721,9 @@ export class TagContextMenuInsert extends TagContextMenu {
                 callback: (e, index) => {
                     const newTag = { name: query, type: 'tag' };
                     this.onSelect(newTag);
+                    this.existingTags.push(newTag);
 
                     if (e?.shiftKey) {
-                        this.existingTags.push(newTag);
                         this.searchTags(this.currentWord).then(() => {
                             let newHighlight = index;
                             if (newHighlight >= this.options.length) {
@@ -732,7 +732,7 @@ export class TagContextMenuInsert extends TagContextMenu {
                             this.setHighlight(newHighlight);
                         });
                     } else {
-                        this.close();
+                        this.searchTags("");
                     }
                 }
             });
@@ -745,9 +745,9 @@ export class TagContextMenuInsert extends TagContextMenu {
             callback: (e, index) => {
                 const newTag = { name: s.name, type: 'tag' };
                 this.onSelect(newTag);
+                this.existingTags.push(newTag);
 
                 if (e?.shiftKey) {
-                    this.existingTags.push(newTag);
                     this.searchTags(this.currentWord).then(() => {
                         let newHighlight = index;
                         if (newHighlight >= this.options.length) {
@@ -756,7 +756,7 @@ export class TagContextMenuInsert extends TagContextMenu {
                         this.setHighlight(newHighlight);
                     });
                 } else {
-                    this.close();
+                    this.searchTags("");
                 }
             }
         }));
