@@ -133,8 +133,9 @@ app.registerExtension({
                 let textWidth = ctx.measureText(display).width + strengthWidth;
 
                 // Trim and append ellipsis if too wide
-                let maxTextWidth = pillMaxWidth - padding * 2;
-                if (textWidth > pillMaxWidth - padding * 2) {
+                // Accomodate for toggle switch (35px) + padding
+                let maxTextWidth = pillMaxWidth - 35 - padding;
+                if (textWidth > maxTextWidth) {
                     let i = display.length;
                     const dots = "…";
                     const dotsWidth = ctx.measureText("…").width;
@@ -203,7 +204,6 @@ app.registerExtension({
                     ctx.arc(cx, cy, r, 0, 2 * Math.PI);
                     ctx.fill();
 
-                    
                     ctx.textAlign = "left";
                     ctx.fillStyle = (p.active ? LiteGraph.WIDGET_TEXT_COLOR : "#FFF");
                     ctx.fillText(p.display, textX, textY);
