@@ -115,43 +115,21 @@ function parseTextToTagData(text, oldTagData = []) {
     return finalTagData;
 }
 
-
 const getTextInput = async (title, promptMessage, defaultValue = "") => {
     const value = prompt(promptMessage, defaultValue);
     if (value === null) return false; 
     return value;
 };
 
-
 // Custom hijack of the context menu to allow for quick edit of tags on right click
 let contextMenuPatched = false;
 const ERE_TAG_NODE_TYPES = ["ErePromptCloud", "ErePromptToggle", "ErePromptMultiSelect", "ErePromptRandomizer", "ErePromptGallery"];
-
-let stylesInjected = false;
-function injectSpinnerHidingStyles() {
-    if (stylesInjected) return;
-    stylesInjected = true;
-    const style = document.createElement('style');
-    style.textContent = `
-        .erenodes-quick-edit-input::-webkit-outer-spin-button,
-        .erenodes-quick-edit-input::-webkit-inner-spin-button {
-            -webkit-appearance: none;
-            margin: 0;
-        }
-        .erenodes-quick-edit-input {
-            -moz-appearance: textfield;
-        }
-    `;
-    document.head.appendChild(style);
-}
 
 export function applyContextMenuPatch() {
     if (contextMenuPatched) {
         return;
     }
     contextMenuPatched = true;
-
-    injectSpinnerHidingStyles();
 
     document.addEventListener("keydown", (e) => {
         if (e.ctrlKey && (e.key === 'v' || e.key === 'V')) {

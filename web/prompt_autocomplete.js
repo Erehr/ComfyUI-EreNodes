@@ -540,7 +540,6 @@ if (typeof app !== "undefined") {
                 !e.target.classList.contains('comfy-context-menu-filter') && // Explicitly don't attach to the searchbox itself via this listener
                 (!app.globalAutocompleteInstance.textarea || app.globalAutocompleteInstance.textarea !== e.target) // Only attach if not already attached or attached to a different element
             ) {
-                const triggerImmediately = !e.target.classList.contains("erenodes-quick-edit-input");
                 // Attach with default behavior for global textareas
                 app.globalAutocompleteInstance.attach(e.target, null, new Set(), e.target, "", triggerImmediately);
             }
