@@ -10,8 +10,8 @@ class ErePromptLoraStack:
             }
         }
 
-    RETURN_TYPES = ("LORA_STACK", "STRING")
-    RETURN_NAMES = ("lora_stack", "filtered_prompt")
+    RETURN_TYPES = ("LORA_STACK",)
+    RETURN_NAMES = ("lora_stack",)
     FUNCTION = "process"
     CATEGORY = "EreNodes"
 
@@ -28,23 +28,7 @@ class ErePromptLoraStack:
             # ComfyUI's LoRA stack format: (lora_name, model_strength, clip_strength)
             lora_stack.append((filename, strength, strength))
 
-        def replacer(match):
-            filename_with_path = match.group(1)
-            strength_val = match.group(2)
-            
-            # Strip path to get basename, then strip extension
-            name_without_ext, _ = os.path.splitext(os.path.basename(filename_with_path))
-            
-            return f"<lora:{name_without_ext}:{strength_val}>"
-
-        # Replace lora tags in the text but keep them in a simplified form
-        cleaned_text = re.sub(lora_regex, replacer, prompt)
-        
-        # Normalize commas: ensure ', ' as separator, collapse multiple commas, strip
-        cleaned_text = re.sub(r'\s*,\s*', ', ', cleaned_text)  # normalize to ', '
-        cleaned_text = re.sub(r'(,\s*)+', ', ', cleaned_text)   # collapse multiple commas
-        cleaned_text = cleaned_text.strip(', ').strip()
-        return (lora_stack, cleaned_text)
+        return (lora_stack,)
 
 NODE_CLASS_MAPPINGS = {
     "ErePromptLoraStack": ErePromptLoraStack
