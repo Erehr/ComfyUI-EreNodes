@@ -219,48 +219,28 @@ app.registerExtension({
                 ctx.filter = p.button ? "" : (p.active ? "grayscale(0.75)" : "grayscale(0)");
                 ctx.globalAlpha = p.button ? 1 : (p.active ? 0.25 : 1);
 
-                // cache offscreen canvas
-                let cachedCanvas = p.imageUrl ? this._pillImageCache.get(p.label) : null;
-                if (p.imageUrl && !cachedCanvas) {
-                    const TagImage = getCache(p.imageUrl, 'bitmap');
-                    if (TagImage && TagImage instanceof ImageBitmap) {
-                        const scale = window.devicePixelRatio || 2;
-                        cachedCanvas = document.createElement('canvas');
-                        cachedCanvas.width = p.w * scale;
-                        cachedCanvas.height = p.h * scale;
-                        const pillCtx = cachedCanvas.getContext('2d');
-                        pillCtx.scale(scale, scale);
+                // Direct draw path (avoid offscreen canvas to reduce overhead).
+                const TagImage = p.imageUrl ? getCache(p.imageUrl, 'bitmap') : null;
+                if (TagImage && TagImage instanceof ImageBitmap) {
+                    // Clip to rounded rect
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.roundRect(p.x, p.y, p.w, p.h, radius);
+                    ctx.clip();
 
-                        pillCtx.fillStyle = "#222";
-                        pillCtx.beginPath();
-                        pillCtx.roundRect(0, 0, p.w, p.h, radius);
-                        pillCtx.fill();
-
-                        pillCtx.save();
-                        pillCtx.beginPath();
-                        pillCtx.roundRect(0, 0, p.w, p.h, radius);
-                        pillCtx.clip();
-
-                        const imgAspectRatio = TagImage.width / TagImage.height;
-                        const areaAspectRatio = p.w / p.h;
-                        let sx = 0, sy = 0, sWidth = TagImage.width, sHeight = TagImage.height;
-                        if (imgAspectRatio > areaAspectRatio) {
-                            sWidth = TagImage.height * areaAspectRatio;
-                            sx = (TagImage.width - sWidth) / 2;
-                        } else {
-                            sHeight = TagImage.width / areaAspectRatio;
-                            sy = (TagImage.height - sHeight) / 2;
-                        }
-                        pillCtx.drawImage(TagImage, sx, sy, sWidth, sHeight, 0, 0, p.w, p.h);
-                        pillCtx.restore();
-
-                        this._pillImageCache.set(p.label, cachedCanvas);
+                    // Compute cover crop once and draw directly to main canvas
+                    const imgAspectRatio = TagImage.width / TagImage.height;
+                    const areaAspectRatio = p.w / p.h;
+                    let sx = 0, sy = 0, sWidth = TagImage.width, sHeight = TagImage.height;
+                    if (imgAspectRatio > areaAspectRatio) {
+                        sWidth = TagImage.height * areaAspectRatio;
+                        sx = (TagImage.width - sWidth) / 2;
+                    } else {
+                        sHeight = TagImage.width / areaAspectRatio;
+                        sy = (TagImage.height - sHeight) / 2;
                     }
-                }
-
-                // draw cached canvas
-                if (cachedCanvas) {
-                    ctx.drawImage(cachedCanvas, p.x, p.y, p.w, p.h);
+                    ctx.drawImage(TagImage, sx, sy, sWidth, sHeight, p.x, p.y, p.w, p.h);
+                    ctx.restore();
                 }
 
                 // reset filter
