@@ -1,5 +1,5 @@
 const cache = new Map();
-const notFound = Symbol('notFound'); // Sentinel value for 404s
+const notFound = Symbol('notFound'); // Sentinel for missing/absent content (404/204)
 
 /**
  * Fetches and caches content. Returns cached data directly if available, or a Promise if fetching.
@@ -30,34 +30,59 @@ export function getCache(url, type = 'json') {
     const promise = new Promise(async (resolve, reject) => {
         try {
             const response = await fetch(url);
+            if (response.status === 204) {
+                // Treat 204 No Content the same as missing content
+                cache.set(cacheKey, notFound);
+                resolve(notFound);
+                return;
+            }
             if (response.ok) {
                 let data;
                 switch (type) {
-                    case 'json':
-                        data = await response.json();
+                    case 'json': {
+                        // Guard against empty body for safety
+                        const text = await response.text();
+                        data = text ? JSON.parse(text) : null;
                         break;
-                    case 'src':
+                    }
+                    case 'src': {
                         const blobSrc = await response.blob();
+                        // Empty blob -> treat as no content
+                        if (!blobSrc || blobSrc.size === 0) {
+                            cache.set(cacheKey, notFound);
+                            resolve(notFound);
+                            return;
+                        }
                         data = URL.createObjectURL(blobSrc);
                         break;
-                    case 'bitmap':
-                        // Check if we already have a blob from 'src' cache
-                        const srcCacheKey = `src:${url}`;
+                    }
+                    case 'bitmap': {
+                        // Prefer reusing existing blob from 'src' cache
                         const srcCached = cache.get(`src:${url}`);
-                        
                         let blob;
                         if (srcCached && !(srcCached instanceof Promise) && srcCached !== notFound) {
-                            // Reuse existing blob from src cache
-                            const blobUrl = srcCached;
-                            const blobResponse = await fetch(blobUrl);
+                            // srcCached is an object URL; fetch it back to blob
+                            const blobResponse = await fetch(srcCached);
                             blob = await blobResponse.blob();
                         } else {
-                            // Fetch new blob
                             blob = await response.blob();
                         }
-                        
-                        data = await createImageBitmap(blob);
+                        // Avoid decoding empty blobs
+                        if (!blob || blob.size === 0) {
+                            cache.set(cacheKey, notFound);
+                            resolve(notFound);
+                            return;
+                        }
+                        try {
+                            data = await createImageBitmap(blob);
+                        } catch (e) {
+                            // If decoding fails, memoize as notFound to avoid spamming attempts
+                            cache.set(cacheKey, notFound);
+                            resolve(notFound);
+                            return;
+                        }
                         break;
+                    }
                     default:
                         throw new Error(`Unsupported cache type: ${type}`);
                 }
@@ -65,10 +90,12 @@ export function getCache(url, type = 'json') {
                 resolve(data);
             } else if (response.status === 404) {
                 cache.set(cacheKey, notFound);
-                reject(new Error('Content not found'));
+                // Resolve to sentinel instead of rejecting to avoid console spam loops
+                resolve(notFound);
             } else {
+                // For other errors, do not cache the failure; surface the error once
                 cache.delete(cacheKey);
-                reject(new Error(`Failed to fetch content: ${response.statusText}`));
+                reject(new Error(`Failed to fetch content: ${response.status} ${response.statusText}`));
             }
         } catch (error) {
             cache.delete(cacheKey);

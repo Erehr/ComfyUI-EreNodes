@@ -543,6 +543,13 @@ async def view_file_handler(request):
     if not type_name or not path_param:
         return web.Response(status=400, text="Missing type or path")
 
+    # Accept optional sizing params for cache-key stability on the client.
+    # We do not resize server-side (no extra deps), but presence of w/h/fit
+    # in the URL should not cause 404 when an image exists.
+    _w = request.query.get("w")
+    _h = request.query.get("h")
+    _fit = request.query.get("fit")
+
     # Determine base directories
     if type_name == 'group':
         # The 'prompts_dir' is already an absolute path.
@@ -573,6 +580,8 @@ async def view_file_handler(request):
                 # First try: filename.extension (original pattern)
                 image_path = prospective_path_base + ext
                 if os.path.isfile(image_path):
+                    # If sizing params provided, still return the original file.
+                    # Client uses params for cache-key uniqueness; server does not resize.
                     return web.FileResponse(image_path)
                 
                 # Second try: filename.preview.extension (new pattern)
@@ -581,7 +590,8 @@ async def view_file_handler(request):
                     return web.FileResponse(preview_image_path)
     
     # If we get here, no file was found in any of the directories
-    return web.Response(status=404, text="Preview image not found")
+    # Return 204 No Content to indicate "no preview available" without error noise.
+    return web.Response(status=204)
 
 @server.PromptServer.instance.routes.post("/erenodes/save_file_image")
 async def save_file_image_handler(request):

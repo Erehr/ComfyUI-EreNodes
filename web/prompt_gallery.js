@@ -182,7 +182,7 @@ app.registerExtension({
             const imagesToLoad = [];
             for (const p of positions) {
                 if (p.type === 'lora' || p.type === 'group' || p.type === 'embedding') {
-                    const imageUrl = `/erenodes/view/${p.type}/${p.label}`;
+                    const imageUrl = `/erenodes/view/${p.type}/${p.label}?w=${p.w}&h=${p.h}&fit=cover`;
                     p.imageUrl = imageUrl; // Store for later drawing
 
                     // Only load if not cached yet (undefined), skip if cached (including notFound)
