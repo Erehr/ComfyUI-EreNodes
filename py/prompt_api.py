@@ -315,31 +315,40 @@ async def get_lora_metadata_handler(request):
         return web.json_response({"error": "Filename not provided"}, status=400)
 
     try:
-        lora_path = folder_paths.get_full_path("loras", filename)
+        lora_path = folder_paths.get_full_path("loras", filename) or folder_paths.get_full_path("loras_old", filename)
         if not lora_path:
-            # Try to find it in the old loras folder as well
-            lora_path = folder_paths.get_full_path("loras_old", filename)
-            if not lora_path:
-                return web.json_response({"error": "Lora not found in any known folder"}, status=404)
+            return web.json_response({"error": "Lora not found in any known folder"}, status=404)
 
-        metadata = {}
-        with safe_open(lora_path, framework="pt", device="cpu") as f:
-            metadata = f.metadata()
-        
-        if not metadata:
-            return web.json_response({})
+        tags = []
 
-        # The 'ss_tag_frequency' is often a JSON string within the metadata, so we parse it.
-        if 'ss_tag_frequency' in metadata and isinstance(metadata['ss_tag_frequency'], str):
-            try:
-                metadata['ss_tag_frequency'] = json.loads(metadata['ss_tag_frequency'])
-            except json.JSONDecodeError:
-                # Keep it as a string if it's not valid JSON
-                pass
+        # From companion JSON (<file>.metadata.json) -> civitai.trainedWords
+        try:
+            md_path = os.path.splitext(lora_path)[0] + ".metadata.json"
+            if os.path.isfile(md_path):
+                with open(md_path, 'r', encoding='utf-8') as jf:
+                    data = json.loads(jf.read())
+                tags += data['civitai']['trainedWords']
+        except Exception:
+            pass
 
-        return web.json_response(metadata)
+        # From LoRA file metadata -> ss_tag_frequency (first 20)
+        try:
+            with safe_open(lora_path, framework="pt", device="cpu") as f:
+                meta = f.metadata() or {}
+            if 'ss_tag_frequency' in meta and isinstance(meta['ss_tag_frequency'], str):
+                try:
+                    freq = json.loads(meta['ss_tag_frequency'])
+                    tags += (
+                        [k for v in (freq.values() if isinstance(freq, dict) else []) if isinstance(v, dict) for k in v.keys()]
+                        if isinstance(freq, dict) else freq
+                    )[:20]
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        return web.json_response(tags)
     except Exception as e:
-        # Consider logging the full error for debugging
         return web.json_response({"error": "Failed to read LoRA metadata: " + str(e)}, status=500)
 
 # --- Unified File Search API Endpoint --- #

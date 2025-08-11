@@ -1110,9 +1110,9 @@ export class TagEditContextMenu extends DynamicContextMenu {
             let url;
             if (this.tag.type === 'lora') {
                 url = `/erenodes/get_lora_metadata?filename=${encodeURIComponent(this.tag.name + this.tag.extension)}`;
-                const metadata = getCache(url, 'json');
-                const resolvedMetadata = metadata instanceof Promise ? await metadata : metadata;
-                return this.processLoraMetadata(resolvedMetadata);
+                const tagsJson = getCache(url, 'json');
+                const resolvedTags = tagsJson instanceof Promise ? await tagsJson : tagsJson;
+                return this.processLoraMetadata(resolvedTags);
             } else if (this.tag.type === 'group') {
                 url = `/erenodes/get_tag_group?filename=${encodeURIComponent(this.tag.name + this.tag.extension)}`;
                 const groupTags = getCache(url, 'json');
@@ -1125,17 +1125,11 @@ export class TagEditContextMenu extends DynamicContextMenu {
         return null;
     }
 
-    processLoraMetadata(metadata) {
+    processLoraMetadata(tags) {
         const pills = [];
-        let freq_tags = metadata.ss_tag_frequency;
-        if (freq_tags && typeof freq_tags === 'string') {
-            try { freq_tags = JSON.parse(freq_tags); } catch(e) { freq_tags = null; }
-        }
-        if (freq_tags) {
-            let allTags = {};
-            for (const dir in freq_tags) for (const tag in freq_tags[dir]) allTags[tag] = (allTags[tag] || 0) + freq_tags[dir][tag];
-            const sortedTags = Object.entries(allTags).sort(([,a],[,b]) => b-a).slice(0, 20);
-            if (sortedTags.length > 0) sortedTags.forEach(([tag]) => pills.push(this.createPill(tag, true)));
+        if (Array.isArray(tags)) {
+            [...new Set(tags.map(t => String(t).trim()).filter(Boolean))]
+                .forEach(tag => pills.push(this.createPill(tag, true)));
         }
         return pills;
     }
