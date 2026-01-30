@@ -40,6 +40,28 @@ app.registerExtension({
         });
 
         app.ui.settings.addSetting({
+            id: "EreNodes.Autocomplete.Limit",
+            name: "Autocomplete Suggestion Limit",
+            type: "number",
+            defaultValue: 20,
+            attrs: {
+                min: 1,
+                max: 100,
+                step: 1
+            },
+            onChange: (newVal) => {
+                fetch("/erenodes/set_setting", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        key: "autocomplete.limit",
+                        value: Number.parseInt(newVal)
+                    }),
+                });
+            },
+        });
+
+        app.ui.settings.addSetting({
             id: "EreNodes.Nodes.PasteAction",
             name: "Paste Action",
             type: "combo",

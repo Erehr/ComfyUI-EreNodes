@@ -606,6 +606,8 @@ export class TagContextMenu extends DynamicContextMenu {
         this.currentWord = ""; 
         this.filterBox = null;
         
+        this.limit = app.ui.settings.getSettingValue('EreNodes.Autocomplete.Limit', 20);
+        
         // Determine how to position the menu
         if (event instanceof MouseEvent) {
             this.positioning = { event };
@@ -618,7 +620,7 @@ export class TagContextMenu extends DynamicContextMenu {
         this.currentWord = query;
         let suggestions = [];
         try {
-            const response = await fetch(`/erenodes/search_tags?query=${encodeURIComponent(query)}&limit=20`);
+            const response = await fetch(`/erenodes/search_tags?query=${encodeURIComponent(query)}&limit=${this.limit}`);
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
             const tags = await response.json();
             suggestions = tags.filter(tag => !this.existingTags.some(existingTag => existingTag.name === tag.name && existingTag.type === 'tag'));

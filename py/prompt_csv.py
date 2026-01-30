@@ -69,7 +69,7 @@ def get_tag_data():
 @server.PromptServer.instance.routes.get("/erenodes/search_tags")
 async def search_tags(request):
     query = request.query.get("query", "").lower().strip().replace('_', ' ')
-    limit = int(request.query.get("limit", 10))
+    limit = int(request.query.get("limit", 20)) # Sync to frontend
 
     if not query or len(query) < 1:
         return web.json_response([])
