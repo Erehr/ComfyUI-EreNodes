@@ -210,6 +210,7 @@ class GlobalAutocomplete {
         this.attachedElement = inputElement;
         this.helper = new TextAreaCaretHelper(inputElement);
         this.attachedElement.addEventListener("keydown", this.onKeyDown, true);
+        this.attachedElement.addEventListener("input", this.onInput.bind(this));
         this.attachedElement.addEventListener("blur", this.onBlur);
         this.attachedElement.addEventListener("click", this.onClick);
     }
@@ -217,6 +218,7 @@ class GlobalAutocomplete {
     detach() {
         if (this.attachedElement) {
             this.attachedElement.removeEventListener("keydown", this.onKeyDown, true);
+            this.attachedElement.removeEventListener("input", this.onInput);
             this.attachedElement.removeEventListener("blur", this.onBlur);
             this.attachedElement.removeEventListener("click", this.onClick);
             this.attachedElement = null;
@@ -296,6 +298,11 @@ class GlobalAutocomplete {
         
         // Handle regular character input.
         if (e.key.length === 1) {
+            // Skip if IME composition is in progress (will be handled by onInput instead)
+            if (e.isComposing) {
+                return;
+            }
+            
             // If a separator is typed, close the menu.
             if (/[,;"|}()\n]/.test(e.key)) {
                 this.closeMenu();
@@ -303,6 +310,22 @@ class GlobalAutocomplete {
                 // Otherwise, it's a word character, so show suggestions.
                 this.scheduleUpdate();
             }
+        }
+    }
+
+    onInput(e) {
+        // Handle IME input (Korean, Japanese, Chinese, etc.)
+        // This event fires after composition is complete
+        if (!e.data) return;
+
+        const lastChar = e.data.slice(-1);
+
+        // If a separator is typed, close the menu
+        if (/[,;\"|}()\n]/.test(lastChar)) {
+            this.closeMenu();
+        } else {
+            // Otherwise, it's a word character, so show suggestions.
+            this.scheduleUpdate();
         }
     }
 
@@ -346,9 +369,16 @@ class GlobalAutocomplete {
         const match = before.match(/([^,;"|}()\n]+)$/);
         if (match) {
             const word = match[0].replace(/^\s+/, "").replace(/\s/g, "_") || null;
-            if (word && word.length >= 2) {
-                this.currentWordStart = before.length - match[0].length;
-                return word;
+            if (word) {
+                // For non-ASCII characters (Korean, Japanese, Chinese, etc.), 1 character is enough
+                // For ASCII characters (English), require at least 2 characters
+                const hasNonAscii = /[^\x00-\x7F]/.test(word);
+                const minLength = hasNonAscii ? 1 : 2;
+
+                if (word.length >= minLength) {
+                    this.currentWordStart = before.length - match[0].length;
+                    return word;
+                }
             }
         }
         return null;
@@ -540,8 +570,11 @@ if (typeof app !== "undefined") {
                 !e.target.classList.contains('comfy-context-menu-filter') && // Explicitly don't attach to the searchbox itself via this listener
                 (!app.globalAutocompleteInstance.textarea || app.globalAutocompleteInstance.textarea !== e.target) // Only attach if not already attached or attached to a different element
             ) {
+                // prompt_autocomplete.js:544 
+                // Uncaught ReferenceError: triggerImmediately is not defined
+                app.globalAutocompleteInstance.attach(e.target)
                 // Attach with default behavior for global textareas
-                app.globalAutocompleteInstance.attach(e.target, null, new Set(), e.target, "", triggerImmediately);
+                // app.globalAutocompleteInstance.attach(e.target, null, new Set(), e.target, "", triggerImmediately);
             }
         }
     });
