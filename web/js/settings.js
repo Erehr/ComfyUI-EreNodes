@@ -25,6 +25,21 @@ app.registerExtension({
         });
 
         app.ui.settings.addSetting({
+            id: "EreNodes.Autocomplete.Nodes",
+            name: "Autocomplete in EreNodes prompts",
+            tooltip: "Keep autocomplete inside EreNodes prompt nodes even when Global Autocomplete is off.",
+            type: "boolean",
+            defaultValue: true,
+            onChange: (newVal) => {
+                fetch("/erenodes/set_setting", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ key: "autocomplete.nodes", value: newVal }),
+                });
+            },
+        });
+
+        app.ui.settings.addSetting({
             id: "EreNodes.Autocomplete.CSV",
             name: "Autocomplete CSV File",
             type: "combo",

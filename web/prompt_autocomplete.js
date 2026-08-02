@@ -535,16 +535,44 @@ class GlobalAutocomplete {
     }
 }
 
+const ERE_NODE_TYPE_PREFIX = "ErePrompt";
+
+// Is this textarea the prompt input of one of our own nodes? Global autocomplete gets
+// turned off to stop it colliding with other extensions' autocomplete, but suggestions
+// are still expected inside the prompt nodes themselves.
+function isEreNodeTextarea(target) {
+    // Legacy renderer: the multiline input is a DOM widget, so the textarea is the
+    // widget's own element.
+    for (const node of app.graph?._nodes ?? []) {
+        if (!node.type?.startsWith(ERE_NODE_TYPE_PREFIX)) continue;
+        if (node.widgets?.some(w => w.element === target || w.inputEl === target)) return true;
+    }
+
+    // Vue nodes: the textarea belongs to a Vue component rather than to the widget, so
+    // go by the node element it sits in.
+    const nodeElement = target.closest?.("[data-node-id]");
+    if (nodeElement) {
+        const node = app.graph?.getNodeById?.(nodeElement.dataset.nodeId);
+        if (node?.type?.startsWith(ERE_NODE_TYPE_PREFIX)) return true;
+    }
+
+    return false;
+}
+
 // Initialize GlobalAutocomplete for general textareas
 // This needs to be done after the class definition.
 if (typeof app !== "undefined") {
     app.globalAutocompleteInstance = new GlobalAutocomplete(); // Store on app for access
     document.addEventListener("focusin", (e) => {
-        if (!app.ui.settings.getSettingValue('EreNodes.Autocomplete.Global', true)) {
-            return; // If the setting is disabled, do nothing.
-        }
-
         if (e.target.tagName === "TEXTAREA") {
+            const globalEnabled = app.ui.settings.getSettingValue('EreNodes.Autocomplete.Global', true);
+            const nodesEnabled = app.ui.settings.getSettingValue('EreNodes.Autocomplete.Nodes', true);
+
+            // Outside our own nodes the global setting still rules.
+            if (!globalEnabled && !(nodesEnabled && isEreNodeTextarea(e.target))) {
+                return;
+            }
+
             const parentContextMenu = e.target.closest('.litecontextmenu');
             const isSearchBoxParent = parentContextMenu ? parentContextMenu.querySelector('.comfy-context-menu-filter') : false;
 
