@@ -1,3 +1,5 @@
+import { app } from "../../../../scripts/app.js";
+
 // DOM rendering of the tag pill area.
 //
 // The canvas path (onDrawForeground + node.onMouseDown + the processContextMenu patch)
@@ -26,7 +28,11 @@ function injectStyles() {
             display: block;
             box-sizing: border-box;
             width: 100%;
-            overflow: hidden;
+            min-height: 0;
+            /* Shrinking the node past its tags scrolls them instead of clipping */
+            overflow-x: hidden;
+            overflow-y: auto;
+            scrollbar-width: thin;
         }
         .erenodes-pills {
             display: flex;
@@ -219,6 +225,9 @@ const KNOB_DEFAULT = "#8899bb";
 
 const IMAGE_TYPES = ["lora", "embedding", "group"];
 
+// One pill row - the smallest the tag area may be squeezed to before it just scrolls.
+const MIN_AREA_HEIGHT = 20;
+
 const parseTags = value => {
     try {
         const parsed = JSON.parse(value || "[]");
@@ -324,7 +333,9 @@ export function attachTagPillWidget(node, config = {}) {
         hideOnZoom: false,
         serialize: false,
         margin: 6,
-        getMinHeight: () => naturalHeight(),
+        // The floor is what lets the node be dragged smaller than its tags: the layout
+        // hands the widget whatever is left, and the area scrolls the rest.
+        getMinHeight: () => Math.min(naturalHeight(), MIN_AREA_HEIGHT + widget.margin * 2),
         getMaxHeight: () => naturalHeight()
     });
     widget.serialize = false;
@@ -353,20 +364,63 @@ export function attachTagPillWidget(node, config = {}) {
     // The legacy renderer sizes nodes from litegraph's layout, so the node has to be
     // grown to fit the pills. Vue nodes measure the DOM themselves - touching setSize
     // there fights their ResizeObserver.
+    let applyingAutoHeight = false;
+
     function syncNodeHeight() {
         if (!autoHeight || LiteGraph.vueNodesMode) return;
         if (!root.isConnected || !node.graph) return;
         // Collapsed or not laid out yet - measuring now would resize the node to nothing.
         if (node.flags?.collapsed || !content.offsetHeight) return;
+        // The height is the user's now; the area scrolls instead of pushing the node.
+        if (node.properties?._tagAreaManualHeight) return;
 
         const target = Math.round((widget.y ?? 30) + naturalHeight() + heightBelow() + 4);
-        node._erePillsHeight = target;
 
         if (Math.abs(node.size[1] - target) > 1) {
-            node.setSize([node.size[0], target]);
+            applyingAutoHeight = true;
+            try {
+                node.setSize([node.size[0], target]);
+            } finally {
+                applyingAutoHeight = false;
+            }
             node.setDirtyCanvas(true, true);
         }
     }
+
+    // A manual resize hands the height over to the user for good - stored on the node so
+    // it survives a reload. Gated on the canvas actually dragging this node's handle:
+    // the layout grows nodes with setSize() too, and that must not count as manual.
+    const origResize = node.onResize;
+    node.onResize = function (...args) {
+        const draggedByUser = app.canvas?.resizing_node === node;
+        if (draggedByUser && !applyingAutoHeight && autoHeight && !LiteGraph.vueNodesMode) {
+            node.properties = node.properties || {};
+            node.properties._tagAreaManualHeight = true;
+        }
+        return origResize?.apply(this, args);
+    };
+
+    // Give the wheel back to the canvas when there is nothing to scroll, so zooming over
+    // the node keeps working.
+    root.addEventListener("wheel", e => {
+        const scrollable = root.scrollHeight > root.clientHeight + 1;
+        const atTop = root.scrollTop <= 0 && e.deltaY < 0;
+        const atBottom = root.scrollTop + root.clientHeight >= root.scrollHeight - 1 && e.deltaY > 0;
+
+        if (scrollable && !atTop && !atBottom) {
+            e.stopPropagation();
+            return;
+        }
+
+        e.preventDefault();
+        app.canvas?.processMouseWheel?.(e);
+    }, { passive: false });
+
+    // Lets the node be snapped back to its content after a manual resize.
+    node.onFitTagArea = () => {
+        if (node.properties) delete node.properties._tagAreaManualHeight;
+        syncNodeHeight();
+    };
 
     function pillTarget(label, button = false) {
         return { label, button };

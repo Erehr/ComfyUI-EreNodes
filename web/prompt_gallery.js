@@ -60,15 +60,5 @@ app.registerExtension({
             this.onUpdateTextWidget(this);
         };
 
-        // Width stays freely resizable (the cards reflow on their own), height follows
-        // the content. Legacy renderer only - Vue nodes size themselves from the DOM.
-        nodeType.prototype.onResize = function () {
-            if (LiteGraph.vueNodesMode || !this._erePillsHeight) return;
-
-            if (Math.abs(this.size[1] - this._erePillsHeight) > 1) {
-                this.setSize([this.size[0], this._erePillsHeight]);
-            }
-        };
-
     }
 });

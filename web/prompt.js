@@ -324,7 +324,11 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         let options = [
             { content: "Replace Tags from Clipboard", callback: () => node.onClipboardReplace?.() },
             { content: "Add Tags from Clipboard", callback: () => node.onClipboardAppend?.() },
-            null, 
+            null,
+            // Only offered once a manual resize has taken the height over
+            ...(node.properties?._tagAreaManualHeight
+                ? [{ content: "Fit Height to Tags", callback: () => node.onFitTagArea?.() }]
+                : []),
             { content: "Toggle All Tags", callback: () => node.onToggleTags?.() },
             { content: "Remove All Tags", callback: () => node.onRemoveTags?.() },
             { content: "Remove Inactive Tags", callback: () => node.onRemoveTags?.('inactive') },
