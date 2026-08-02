@@ -361,18 +361,56 @@ export function attachTagPillWidget(node, config = {}) {
         return total;
     }
 
+    const scrollEnabled = () => app.ui?.settings?.getSettingValue?.("EreNodes.Nodes.TagAreaScroll", true) ?? true;
+
+    // Height the node has left for the tag area, both renderers - arrange() keeps
+    // widget.y and computedHeight up to date even when Vue draws the node.
+    function availableHeight() {
+        return node.size[1] - (widget.y ?? 30) - heightBelow() - widget.margin * 2 - 4;
+    }
+
     // The legacy renderer sizes nodes from litegraph's layout, so the node has to be
     // grown to fit the pills. Vue nodes measure the DOM themselves - touching setSize
-    // there fights their ResizeObserver.
+    // there fights their ResizeObserver, so there the area is capped with max-height
+    // instead and the node stops growing on its own.
     let applyingAutoHeight = false;
+    // Vue nodes shrink back to the DOM asynchronously, so a fit request suspends the cap
+    // for a moment instead of re-applying it before the node has grown.
+    let fitUntil = 0;
 
-    function syncNodeHeight() {
-        if (!autoHeight || LiteGraph.vueNodesMode) return;
+    function setStyle(prop, value) {
+        if (root.style[prop] !== value) root.style[prop] = value;
+    }
+
+    function applyHeightPolicy() {
+        if (!autoHeight) return;
         if (!root.isConnected || !node.graph) return;
         // Collapsed or not laid out yet - measuring now would resize the node to nothing.
         if (node.flags?.collapsed || !content.offsetHeight) return;
+
+        const scrolls = scrollEnabled();
+        // Only write when it actually changes: every style write resizes the element and
+        // comes straight back through the ResizeObserver.
+        setStyle("overflowY", scrolls ? "auto" : "hidden");
+
+        if (LiteGraph.vueNodesMode) {
+            const available = availableHeight();
+            // Only cap once the node is actually smaller than its tags, otherwise a
+            // freshly placed node would scroll instead of growing to fit. After a fit
+            // request the cap is held off until the node has caught up with the content.
+            const fitting = performance.now() < fitUntil;
+            const shrunk = scrolls && !fitting && available > MIN_AREA_HEIGHT && available < content.offsetHeight - 2;
+
+            setStyle("maxHeight", shrunk ? `${Math.round(available)}px` : "");
+            node._tagAreaCapped = shrunk;
+            return;
+        }
+
+        setStyle("maxHeight", "");
+        node._tagAreaCapped = scrolls && !!node.properties?._tagAreaManualHeight;
+
         // The height is the user's now; the area scrolls instead of pushing the node.
-        if (node.properties?._tagAreaManualHeight) return;
+        if (scrolls && node.properties?._tagAreaManualHeight) return;
 
         const target = Math.round((widget.y ?? 30) + naturalHeight() + heightBelow() + 4);
 
@@ -387,6 +425,11 @@ export function attachTagPillWidget(node, config = {}) {
         }
     }
 
+    // Kept as the name the rest of the module calls.
+
+
+    node.onTagAreaPolicyChanged = () => applyHeightPolicy();
+
     // A manual resize hands the height over to the user for good - stored on the node so
     // it survives a reload. Gated on the canvas actually dragging this node's handle:
     // the layout grows nodes with setSize() too, and that must not count as manual.
@@ -397,6 +440,13 @@ export function attachTagPillWidget(node, config = {}) {
             node.properties = node.properties || {};
             node.properties._tagAreaManualHeight = true;
         }
+
+        // Vue nodes: the cap is derived from the node's own height, so it has to follow
+        // every resize.
+        if (LiteGraph.vueNodesMode && !applyingAutoHeight) {
+            applyHeightPolicy();
+        }
+
         return origResize?.apply(this, args);
     };
 
@@ -419,7 +469,10 @@ export function attachTagPillWidget(node, config = {}) {
     // Lets the node be snapped back to its content after a manual resize.
     node.onFitTagArea = () => {
         if (node.properties) delete node.properties._tagAreaManualHeight;
-        syncNodeHeight();
+        fitUntil = performance.now() + 300;
+        root.style.maxHeight = "";
+        node._tagAreaCapped = false;
+        applyHeightPolicy();
     };
 
     function pillTarget(label, button = false) {
@@ -590,7 +643,7 @@ export function attachTagPillWidget(node, config = {}) {
         }
 
         content.replaceChildren(...children);
-        syncNodeHeight();
+        applyHeightPolicy();
     }
 
     // Every tag mutation funnels through onUpdateTextWidget, so chain the re-render onto it.
@@ -601,9 +654,12 @@ export function attachTagPillWidget(node, config = {}) {
         return result;
     };
 
-    // Node width changes reflow the pills, which can change the height.
-    const observer = new ResizeObserver(() => syncNodeHeight());
+    // Content: width changes reflow the pills, which changes the height they need.
+    // Root: Vue nodes apply a resize straight to the DOM, so this is what tells us the
+    // node got smaller and the area has to be capped.
+    const observer = new ResizeObserver(() => applyHeightPolicy());
     observer.observe(content);
+    observer.observe(root);
 
     const origRemoved = node.onRemoved;
     node.onRemoved = function (...args) {
