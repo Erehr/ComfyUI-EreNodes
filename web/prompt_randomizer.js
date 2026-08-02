@@ -1,6 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
-import { initializeSharedPromptFunctions, applyContextMenuPatch } from "./prompt.js";
+import { initializeSharedPromptFunctions, applyContextMenuPatch, addLayoutSpacer, getSpacerTop } from "./prompt.js";
 
 app.registerExtension({
     name: "ErePromptRandomizer",
@@ -38,8 +38,8 @@ app.registerExtension({
         if (nodeData.name !== "ErePromptRandomizer") return;
 
         // Shared layout constants
-        const pillX = 10, 
-              pillY = 30,
+        const pillX = 10,
+              pillYFallback = 30,
               pillH = 20,
               radius = 5,
               spacing = 5, 
@@ -63,15 +63,19 @@ app.registerExtension({
             textWidget.computeSize = () => [0, 0];
             textWidget.hidden = true;
 
+            // Reserves the pill area in the widget layout, so the control below never
+            // overlaps it. Height is kept in sync from onDrawForeground.
+            node._pillAreaSpacer = addLayoutSpacer(node, "erenodes_pill_area", 0);
+
             // Randomize control
-            const controlWidget = node.addWidget("combo", "control after generate", "fixed", "control_after_generate", { values: ["fixed", "increment", "decrement", "randomize"] });
+            node.addWidget("combo", "control after generate", "fixed", "control_after_generate", { values: ["fixed", "increment", "decrement", "randomize"] });
 
             node.onMouseDown = (e, pos) => {
 
                 const [x, y] = pos;
 
                 // Get background area
-                const bgX = 10, bgY = 30;
+                const bgX = 10, bgY = getSpacerTop(node._pillAreaSpacer, pillYFallback);
                 const bgW = node.size[0] - bgX * 2;
                 const bgH = node._tagAreaBottom - bgY;
                 if (x >= bgX && x <= bgX + bgW && y >= bgY && y <= bgY + bgH) {
@@ -134,6 +138,8 @@ app.registerExtension({
 
             ctx.font = "12px monospace";
 
+            // Anchor the pill area to the space reserved in the widget layout
+            const pillY = getSpacerTop(this._pillAreaSpacer, pillYFallback);
             const pillMaxWidth = this.size[0] - pillX * 2 - padding * 2;
             let currentX = pillX + padding;
             let currentY = pillY + padding;
@@ -272,10 +278,15 @@ app.registerExtension({
             }
             
             this._tagAreaBottom = currentY + pillH + padding;
-            this._measuredHeight = currentY + pillH + pillX + padding + 25; // extra for randomizer widget
 
-            // set hidden textWidget size to push randomize inpput down
-            textWidget.computeSize = () => [0, (currentY + pillH + padding * 2) - pillY];
+            // Reserve the pill area in the widget layout, so "control after generate"
+            // is placed below the pills instead of being drawn over them
+            if (this._pillAreaSpacer) {
+                this._pillAreaSpacer.spacerHeight = Math.max(0, this._tagAreaBottom - pillY);
+            }
+
+            // pill area + the control widget below it
+            this._measuredHeight = this._tagAreaBottom + LiteGraph.NODE_WIDGET_HEIGHT + 8 + padding;
 
             // Height correction
             if (isFinite(this._measuredHeight) && this._measuredHeight && this.size[1] !== this._measuredHeight) {

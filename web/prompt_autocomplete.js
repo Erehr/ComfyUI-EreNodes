@@ -466,9 +466,22 @@ class GlobalAutocomplete {
             };
         }
 
-        this.menu.root.style.left = `${finalCoords.x}px`;
-        this.menu.root.style.top = `${finalCoords.bottom}px`;
-        this.menu.root.style.maxHeight = (window.innerHeight - finalCoords.bottom) + "px";
+        const spaceBelow = window.innerHeight - finalCoords.bottom;
+        const spaceAbove = finalCoords.y;
+
+        this.menu.root.style.left = `${Math.max(0, finalCoords.x)}px`;
+
+        // Entries are two lines tall, so a cramped strip below the cursor is unreadable;
+        // flip the menu above the current line when there's more room there.
+        if (spaceBelow < 160 && spaceAbove > spaceBelow) {
+            this.menu.root.style.top = "auto";
+            this.menu.root.style.bottom = `${window.innerHeight - finalCoords.y}px`;
+            this.menu.root.style.maxHeight = `${spaceAbove}px`;
+        } else {
+            this.menu.root.style.bottom = "auto";
+            this.menu.root.style.top = `${finalCoords.bottom}px`;
+            this.menu.root.style.maxHeight = `${spaceBelow}px`;
+        }
     }
 
     insertTag(selectedValue) {
@@ -541,7 +554,7 @@ if (typeof app !== "undefined") {
                 (!app.globalAutocompleteInstance.textarea || app.globalAutocompleteInstance.textarea !== e.target) // Only attach if not already attached or attached to a different element
             ) {
                 // Attach with default behavior for global textareas
-                app.globalAutocompleteInstance.attach(e.target, null, new Set(), e.target, "", triggerImmediately);
+                app.globalAutocompleteInstance.attach(e.target);
             }
         }
     });

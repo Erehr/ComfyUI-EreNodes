@@ -214,6 +214,42 @@ export function applyContextMenuPatch() {
     };
 }
 
+// Reserves vertical space in the node's widget layout for the canvas-drawn pill area.
+// Hidden widgets are excluded from the layout (LGraphNode.getLayoutWidgets filters on
+// `hidden`), so the old trick of sizing a hidden widget no longer holds any space and
+// the following widgets / DOM textarea draw on top of the pills. This spacer stays
+// visible to the layout but draws nothing, is never serialized, and is marked disabled
+// so pointer hits fall through to node.onMouseDown instead of being swallowed by it.
+export function addLayoutSpacer(node, name, height = 0, index = null) {
+    node.widgets = node.widgets || [];
+
+    const spacer = {
+        name,
+        type: "custom",
+        value: "",
+        serialize: false,                 // keeps it out of workflow widgets_values
+        options: { serialize: false },    // keeps it out of the queued prompt
+        disabled: true,                   // -> computedDisabled, so getWidgetOnPos skips it
+        computedDisabled: true,
+        spacerHeight: height,
+        computeSize() { return [0, this.spacerHeight]; },
+        draw() {}
+    };
+
+    if (index === null || index >= node.widgets.length) {
+        node.widgets.push(spacer);
+    } else {
+        node.widgets.splice(Math.max(0, index), 0, spacer);
+    }
+
+    return spacer;
+}
+
+// Top of a spacer's reserved area, falling back to `fallbackY` before the first arrange().
+export function getSpacerTop(spacer, fallbackY) {
+    return typeof spacer?.y === "number" ? spacer.y : fallbackY;
+}
+
 export function initializeSharedPromptFunctions(node, textWidget) {
 
     node.properties = node.properties || {};

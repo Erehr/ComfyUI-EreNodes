@@ -1,6 +1,72 @@
 import { app } from "../../../../scripts/app.js";
 import { getCache, clearCache } from "./cache.js";
 
+// The frontend's .litemenu-entry rules assume a single line of text (fixed height / line-height),
+// so multi-line tag entries (name + aliases) spill over their neighbours. These styles isolate our
+// own entries from that assumption.
+const TAG_MENU_STYLE_ID = "erenodes-tag-menu-styles";
+function injectTagMenuStyles() {
+    if (document.getElementById(TAG_MENU_STYLE_ID)) return;
+    const style = document.createElement("style");
+    style.id = TAG_MENU_STYLE_ID;
+    style.textContent = `
+        .erenodes-tag-menu {
+            height: auto !important;
+            overflow-y: auto !important;
+            overflow-x: hidden !important;
+            max-width: min(420px, 90vw);
+        }
+        .erenodes-tag-entry {
+            display: block !important;
+            position: relative !important;
+            box-sizing: border-box !important;
+            width: 100% !important;
+            height: auto !important;
+            min-height: 0 !important;
+            max-height: none !important;
+            line-height: 1.25 !important;
+            white-space: normal !important;
+            overflow: hidden !important;
+            padding: 3px 8px !important;
+        }
+        .erenodes-tag-row {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 10px;
+            line-height: 1.25;
+        }
+        .erenodes-tag-name {
+            flex: 1 1 auto;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .erenodes-tag-count {
+            flex: 0 0 auto;
+            font-size: 0.8em;
+            opacity: 0.7;
+        }
+        .erenodes-tag-aliases {
+            display: block;
+            margin-top: 1px;
+            font-size: 0.8em;
+            line-height: 1.2;
+            opacity: 0.7;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+    `;
+    document.head.appendChild(style);
+}
+injectTagMenuStyles();
+
+function escapeAttr(text) {
+    return String(text).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 // Base class for dynamic context menus
 export class DynamicContextMenu { // Added export
     constructor(event, onSelectCallback) {
@@ -647,13 +713,16 @@ export class TagContextMenu extends DynamicContextMenu {
 
         if (option.type === 'tag' && (option.count || option.aliases?.length > 0)) {
             // This is a "rich" tag from the database
-            item.className = "litemenu-entry submenu";
+            item.className = "litemenu-entry submenu erenodes-tag-entry";
             if (option.disabled) item.classList.add("disabled");
 
             const displayHTML = this.highlight(option.name, query);
-            let countHTML = option.count ? `<div style="font-size: 0.8em; opacity: 0.7; margin-left: 10px;">(${option.count.toLocaleString()})</div>` : '';
-            let aliasesHTML = (option.aliases && option.aliases.length) ? `<div style="font-size: 0.8em; opacity: 0.7;">${option.aliases.map(a => this.highlight(a, query)).join(', ')}</div>` : '';
-            item.innerHTML = `<div style="display: flex; justify-content: space-between; align-items: center;"><div>${displayHTML}</div>${countHTML}</div>${aliasesHTML}`;
+            const countHTML = option.count ? `<span class="erenodes-tag-count">(${option.count.toLocaleString()})</span>` : '';
+            const aliases = option.aliases?.length ? option.aliases : null;
+            const aliasesHTML = aliases
+                ? `<div class="erenodes-tag-aliases" title="${escapeAttr(aliases.join(', '))}">${aliases.map(a => this.highlight(a, query)).join(', ')}</div>`
+                : '';
+            item.innerHTML = `<div class="erenodes-tag-row"><span class="erenodes-tag-name" title="${escapeAttr(option.name)}">${displayHTML}</span>${countHTML}</div>${aliasesHTML}`;
 
             item.addEventListener("click", (e) => {
                 e.stopPropagation();
@@ -673,7 +742,7 @@ export class TagContextMenu extends DynamicContextMenu {
     show() {
         this.close();
         this.root = document.createElement("div");
-        this.root.className = "litegraph litecontextmenu litemenubar-panel dark";
+        this.root.className = "litegraph litecontextmenu litemenubar-panel dark erenodes-tag-menu";
         this.root.close = this.close.bind(this);
 
         if (this.positioning?.event) {

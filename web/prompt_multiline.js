@@ -1,5 +1,8 @@
 import { app } from "../../scripts/app.js";
-import { initializeSharedPromptFunctions } from "./prompt.js";
+import { initializeSharedPromptFunctions, addLayoutSpacer, getSpacerTop } from "./prompt.js";
+
+// Height of the strip kept free below the textarea for the erenodes button row
+const BUTTON_ROW_HEIGHT = 30;
 
 app.registerExtension({
     name: "ErePromptMultiline",
@@ -19,27 +22,20 @@ app.registerExtension({
 
                 const [x, y] = pos;
 
-                // Get background area
-                const bgX = 10, bgY = 35;
-                const bgW = node.size[0] - bgX * 2;
-                const bgH = node._tagAreaBottom - bgY;
-                if (x >= bgX && x <= bgX + bgW && y >= bgY && y <= bgY + bgH) {
-
-                    // Find if we are clicking pill
-                    let clickedPill = null;
-                    for (const pill of node._pillMap || []) {
-                        if (x >= pill.x && x <= pill.x + pill.w && y >= pill.y && y <= pill.y + pill.h) {
-                            clickedPill = pill;
-                            break;
-                        }
+                // The textarea covers the rest of the node body, so the only clickable
+                // area here is the button row - test the buttons directly.
+                let clickedPill = null;
+                for (const pill of node._pillMap || []) {
+                    if (x >= pill.x && x <= pill.x + pill.w && y >= pill.y && y <= pill.y + pill.h) {
+                        clickedPill = pill;
+                        break;
                     }
+                }
 
-                    // Handle normal toggle click
-                    // no need to check shift click because we only show menu button
-                    if (clickedPill) {
-                        node.onTagPillClick(e, pos, clickedPill);
-                    } 
-
+                // Handle normal toggle click
+                // no need to check shift click because we only show menu button
+                if (clickedPill) {
+                    node.onTagPillClick(e, pos, clickedPill);
                 }
 
             };
@@ -49,10 +45,9 @@ app.registerExtension({
 
             // Update on load
             this.onUpdateTextWidget(this);
-            
-            // Dummy button to make space for action button
-            let fakeButton = node.addWidget("button", "Placeholder", "fake_button", () => {});
-            fakeButton.hidden = true;
+
+            // Keep a strip below the textarea free for the action button
+            node._buttonRowSpacer = addLayoutSpacer(node, "erenodes_button_row", BUTTON_ROW_HEIGHT);
         };
         
         const origDraw = nodeType.prototype.onDrawForeground;
@@ -63,8 +58,9 @@ app.registerExtension({
         
             ctx.font = "12px monospace";
 
-            // if we can't reorder widgets, we need to move pill to the bottom of the node where butotn makes space. For now leave it like that. 
-            const pillX = 10, pillY = this.size[1] - 30, spacing = 5, pillPadding = 5;
+            // The buttons live in the strip reserved by the spacer widget, below the textarea.
+            const pillX = 10, spacing = 5, pillPadding = 5;
+            const pillY = getSpacerTop(this._buttonRowSpacer, this.size[1] - BUTTON_ROW_HEIGHT) + pillPadding;
             let currentX = pillX;
             let currentY = pillY;
 
