@@ -1121,9 +1121,26 @@ export class TagEditContextMenu extends DynamicContextMenu {
                 break;
             }
 
-            default:
+            default: {
                 super.renderSingleItem(item, option, index);
+
+                // Lora / group / embedding names can be far longer than the menu is wide.
+                // Let the row wrap and grow instead of spilling over the next one, which
+                // is how a long name ended up covering the strength control.
+                const growable = {
+                    height: "auto",
+                    "min-height": "0",
+                    "max-height": "none",
+                    "line-height": "normal",
+                    "white-space": "normal",
+                    "overflow-wrap": "anywhere",
+                    position: "static"
+                };
+                for (const [prop, value] of Object.entries(growable)) {
+                    item.style.setProperty(prop, value, "important");
+                }
                 break;
+            }
         }
     }
 
