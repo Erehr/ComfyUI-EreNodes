@@ -1082,17 +1082,44 @@ export class TagEditContextMenu extends DynamicContextMenu {
                 });
                 break;
             
-            case 'info_panel':
+            case 'info_panel': {
                 item.className = "litemenu-entry submenu disabled";
-                item.style.cssText = "max-width: 256px; display: flex; flex-wrap: wrap; gap: 2.5px; opacity: 1;";
-                // Apply half opacity only for non-interactive group previews
-                if (this.tag.type === 'group') {
-                    item.style.opacity = "0.6";
+
+                // A menu entry is a single-line row, and the wrapped pill rows have to
+                // grow it. Set with !important so that whatever constrains the row height
+                // can't keep the extra rows out of the flow - otherwise the menu items
+                // after this one are laid out over the pills.
+                const layout = {
+                    display: "flex",
+                    "flex-wrap": "wrap",
+                    "align-content": "flex-start",
+                    gap: "2.5px",
+                    // Block level with auto width: fills the menu instead of the old
+                    // hardcoded 256px box, which sat narrower than every other row.
+                    width: "auto",
+                    "max-width": "100%",
+                    "box-sizing": "border-box",
+                    // The entry background is what showed through as a coloured block
+                    // around the pills - the pills bring their own.
+                    background: "transparent",
+                    height: "auto",
+                    "min-height": "0",
+                    "max-height": "none",
+                    position: "static",
+                    overflow: "hidden",
+                    "line-height": "normal",
+                    // Half opacity only for non-interactive group previews
+                    opacity: this.tag.type === 'group' ? "0.6" : "1"
+                };
+                for (const [prop, value] of Object.entries(layout)) {
+                    item.style.setProperty(prop, value, "important");
                 }
+
                 if (Array.isArray(option.content)) {
                     option.content.forEach(pill => item.appendChild(pill));
                 }
                 break;
+            }
 
             default:
                 super.renderSingleItem(item, option, index);
@@ -1219,7 +1246,9 @@ export class TagEditContextMenu extends DynamicContextMenu {
     createPill(tagOrTrigger, isTrigger) {
         const pillEl = document.createElement('span');
         let displayName, pillFill;
-        pillEl.style.cssText = `padding: 2.5px 7.5px; border-radius: 5px; font-size: 11px; color: white; display: inline-block; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; vertical-align: middle; line-height: 1.5;`;
+        // flex: 0 1 auto + min-width: 0 - as flex items the pills default to min-width: auto,
+        // which keeps a long name from shrinking and pushes it out of the panel instead.
+        pillEl.style.cssText = `padding: 2.5px 7.5px; border-radius: 5px; font-size: 11px; color: white; display: inline-block; flex: 0 1 auto; min-width: 0; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; vertical-align: middle; line-height: 1.5;`;
         
         if (isTrigger) {
             displayName = tagOrTrigger;
