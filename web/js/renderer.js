@@ -110,9 +110,12 @@ function injectStyles() {
     const css = `
 .erenodes-dom {
     font: 12px monospace; box-sizing: border-box; width: 100%;
-    min-height: 0; overflow: hidden; padding: 2px 0;
+    min-height: 0; overflow: hidden;
     display: flex; flex-direction: column; gap: 5px;
     color: var(--component-node-foreground, #ddd);
+}
+.erenodes-dom.ere-multiline {
+    height: auto; flex: 0 0 auto; gap: 0; overflow: visible;
 }
 .erenodes-dom .ere-toolbar { flex: 0 0 auto; }
 .erenodes-dom .ere-scroll {
@@ -515,6 +518,53 @@ export function attachTagDomWidget(node, mode) {
     }
     if (widget.options) widget.options.serialize = false;
 
+    // Multiline: ≡ button only, under the native textarea. Not subject to
+    // fit/scroll tag-area policy — the textarea owns vertical resize.
+    //
+    // Nodes 2.0 grid: rows are `auto` when shouldExpand(type) OR hasLayoutSize.
+    // hasLayoutSize is `typeof widget.computeLayoutSize === 'function'` — and
+    // DOMWidgetImpl always has that method, so both textarea + ≡ became `auto`
+    // and split free height 50/50. Shadow computeLayoutSize with a non-function
+    // so the ≡ row is `min-content`; keep computeSize for classic DomWidget.
+    if (mode === "multiline") {
+        el.classList.add("ere-multiline");
+        scroll.style.display = "none";
+        el.style.gap = "0";
+        const margin = widget.margin ?? 10;
+        // Slot height must include DomWidget margins or the 20px button clips.
+        const barH = () => (toolbar.offsetHeight || 20) + margin * 2;
+        if (widget.options) {
+            widget.options.getMinHeight = () => barH();
+            widget.options.getMaxHeight = () => barH();
+            widget.options.getHeight = () => barH();
+        }
+        widget.computeSize = () => [node.size?.[0] ?? 200, barH()];
+        // Own-property undefined shadows the prototype method (do not delete —
+        // delete would fall through to DOMWidgetImpl.computeLayoutSize again).
+        widget.computeLayoutSize = undefined;
+
+        const origUpdate = node.onUpdateTextWidget;
+        node.onUpdateTextWidget = async function (...args) {
+            const r = origUpdate?.apply(this, args);
+            if (r instanceof Promise) await r;
+            render();
+            return r;
+        };
+        const origRemoved = node.onRemoved;
+        node.onRemoved = function (...args) {
+            node._ereDom = null;
+            return origRemoved?.apply(this, args);
+        };
+
+        hookGraphChanged();
+        node._ereDom = {
+            widget, el, toolbar, scroll, content, render,
+            renderIfChanged: () => {},
+        };
+        render();
+        return widget;
+    }
+
     // Height policy (mirrors the old canvas onDrawForeground + onResize clamp):
     // - Fit (default): height locked to content; only width is free.
     // - Scroll: user may shrink/grow; pills scroll under a sticky toolbar.
@@ -545,11 +595,9 @@ export function attachTagDomWidget(node, mode) {
         const margin = widget.margin ?? 10;
         const toolH = toolbar.offsetHeight || 0;
         const bodyH = content.offsetHeight || 0;
-        // Match the 5px flex gap between toolbar and scroll body when both exist,
-        // plus the host's padding: 2px 0 (without it fit mode clips the last row).
+        // Match the 5px flex gap between toolbar and scroll body when both exist.
         const gap = toolH && bodyH ? 5 : 0;
-        const pad = 4;
-        return Math.max(toolH + bodyH + gap + pad, 20) + margin * 2;
+        return Math.max(toolH + bodyH + gap, 20) + margin * 2;
     };
 
     const heightBelow = () => {

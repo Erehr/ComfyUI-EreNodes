@@ -28,6 +28,13 @@ app.registerExtension({
             defaultValue: true,
         },
         {
+            id: "EreNodes.Autocomplete.Nodes",
+            name: "Autocomplete in EreNodes prompts",
+            tooltip: "Keep autocomplete inside EreNodes prompt nodes (including Prompt Multiline) even when Global Autocomplete is off.",
+            type: "boolean",
+            defaultValue: true,
+        },
+        {
             id: "EreNodes.Autocomplete.CSV",
             name: "Autocomplete CSV File",
             type: "combo",

@@ -502,25 +502,49 @@ class GlobalAutocomplete {
 
 // Initialize GlobalAutocomplete for general textareas
 // This needs to be done after the class definition.
+const ERE_NODE_TYPE_PREFIX = "ErePrompt";
+
+// Is this textarea the prompt input of one of our own nodes? Global autocomplete
+// gets turned off to avoid colliding with other extensions, but suggestions
+// are still expected inside EreNodes prompt fields (esp. Prompt Multiline).
+function isEreNodeTextarea(target) {
+    // Legacy: multiline (and any other) text widget owns the textarea as element/inputEl.
+    for (const node of app.graph?._nodes ?? []) {
+        if (!node.type?.startsWith(ERE_NODE_TYPE_PREFIX)) continue;
+        if (node.widgets?.some(w => w.element === target || w.inputEl === target)) return true;
+    }
+
+    // Vue: textarea lives under the node element, not on the widget object.
+    const nodeElement = target.closest?.("[data-node-id]");
+    if (nodeElement) {
+        const node = app.graph?.getNodeById?.(nodeElement.dataset.nodeId);
+        if (node?.type?.startsWith(ERE_NODE_TYPE_PREFIX)) return true;
+    }
+
+    return false;
+}
+
 if (typeof app !== "undefined") {
     app.globalAutocompleteInstance = new GlobalAutocomplete(); // Store on app for access
     document.addEventListener("focusin", (e) => {
-        if (!app.ui.settings.getSettingValue('EreNodes.Autocomplete.Global', true)) {
-            return; // If the setting is disabled, do nothing.
+        if (e.target.tagName !== "TEXTAREA") return;
+
+        const globalEnabled = app.ui.settings.getSettingValue('EreNodes.Autocomplete.Global', true);
+        const nodesEnabled = app.ui.settings.getSettingValue('EreNodes.Autocomplete.Nodes', true);
+        // Outside our own nodes the global setting still rules.
+        if (!globalEnabled && !(nodesEnabled && isEreNodeTextarea(e.target))) {
+            return;
         }
 
-        if (e.target.tagName === "TEXTAREA") {
-            const parentContextMenu = e.target.closest('.litecontextmenu');
-            const isSearchBoxParent = parentContextMenu ? parentContextMenu.querySelector('.comfy-context-menu-filter') : false;
+        const parentContextMenu = e.target.closest('.litecontextmenu');
+        const isSearchBoxParent = parentContextMenu ? parentContextMenu.querySelector('.comfy-context-menu-filter') : false;
 
-            if (
-                (!parentContextMenu || !isSearchBoxParent) && // Allow if not in a context menu OR if in one that ISN'T the TagContextMenuInsert's
-                !e.target.classList.contains('comfy-context-menu-filter') && // Explicitly don't attach to the searchbox itself via this listener
-                app.globalAutocompleteInstance.attachedElement !== e.target // Only attach if not already attached to this element
-            ) {
-                // Attach with default behavior for global textareas
-                app.globalAutocompleteInstance.attach(e.target);
-            }
+        if (
+            (!parentContextMenu || !isSearchBoxParent) &&
+            !e.target.classList.contains('comfy-context-menu-filter') &&
+            app.globalAutocompleteInstance.attachedElement !== e.target
+        ) {
+            app.globalAutocompleteInstance.attach(e.target);
         }
     });
 }
