@@ -1,5 +1,6 @@
 import { app } from "../../../../scripts/app.js";
 import { getCache, clearCache } from "./cache.js";
+import { beginUndoTransaction, endUndoTransaction } from "./undo.js";
 
 // Base class for dynamic context menus
 export class DynamicContextMenu { // Added export
@@ -90,16 +91,26 @@ export class DynamicContextMenu { // Added export
         return handled;
     }
 
+    escapeHtml(text) {
+        return String(text)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
+    }
+
     highlight(text, query) {
-        if (!query || !text) return text;
+        // Escape first: names/aliases come from user CSVs and filenames, and the
+        // result is inserted via innerHTML.
+        if (!query || !text) return this.escapeHtml(text);
         const index = text.toLowerCase().indexOf(query.toLowerCase());
         if (index !== -1) {
-            const pre = text.substring(0, index);
-            const match = text.substring(index, index + query.length);
-            const post = text.substring(index + query.length);
+            const pre = this.escapeHtml(text.substring(0, index));
+            const match = this.escapeHtml(text.substring(index, index + query.length));
+            const post = this.escapeHtml(text.substring(index + query.length));
             return `${pre}<mark style="background-color: #414650; color: white;">${match}</mark>${post}`;
         }
-        return text;
+        return this.escapeHtml(text);
     }
 
     renderItems() {
@@ -652,7 +663,17 @@ export class TagContextMenu extends DynamicContextMenu {
 
             const displayHTML = this.highlight(option.name, query);
             let countHTML = option.count ? `<div style="font-size: 0.8em; opacity: 0.7; margin-left: 10px;">(${option.count.toLocaleString()})</div>` : '';
-            let aliasesHTML = (option.aliases && option.aliases.length) ? `<div style="font-size: 0.8em; opacity: 0.7;">${option.aliases.map(a => this.highlight(a, query)).join(', ')}</div>` : '';
+            
+            // Limit and prioritize aliases based on relevance to search term
+            let aliasesHTML = '';
+            if (option.aliases && option.aliases.length) {
+                const limitedAliases = this.getLimitedRelevantAliases(option.aliases, query, 10);
+                const totalAliases = option.aliases.length;
+                const aliasesText = limitedAliases.map(a => this.highlight(a, query)).join(', ');
+                const moreText = totalAliases > limitedAliases.length ? ` (+${totalAliases - limitedAliases.length})` : '';
+                aliasesHTML = `<div style="font-size: 0.8em; opacity: 0.7;">${aliasesText}${moreText}</div>`;
+            }
+            
             item.innerHTML = `<div style="display: flex; justify-content: space-between; align-items: center;"><div>${displayHTML}</div>${countHTML}</div>${aliasesHTML}`;
 
             item.addEventListener("click", (e) => {
@@ -668,6 +689,22 @@ export class TagContextMenu extends DynamicContextMenu {
             // This handles "simple" tags (like add actions) and any other default cases
             super.renderSingleItem(item, option, index);
         }
+    }
+
+    getLimitedRelevantAliases(aliases, query, limit = 10) {
+        if (!aliases || aliases.length <= limit) return aliases;
+        
+        const queryLower = query.toLowerCase();
+        return aliases
+            .map(alias => {
+                const aliasLower = alias.toLowerCase();
+                let score = aliasLower === queryLower ? 1000 : aliasLower.startsWith(queryLower) ? 500 : aliasLower.includes(queryLower) ? 100 : 1;
+                score += Math.max(0, 50 - alias.length);
+                return { alias, score };
+            })
+            .sort((a, b) => b.score - a.score)
+            .slice(0, limit)
+            .map(item => item.alias);
     }
 
     show() {
@@ -998,18 +1035,24 @@ export class TagEditContextMenu extends DynamicContextMenu {
                     if (!option.disabled) this.setHighlight(index);
                 });
 
-                // Add drag functionality
+                // Add drag functionality. The whole drag is one undo
+                // transaction — without it every 5px tick lands in undo
+                // history as its own step.
                 item.addEventListener('mousedown', (e) => {
                     if (e.button !== 0 || e.target.nodeName === "BUTTON") return;
                     e.preventDefault(); e.stopPropagation();
                     let startX = e.clientX, startValue = this.tag.strength;
+                    beginUndoTransaction();
                     const onMouseMove = (moveEvent) => {
                         this.tag.strength = parseFloat((startValue + Math.round((moveEvent.clientX - startX) / 5) * 0.05).toFixed(2));
                         updateDisplay();
                     };
-                    const onMouseUp = () => window.removeEventListener('mousemove', onMouseMove, true);
+                    const onMouseUp = () => {
+                        window.removeEventListener('mousemove', onMouseMove, true);
+                        endUndoTransaction();
+                    };
                     window.addEventListener('mousemove', onMouseMove, true);
-                    window.addEventListener('mouseup', onMouseUp, true);
+                    window.addEventListener('mouseup', onMouseUp, { capture: true, once: true });
                 });
                 break;
             

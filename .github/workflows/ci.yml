@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Python syntax check
+        run: |
+          python -m py_compile __init__.py py/*.py
+
+      - name: JavaScript syntax check
+        # ComfyUI loads web/*.js as ES modules; node --check requires the
+        # .mjs extension to parse them as modules.
+        run: |
+          set -e
+          mkdir -p /tmp/jscheck
+          find web -name "*.js" | while read -r f; do
+            out="/tmp/jscheck/$(echo "$f" | tr '/' '_').mjs"
+            cp "$f" "$out"
+            node --check "$out"
+            echo "OK $f"
+          done

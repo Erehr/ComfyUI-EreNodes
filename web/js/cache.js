@@ -10,22 +10,22 @@ const notFound = Symbol('notFound'); // Sentinel for missing/absent content (404
 export function getCache(url, type = 'json') {
     const cacheKey = `${type}:${url}`;
     const cached = cache.get(cacheKey);
-    
+
     // If already cached and resolved, return the data directly
     if (cached && !(cached instanceof Promise) && cached !== notFound) {
         return cached;
     }
-    
+
     // If marked as not found, return the notFound symbol
     if (cached === notFound) {
         return notFound;
     }
-    
+
     // If currently loading, return the existing promise
     if (cached instanceof Promise) {
         return cached;
     }
-    
+
     // Not cached yet, create and cache the promise
     const promise = new Promise(async (resolve, reject) => {
         try {
@@ -56,33 +56,6 @@ export function getCache(url, type = 'json') {
                         data = URL.createObjectURL(blobSrc);
                         break;
                     }
-                    case 'bitmap': {
-                        // Prefer reusing existing blob from 'src' cache
-                        const srcCached = cache.get(`src:${url}`);
-                        let blob;
-                        if (srcCached && !(srcCached instanceof Promise) && srcCached !== notFound) {
-                            // srcCached is an object URL; fetch it back to blob
-                            const blobResponse = await fetch(srcCached);
-                            blob = await blobResponse.blob();
-                        } else {
-                            blob = await response.blob();
-                        }
-                        // Avoid decoding empty blobs
-                        if (!blob || blob.size === 0) {
-                            cache.set(cacheKey, notFound);
-                            resolve(notFound);
-                            return;
-                        }
-                        try {
-                            data = await createImageBitmap(blob);
-                        } catch (e) {
-                            // If decoding fails, memoize as notFound to avoid spamming attempts
-                            cache.set(cacheKey, notFound);
-                            resolve(notFound);
-                            return;
-                        }
-                        break;
-                    }
                     default:
                         throw new Error(`Unsupported cache type: ${type}`);
                 }
@@ -102,7 +75,7 @@ export function getCache(url, type = 'json') {
             reject(error);
         }
     });
-    
+
     cache.set(cacheKey, promise);
     return promise;
 }
@@ -118,14 +91,37 @@ export function updateCache(url, data, type = 'json') {
 }
 
 /**
- * Clears a specific URL from the cache.
+ * Clears a specific URL from the cache (all content types).
  * @param {string} url The URL to remove.
  */
 export function clearCache(url) {
     // Clear all types for this URL
     for (const key of cache.keys()) {
         if (key.endsWith(`:${url}`)) {
+            const val = cache.get(key);
             cache.delete(key);
+            if (typeof val === 'string' && val.startsWith('blob:')) {
+                try { URL.revokeObjectURL(val); } catch {}
+            }
+        }
+    }
+}
+
+/**
+ * Clears every cache entry whose URL starts with the given prefix
+ * (all content types, including entries with query strings - used to
+ * invalidate preview thumbnails after an image is replaced).
+ * @param {string} urlPrefix
+ */
+export function clearCachePrefix(urlPrefix) {
+    for (const key of cache.keys()) {
+        const url = key.slice(key.indexOf(':') + 1);
+        if (url.startsWith(urlPrefix)) {
+            const val = cache.get(key);
+            cache.delete(key);
+            if (typeof val === 'string' && val.startsWith('blob:')) {
+                try { URL.revokeObjectURL(val); } catch {}
+            }
         }
     }
 }

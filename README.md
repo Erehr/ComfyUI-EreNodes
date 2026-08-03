@@ -12,6 +12,7 @@ ComfyUI-EreNodes provides an intuitive and feature-rich solution for handling pr
 
 - [Available Nodes](#-available-nodes)
 - [Key Features](#-key-features)
+- [Compatibility](#-compatibility)
 - [Installation](#-installation)
 - [Getting Started](#-getting-started)
 - [Changelog](#-changelog)
@@ -61,6 +62,12 @@ ComfyUI-EreNodes provides an intuitive and feature-rich solution for handling pr
 - **Visual Highlighting**: Clear highlighting of filtered terms for enhanced clarity
 
 ![Image](https://github.com/user-attachments/assets/42deb9e3-73fa-4891-9ec5-cfbd497f9d9e)
+
+## 🧭 Compatibility
+
+- **ComfyUI**: registered via standard `NODE_CLASS_MAPPINGS` (works on current and older installs). Node IDs are stable — workflows remain interchangeable.
+- **Subgraphs**: supported. The prefix separator is passed as a real input instead of being read from workflow metadata.
+- **Nodes 2.0 (Vue renderer)**: supported. Tag UI is DOM widgets in both the classic LiteGraph renderer and Nodes 2.0 (same implementation). The old canvas-drawn UI was removed; it remains available in git history.
 
 ## 📦 Installation
 
@@ -127,7 +134,14 @@ EreNodes provides flexible LoRA loading options to fit different workflow prefer
 
 ## 📋 Changelog
 
-### Version 2.1 - Latest
+### Version 3.0 - Latest
+- **Nodes 2.0 ready**: tag UI rendered as DOM widgets in both classic and Vue renderers
+- **Subgraph support**: prefix separator is a real (hidden) input; property panel remains the edit surface
+- **Gallery performance**: previews are plain `<img>` elements (browser cache, lazy loading) — no manual bitmap cache needed
+- **Randomizer**: "control after generate" now triggers once per completed prompt (works correctly with queued batches)
+- **Many bug fixes**: global autocomplete attachment, overwrite-confirm dialog, settings sync, stale text on workflow load, safer file-serving routes, gallery previews for filenames with special characters, button tooltips
+
+### Version 2.1
 - **New Node: Prompt Gallery**: Powerful and intuitive grid-based gallery for browsing and selecting tags
 - **Tag Group Image on Save**: You can now set a preview image when saving a Tag Group
 - **Change Image in Quick Edit**: Added the ability to change the preview image directly from the quick edit menu

@@ -58,38 +58,16 @@ class TextAreaCaretHelper {
     }
 
     insertAtCursor(value, offset, finalOffset) {
+        // document.execCommand is deprecated; use setRangeText and dispatch an
+        // 'input' event so widget change callbacks still fire.
         if (this.el.selectionStart != null) {
             const startPos = this.el.selectionStart;
-            this.el.selectionStart = this.el.selectionStart + offset;
-            
-            let pasted = true;
-            try {
-                if (!document.execCommand("insertText", false, value)) {
-                    pasted = false;
-                }
-            } catch (e) {
-                pasted = false;
-            }
-
-            if (!pasted) {
-                this.el.setRangeText(value, this.el.selectionStart, this.el.selectionEnd, 'end');
-            }
-
+            this.el.setRangeText(value, startPos + offset, this.el.selectionEnd, 'end');
             this.el.selectionEnd = this.el.selectionStart = startPos + value.length + offset + (finalOffset ?? 0);
         } else {
-            let pasted = true;
-            try {
-                if (!document.execCommand("insertText", false, value)) {
-                    pasted = false;
-                }
-            } catch (e) {
-                pasted = false;
-            }
-
-            if (!pasted) {
-                this.el.value += value;
-            }
+            this.el.value += value;
         }
+        this.el.dispatchEvent(new Event('input', { bubbles: true }));
     }
 }
 
@@ -538,10 +516,10 @@ if (typeof app !== "undefined") {
             if (
                 (!parentContextMenu || !isSearchBoxParent) && // Allow if not in a context menu OR if in one that ISN'T the TagContextMenuInsert's
                 !e.target.classList.contains('comfy-context-menu-filter') && // Explicitly don't attach to the searchbox itself via this listener
-                (!app.globalAutocompleteInstance.textarea || app.globalAutocompleteInstance.textarea !== e.target) // Only attach if not already attached or attached to a different element
+                app.globalAutocompleteInstance.attachedElement !== e.target // Only attach if not already attached to this element
             ) {
                 // Attach with default behavior for global textareas
-                app.globalAutocompleteInstance.attach(e.target, null, new Set(), e.target, "", triggerImmediately);
+                app.globalAutocompleteInstance.attach(e.target);
             }
         }
     });

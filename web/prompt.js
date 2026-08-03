@@ -1,6 +1,7 @@
 import { app } from "../../scripts/app.js";
 import { TagContextMenuInsert, TagEditContextMenu, TagGroupContextMenu, DynamicContextMenu } from "./js/contextmenu.js";
-import { getCache, updateCache, clearCache } from "./js/cache.js";
+import { getCache, updateCache, clearCache, clearCachePrefix } from "./js/cache.js";
+import { captureUndoState } from "./js/undo.js";
 
 
 const parseTags = value => {
@@ -15,7 +16,7 @@ function parseTag(tagString) {
     let originalString = (tagString || "").trim();
     if (!originalString) return null;
 
-        const groupMatch = originalString.match(/^group:(.+)$/);
+    const groupMatch = originalString.match(/^group:(.+)$/);
     if (groupMatch) {
         return { name: groupMatch[1], type: 'group', active: true };
     }
@@ -116,12 +117,27 @@ function parseTextToTagData(text, oldTagData = []) {
 }
 
 const getTextInput = async (title, promptMessage, defaultValue = "") => {
-    const value = prompt(promptMessage, defaultValue);
-    if (value === null) return false; 
+    // Prefer the ComfyUI dialog API (window.prompt is blocked in some desktop/embedded contexts)
+    if (app.extensionManager?.dialog?.prompt) {
+        try {
+            const value = await app.extensionManager.dialog.prompt({
+                title,
+                message: promptMessage,
+                defaultValue,
+            });
+            return (value === null || value === undefined) ? false : value;
+        } catch (e) {
+            // fall through to window.prompt
+        }
+    }
+    const value = window.prompt(promptMessage, defaultValue);
+    if (value === null) return false;
     return value;
 };
 
-// Custom hijack of the context menu to allow for quick edit of tags on right click
+// Global keyboard shortcuts for tag nodes (Ctrl+V paste). The old
+// processContextMenu hijack for pill right-clicks is gone: quick edit is
+// handled by DOM contextmenu listeners on the pills (renderer.js).
 let contextMenuPatched = false;
 const ERE_TAG_NODE_TYPES = ["ErePromptCloud", "ErePromptToggle", "ErePromptMultiSelect", "ErePromptRandomizer", "ErePromptGallery"];
 
@@ -141,77 +157,29 @@ export function applyContextMenuPatch() {
             const selectedNodes = Object.values(app.canvas.selected_nodes || {});
             if (selectedNodes.length === 1) {
                 const node = selectedNodes[0];
-                if (node && ERE_TAG_NODE_TYPES.includes(node.constructor.type)) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const pasteBehaviour = app.ui.settings.getSettingValue('EreNodes.Nodes.PasteAction', 'Replace tags');
-                    if (pasteBehaviour === 'Append tags') {
-                        node.onClipboardAppend();
-                    } else {
-                        node.onClipboardReplace();
-                    }
+                if (node && ERE_TAG_NODE_TYPES.includes(node.type)) {
+                    // Deliberately no preventDefault/stopPropagation: ComfyUI's
+                    // own paste handler must still see the event so pasting a
+                    // copied node keeps working. The two handlers split by
+                    // content instead: ComfyUI acts on workflow JSON, we act on
+                    // plain tag text. JSON/empty clipboard → not ours.
+                    navigator.clipboard.readText().then(text => {
+                        const trimmed = (text || "").trim();
+                        if (!trimmed) return;
+                        try {
+                            if (typeof JSON.parse(trimmed) === "object") return; // copied node / workflow
+                        } catch {} // not JSON → tag text
+                        const pasteBehaviour = app.ui.settings.getSettingValue('EreNodes.Nodes.PasteAction', 'Replace tags');
+                        if (pasteBehaviour === 'Append tags') {
+                            node.onClipboardAppend();
+                        } else {
+                            node.onClipboardReplace();
+                        }
+                    }).catch(() => {});
                 }
             }
         }
     });
-
-    const canvasPrototype = app.canvas.constructor.prototype;
-    const orig_processContextMenu = canvasPrototype.processContextMenu;
-
-    canvasPrototype.processContextMenu = function(node, e) {
-        // Check if it's one of our target nodes
-        if (node && ERE_TAG_NODE_TYPES.includes(node.constructor.type)) {
-            const canvas_pos = this.convertEventToCanvasOffset(e);
-            const node_pos = [canvas_pos[0] - node.pos[0], canvas_pos[1] - node.pos[1]];
-
-            if (node._pillMap) {
-                for (const pill of node._pillMap) {
-                    if (node_pos[0] >= pill.x && node_pos[0] <= pill.x + pill.w &&
-                        node_pos[1] >= pill.y && node_pos[1] <= pill.y + pill.h) {
-                        
-                        const scale = app.canvas.ds.scale;
-
-                        // node_pos is the click relative to the node's top-left, in canvas units.
-                        // pill.x, pill.y, pill.h are relative to the node's top-left, in canvas units.
-
-                        // Pill's bottom-left corner, relative to the node's top-left (canvas units)
-                        const pillNodeRelativeBottomLeftX = pill.x;
-                        const pillNodeRelativeBottomLeftY = pill.y + pill.h;
-
-                        // Delta from the click point (within the node) to the pill's bottom-left (within the node), in canvas units
-                        const deltaCanvasX = pillNodeRelativeBottomLeftX - node_pos[0];
-                        const deltaCanvasY = pillNodeRelativeBottomLeftY - node_pos[1];
-
-                        // Convert this delta to screen pixels
-                        const deltaScreenX = deltaCanvasX * scale;
-                        const deltaScreenY = deltaCanvasY * scale;
-
-                        // New menu position: original click viewport coordinates + screen delta
-                        const finalClientX = e.clientX + deltaScreenX;
-                        const finalClientY = e.clientY + deltaScreenY + 5; // 5px gap
-
-                        const nodeScreenWidth = node.size[0] * scale; // Calculate node's current screen width
-
-                        const positionEvent = {
-                            ...e, // Spread original event properties
-                            clientX: finalClientX,
-                            clientY: finalClientY
-                        };
-                        
-                        // Use setTimeout to avoid menu/event conflicts
-                        setTimeout(() => {
-                            node.onTagQuickEdit(positionEvent, node, pill, nodeScreenWidth);
-                        }, 0);
-                        
-                        return; // Stop processing, preventing the original menu
-                    }
-                }
-            }
-        }
-
-        // If it wasn't our node or wasn't a pill click on our node, call the original function
-        return orig_processContextMenu.apply(this, arguments);
-    };
 }
 
 export function initializeSharedPromptFunctions(node, textWidget) {
@@ -227,14 +195,27 @@ export function initializeSharedPromptFunctions(node, textWidget) {
     if (node.properties._tagSeparator === null || node.properties._tagSeparator === undefined) {
         node.properties._tagSeparator = ", "; // Default value
     }
-    
+
+    // --- separator widget bridge ---
+    // User edits _prefixSeparator in the Properties panel (works in both
+    // renderers). Python's process() only receives widget/input values, not
+    // node.properties — so this hidden widget mirrors the property for the
+    // backend. onConfigure also repairs old workflows where positional widget
+    // values shifted when this input was first added.
+    const sepWidget = node.widgets?.find(w => w.name === "separator");
+    if (sepWidget) {
+        sepWidget.computeSize = () => [0, 0];
+        sepWidget.hidden = true;
+        sepWidget.value = node.properties._prefixSeparator ?? sepWidget.value ?? ",\\n\\n";
+    }
+
     // Capture existing onPropertyChanged to allow chaining
     const existingOnPropertyChanged = node.onPropertyChanged;
     node.onPropertyChanged = function(name, value) {
         if (existingOnPropertyChanged) {
             existingOnPropertyChanged.apply(this, arguments);
         }
-        
+
         // Handle _tagSeparator property changes
         if (name === "_tagSeparator") {
             // Trigger text widget update when tag separator changes
@@ -243,10 +224,53 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             }
         }
 
+        // Keep the hidden separator widget in sync with the property
+        if (name === "_prefixSeparator") {
+            const sep = this.widgets?.find(w => w.name === "separator");
+            if (sep) sep.value = value;
+        }
+
         if (name === "_tagImageWidth" || name === "_tagImageHeight") {
             this.setDirtyCanvas(true, true);
         }
 
+    };
+
+    // Capture existing onConfigure to allow chaining.
+    // Runs after a workflow's properties/widget values have been applied.
+    const existingOnConfigure = node.onConfigure;
+    node.onConfigure = function(info) {
+        if (existingOnConfigure) {
+            existingOnConfigure.apply(this, arguments);
+        }
+
+        const sep = this.widgets?.find(w => w.name === "separator");
+        if (sep) {
+            // Migration: workflows saved before the separator widget existed
+            // have one fewer widget value, so positional loading can shift the
+            // next widget's value (randomizer's control combo, multiline's
+            // placeholder button) into the separator slot. Detect and repair.
+            const ctrl = this.widgets?.find(w => w.name === "control after generate");
+            const controlModes = ["fixed", "increment", "decrement", "randomize"];
+            if (ctrl && (ctrl.value === undefined || ctrl.value === null) && controlModes.includes(sep.value)) {
+                ctrl.value = sep.value;
+                sep.value = null;
+            } else if (sep.value === "fake_button") {
+                sep.value = null;
+            }
+
+            // Property is the source of truth for the separator
+            if (this.properties?._prefixSeparator != null) {
+                sep.value = this.properties._prefixSeparator;
+            } else if (sep.value == null || sep.value === "") {
+                sep.value = ",\\n\\n";
+            }
+        }
+
+        // Re-derive the text widget from tag data now that properties are
+        // loaded (onNodeCreated runs before properties are applied, so the
+        // update there ran against empty data).
+        this.onUpdateTextWidget?.(this);
     };
 
     node.convertTo = function(targetNodeType) {
@@ -448,15 +472,25 @@ export function initializeSharedPromptFunctions(node, textWidget) {
                 // Check if file already exists and confirm overwrite
                 const checkResponse = await fetch(`/erenodes/get_tag_group?filename=${encodeURIComponent(fullPath)}`);
                 if (checkResponse.ok) {
-                    const confirmed = await app.ui.dialog.show({
-                        type: "confirm",
-                        title: "File Exists",
-                        message: `Tag group '${tagObject.filename}' already exists. Do you want to overwrite it?`
-                    });
+                    // app.ui.dialog.show() is not a confirm dialog (returns nothing);
+                    // use the extensionManager confirm dialog with a window.confirm fallback.
+                    let confirmed;
+                    const message = `Tag group '${tagObject.filename}' already exists. Do you want to overwrite it?`;
+                    if (app.extensionManager?.dialog?.confirm) {
+                        confirmed = await app.extensionManager.dialog.confirm({
+                            title: "File Exists",
+                            message,
+                        });
+                    } else {
+                        confirmed = window.confirm(message);
+                    }
                     if (!confirmed) return;
                 }
 
                 clearCache(`/erenodes/get_tag_group?filename=${encodeURIComponent(fullPath)}`);
+                // Also invalidate cached preview thumbnails for this group
+                // (src entries carry query strings, so prefix-match).
+                clearCachePrefix(`/erenodes/view/group/${fullPath.replace(/\.json$/i, "")}`);
 
                 const formData = new FormData();
                 formData.append('path', tagObject.path || '');
@@ -518,23 +552,12 @@ export function initializeSharedPromptFunctions(node, textWidget) {
 
         const SaveGroupMenu = new TagGroupContextMenu(e, saveTagObject, 'group', 'save'); // open in load mode
         SaveGroupMenu.show();
-
-
-        /// ** Or is this maybe alternative way to show it and set callback too I think.
-        // const SaveGroupMenu = new TagGroupContextMenu(e, async (selectedFile) => {
-        //     // Update the tag object with the new file info
-        //     this.tag.name = selectedFile.name;
-        //     this.tag.extension = selectedFile.extension;
-
-        //     if (this.onSelect) {
-        //     }
-        // }, 'group', 'save);
-        
-
     };
 
     node.onClipboardReplace = () => {
         navigator.clipboard.readText().then(async text => {
+            // Empty clipboard must not wipe the node's tags
+            if (!text || !text.trim()) return;
             if (node.type !== "ErePromptMultiline") {
                 const tagStrings = (text.replace(/\n/g, ',').split(/,(?![^()]*\))/g) || [])
                     .map(s => s.trim())
@@ -609,10 +632,12 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             }
         }
         if (textWidget && mode === 'all') {
-            textWidget.value = ""; 
+            textWidget.value = "";
         }
         node.setDirtyCanvas(true);
         app.graph.setDirtyCanvas(true);
+        // Undo step for tag removal (doesn't go through onUpdateTextWidget)
+        captureUndoState();
     };
 
     node.onExportTags = async () => {
@@ -751,7 +776,11 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         }
 
         const tagData = parseTags(node.properties._tagDataJSON || "[]");
-        const clickedTag = tagData.find(t => t.name === clickedPill.label);
+        // Prefer the pill's tag index (set by nodes with index-aware pill maps,
+        // e.g. the gallery) - name lookup collides when two tags share a name.
+        const clickedTag = (clickedPill.index != null)
+            ? tagData[clickedPill.index]
+            : tagData.find(t => t.name === clickedPill.label);
         if (!clickedTag) return;
 
         clickedTag.active = !clickedTag.active;
@@ -764,8 +793,10 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         if (!clickedPill) return;
 
         const tagData = parseTags(nodeInstance.properties._tagDataJSON || "[]");
-        let tagIndex = tagData.findIndex(t => t.name === clickedPill.label);
-        if (tagIndex === -1) return;
+        let tagIndex = (clickedPill.index != null)
+            ? clickedPill.index
+            : tagData.findIndex(t => t.name === clickedPill.label);
+        if (tagIndex < 0 || tagIndex >= tagData.length) return;
         
         let clickedTag = tagData[tagIndex];
 
@@ -1000,7 +1031,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             // or separators at the beginning/end without content.
             let currentText = parts.filter(part => part.trim() !== '' || part === tagSeparator).join('');
             // If the final result is just the separator itself (e.g. only a separator was active), make it empty.
-            if (currentText === tagSeparator && activeTags.filter(t.type !== 'group').length === 0) {
+            if (currentText === tagSeparator && activeTags.filter(t => t.type !== 'group').length === 0) {
                 currentText = '';
             }
 
@@ -1008,6 +1039,10 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             textWidget.value = currentText;
         }
         // For multiline nodes, preserve the existing text content
+
+        // Undo checkpoint — no-op when nothing actually changed (the tracker
+        // diffs serialized state), so calls during workflow load are safe.
+        captureUndoState();
     };
 
 }

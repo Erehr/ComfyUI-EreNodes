@@ -1,14 +1,17 @@
+import asyncio
 import json
 import os
 import re
 import shutil
-import server 
-import yaml
+import server
 import folder_paths
 from aiohttp import web
 from safetensors import safe_open
-from .prompt_csv import TAG_TYPES, DEFAULT_ENCODING, CSV_FILES_PATH, load_tags_from_csv
+from .prompt_csv import TAG_TYPES, DEFAULT_ENCODING, CSV_FILES_PATH, TAG_DATA_CACHE
 from .settings import get_erenodes_settings, save_erenodes_settings
+
+# Whitelisted preview image extensions (served and accepted for upload)
+IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp')
 
 
 
@@ -50,14 +53,11 @@ async def set_setting_handler(request):
     
     save_erenodes_settings(settings)
 
-    # If the active CSV is changed, we need to reload the tags
-    if key == "autocomplete.csv_file":
-        try:
-            load_tags_from_csv(value, encoding=DEFAULT_ENCODING, csv_files_path=CSV_FILES_PATH)
-        except Exception as e:
-            # It's okay if this fails (e.g., file not found during a temporary state)
-            # The setting is still saved.
-            pass
+    # If the active CSV changed, invalidate the tag cache so it lazy-reloads
+    # on the next search. (Previously this branch checked a mismatched key and
+    # called load_tags_from_csv with a wrong signature - it never ran.)
+    if key == "autocomplete.csv":
+        TAG_DATA_CACHE.pop(value, None)
 
     return web.json_response({"status": "ok"})
 
@@ -182,7 +182,9 @@ async def save_tag_group_handler(request):
                     raise ValueError("Image file has no original filename.")
 
                 _, image_extension = os.path.splitext(image_original_filename)
-                
+                if image_extension and image_extension.lower() not in IMAGE_EXTENSIONS:
+                    raise ValueError(f"Unsupported image type: {image_extension}")
+
                 # Ensure there's an extension
                 if not image_extension:
                     # Decide handling: skip, default, or error. Prompt implies using original.
@@ -208,105 +210,23 @@ async def save_tag_group_handler(request):
         return web.json_response({"message": message})
     except json.JSONDecodeError:
         return web.json_response({"message": "Invalid JSON format for tags_json."}, status=400)
-    except Exception as e:
+    except Exception:
         return web.json_response({"error": "Internal server error"}, status=500)
 
 
 # --- LORA API Endpoints --- #
 
-def get_robust_model_paths(model_type):
-    # Get model paths from multiple sources to handle different ComfyUI installations.
-    # 1. ComfyUI's folder_paths (default)
-    # 2. extra_model_paths.yaml (used by Stability Matrix and other managers)
+def get_model_paths(model_type):
+    """Model folders for a type, via ComfyUI's folder_paths.
 
-    paths = []
-    
-    # Method 1: Use ComfyUI's built-in folder_paths (works for standard installations)
+    folder_paths already merges extra_model_paths.yaml (including Stability
+    Matrix and other manager setups), so the previous manual YAML parsing was
+    redundant and has been removed.
+    """
     try:
-        default_paths = folder_paths.get_folder_paths(model_type)
-        if default_paths:
-            paths.extend(default_paths)
-    except Exception as e:
-        pass
-    
-    # Method 2: Check extra_model_paths.yaml (used by Stability Matrix)
-    try:
-        # Look for extra_model_paths.yaml in multiple possible locations
-        import os
-        # Use the directory where folder_paths module is located (ComfyUI root)
-        comfyui_root = os.path.dirname(folder_paths.__file__)
-        
-        # Single universal path that works for all installations
-        yaml_path = os.path.join(comfyui_root, 'extra_model_paths.yaml')
-
-        
-        extra_paths_file = None
-        if os.path.exists(yaml_path):
-            extra_paths_file = yaml_path
-
-        
-        if extra_paths_file:
-
-            with open(extra_paths_file, 'r', encoding='utf-8') as f:
-                config = yaml.safe_load(f)
-            
-            # Check all configurations in the YAML file
-            for config_name, config_data in config.items():
-                
-                if isinstance(config_data, dict) and model_type in config_data:
-                    base_path = config_data.get('base_path', '')
-                    model_paths = config_data[model_type]
-
-                    
-                    # Handle both string and list formats
-                    if isinstance(model_paths, str):
-                        # Check if string contains newlines (multiline format)
-                        if '\n' in model_paths:
-                            model_paths = [path.strip() for path in model_paths.strip().split('\n') if path.strip()]
-                        else:
-                            model_paths = [model_paths]
-                    elif isinstance(model_paths, list):
-                        pass  # Already a list
-                    else:
-                        # Handle YAML multiline format
-                        model_paths = str(model_paths).strip().split('\n')
-                    
-                    # Convert relative paths to absolute paths
-                    for model_path in model_paths:
-                        model_path = model_path.strip()
-                        if model_path:
-                            if os.path.isabs(model_path):
-                                full_path = model_path
-                            else:
-                                full_path = os.path.join(base_path, model_path)
-                            
-                            if os.path.exists(full_path) and full_path not in paths:
-                                paths.append(full_path)
-
-
-                                
-    except Exception as e:
-        pass
-    
-    # Remove duplicates while preserving order
-    unique_paths = []
-    for path in paths:
-        if path not in unique_paths:
-            unique_paths.append(path)
-    
-    if not unique_paths:
-        # Fallback to common default locations
-        fallback_paths = [
-            os.path.join(os.path.expanduser('~'), 'ComfyUI', 'models', model_type),
-            os.path.join('.', 'models', model_type)
-        ]
-        for fallback in fallback_paths:
-            if os.path.exists(fallback):
-                unique_paths.append(fallback)
-                break
-    
-
-    return unique_paths
+        return [p for p in folder_paths.get_folder_paths(model_type) if os.path.isdir(p)]
+    except Exception:
+        return []
 
 @server.PromptServer.instance.routes.get("/erenodes/get_lora_metadata")
 async def get_lora_metadata_handler(request):
@@ -319,37 +239,44 @@ async def get_lora_metadata_handler(request):
         if not lora_path:
             return web.json_response({"error": "Lora not found in any known folder"}, status=404)
 
-        tags = []
-
-        # From companion JSON (<file>.metadata.json) -> civitai.trainedWords
-        try:
-            md_path = os.path.splitext(lora_path)[0] + ".metadata.json"
-            if os.path.isfile(md_path):
-                with open(md_path, 'r', encoding='utf-8') as jf:
-                    data = json.loads(jf.read())
-                tags += data['civitai']['trainedWords']
-        except Exception:
-            pass
-
-        # From LoRA file metadata -> ss_tag_frequency (first 20)
-        try:
-            with safe_open(lora_path, framework="pt", device="cpu") as f:
-                meta = f.metadata() or {}
-            if 'ss_tag_frequency' in meta and isinstance(meta['ss_tag_frequency'], str):
-                try:
-                    freq = json.loads(meta['ss_tag_frequency'])
-                    tags += (
-                        [k for v in (freq.values() if isinstance(freq, dict) else []) if isinstance(v, dict) for k in v.keys()]
-                        if isinstance(freq, dict) else freq
-                    )[:20]
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
+        # File reads (especially safetensors header reads on large files) are
+        # blocking - run them in a thread so the server event loop stays free.
+        tags = await asyncio.to_thread(_read_lora_tags, lora_path)
         return web.json_response(tags)
     except Exception as e:
         return web.json_response({"error": "Failed to read LoRA metadata: " + str(e)}, status=500)
+
+
+def _read_lora_tags(lora_path):
+    tags = []
+
+    # From companion JSON (<file>.metadata.json) -> civitai.trainedWords
+    try:
+        md_path = os.path.splitext(lora_path)[0] + ".metadata.json"
+        if os.path.isfile(md_path):
+            with open(md_path, 'r', encoding='utf-8') as jf:
+                data = json.loads(jf.read())
+            tags += data['civitai']['trainedWords']
+    except Exception:
+        pass
+
+    # From LoRA file metadata -> ss_tag_frequency (first 20)
+    try:
+        with safe_open(lora_path, framework="pt", device="cpu") as f:
+            meta = f.metadata() or {}
+        if 'ss_tag_frequency' in meta and isinstance(meta['ss_tag_frequency'], str):
+            try:
+                freq = json.loads(meta['ss_tag_frequency'])
+                tags += (
+                    [k for v in (freq.values() if isinstance(freq, dict) else []) if isinstance(v, dict) for k in v.keys()]
+                    if isinstance(freq, dict) else freq
+                )[:20]
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    return tags
 
 # --- Unified File Search API Endpoint --- #
 
@@ -366,11 +293,11 @@ async def search_files_handler(request):
 
     type_configs = {
         'lora': {
-            'roots': get_robust_model_paths("loras"),
+            'roots': get_model_paths("loras"),
             'extensions': ('.safetensors', '.pt', '.ckpt', '.lora'),
         },
         'embedding': {
-            'roots': get_robust_model_paths("embeddings"),
+            'roots': get_model_paths("embeddings"),
             'extensions': ('.pt', '.bin', '.safetensors', '.embedding'),
         },
         'group': {
@@ -565,7 +492,7 @@ async def view_file_handler(request):
         base_dirs = [prompts_dir]
     else:
         # folder_paths uses plural for loras, embeddings, etc.
-        base_dirs = get_robust_model_paths(type_name + 's')
+        base_dirs = get_model_paths(type_name + 's')
 
     if not base_dirs:
         return web.Response(status=404, text=f"No folder configured for type '{type_name}'")
@@ -574,7 +501,7 @@ async def view_file_handler(request):
     # It prevents using '..' to escape the intended directories.
     path_param = path_param.replace("..", "_")
 
-    potential_extensions = ['.jpg', '.jpeg', '.png', '.webp']
+    potential_extensions = IMAGE_EXTENSIONS
 
     for root_dir in base_dirs:
         abs_root_dir = os.path.abspath(root_dir)
@@ -582,8 +509,14 @@ async def view_file_handler(request):
         # It's what we use as the base for finding a preview image.
         prospective_path_base = os.path.join(abs_root_dir, path_param)
 
-        # Security check: ensure the requested path is within the intended directory
-        if os.path.abspath(prospective_path_base).startswith(abs_root_dir):
+        # Security check: ensure the requested path is within the intended directory.
+        # commonpath (not startswith) so a sibling dir like ".../loras_x" can't
+        # pass a ".../loras" prefix check.
+        try:
+            is_inside = os.path.commonpath([abs_root_dir, os.path.abspath(prospective_path_base)]) == abs_root_dir
+        except ValueError:  # different drives on Windows
+            is_inside = False
+        if is_inside:
             # Check for both filename.extension and filename.preview.extension patterns
             for ext in potential_extensions:
                 # First try: filename.extension (original pattern)
@@ -619,11 +552,11 @@ async def save_file_image_handler(request):
         # Determine the base directory based on file type
         type_configs = {
             'lora': {
-                'roots': get_robust_model_paths("loras"),
+                'roots': get_model_paths("loras"),
                 'extensions': ('.safetensors', '.pt', '.ckpt', '.lora'),
             },
             'embedding': {
-                'roots': get_robust_model_paths("embeddings"),
+                'roots': get_model_paths("embeddings"),
                 'extensions': ('.pt', '.bin', '.safetensors', '.embedding'),
             },
             'group': {
@@ -662,6 +595,8 @@ async def save_file_image_handler(request):
         _, image_extension = os.path.splitext(image_original_filename)
         if not image_extension:
             return web.json_response({"error": "Image file has no extension"}, status=400)
+        if image_extension.lower() not in IMAGE_EXTENSIONS:
+            return web.json_response({"error": f"Unsupported image type: {image_extension}"}, status=400)
 
         # Create the image filename with the same base name as the file
         image_filename = file_basename + image_extension
@@ -676,5 +611,5 @@ async def save_file_image_handler(request):
         message = f"Image '{image_filename}' saved successfully for {file_type} '{file_name}'."
         return web.json_response({"message": message})
 
-    except Exception as e:
+    except Exception:
         return web.json_response({"error": "Internal server error"}, status=500)

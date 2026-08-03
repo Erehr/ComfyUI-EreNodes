@@ -1,4 +1,22 @@
-import os
+# Default prefix separator in *escaped* form ("\n" as two characters).
+# It is unescaped to real newlines in combine_prompt(). This matches the
+# frontend's _prefixSeparator property format.
+DEFAULT_PREFIX_SEPARATOR = ",\\n\\n"
+
+
+def combine_prompt(text, prefix="", separator=None):
+    """Join prefix and text with the (escaped) separator."""
+    if separator is None or separator == "":
+        separator = DEFAULT_PREFIX_SEPARATOR
+
+    separator = str(separator).replace("\\n", "\n")
+
+    if prefix and text:
+        return f"{prefix}{separator}{text}"
+    elif prefix:
+        return prefix
+    return text
+
 
 class ErePrompt:
     @classmethod
@@ -9,31 +27,20 @@ class ErePrompt:
             },
             "optional": {
                 "prefix": ("STRING", {"forceInput": True}),
+                # Transport only — hidden by the frontend. User edits live in
+                # the _prefixSeparator node property; JS copies that into this
+                # widget so Python can read it. (Node properties are frontend-
+                # only; execute() never receives them as kwargs.)
+                "separator": ("STRING", {"default": DEFAULT_PREFIX_SEPARATOR}),
             },
-            "hidden": {"extra_pnginfo": "EXTRA_PNGINFO", "unique_id": "UNIQUE_ID"}
         }
 
     RETURN_TYPES = ("STRING",)
     FUNCTION = "process"
     CATEGORY = "EreNodes"
 
-    def process(self, text, prefix="", extra_pnginfo="", unique_id=""):
-
-        prefix_separator = ",\n\n"
-        if extra_pnginfo and "workflow" in extra_pnginfo and "nodes" in extra_pnginfo["workflow"]:
-            for node in extra_pnginfo["workflow"]["nodes"]:
-                if str(node.get("id")) == str(unique_id):
-                    prefix_separator = node["properties"].get("_prefixSeparator", ",\n\n")
-                    break
-        
-        separator = str(prefix_separator).replace("\\n", "\n")
-        
-        if prefix and text:
-            return (f"{prefix}{separator}{text}",)
-        elif prefix:
-            return (prefix,)
-        else:
-            return (text,)
+    def process(self, text, prefix="", separator=None):
+        return (combine_prompt(text, prefix, separator),)
 
 
 class ErePromptMultiSelect(ErePrompt): pass
@@ -42,6 +49,7 @@ class ErePromptCloud(ErePrompt): pass
 class ErePromptMultiline(ErePrompt): pass
 class ErePromptRandomizer(ErePrompt): pass
 class ErePromptGallery(ErePrompt): pass
+
 
 NODE_CLASS_MAPPINGS = {
     "ErePromptMultiSelect": ErePromptMultiSelect,
@@ -60,16 +68,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ErePromptRandomizer": "Prompt Randomizer",
     "ErePromptGallery": "Prompt Gallery",
 }
-
-def scripts():
-    return {
-        "ErePromptMultiSelect": "prompt_multiselect.js",
-        "ErePromptToggle": "prompt_toggle.js",
-        "ErePromptCloud": "prompt_cloud.js",
-        "ErePromptMultiline": "prompt_multiline.js",
-        "ErePromptRandomizer": "prompt_randomizer.js",
-        "ErePromptLoader": "prompt_loader.js",
-    }
 
 __all__ = [
     "NODE_CLASS_MAPPINGS",
