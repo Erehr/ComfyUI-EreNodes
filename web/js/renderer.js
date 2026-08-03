@@ -106,17 +106,21 @@ function strengthText(tag) {
     return "";
 }
 
-let styleInjected = false;
 function injectStyles() {
-    if (styleInjected) return;
-    styleInjected = true;
-    const style = document.createElement("style");
-    style.id = "erenodes-dom-style";
-    // Buttons/panels use --component-node-* when the frontend defines them
-    // (theme / Nodes 2.0 chrome); hardcoded + LiteGraph-ish values are fallbacks.
-    // Pill / toggle / gallery type fills stay on our custom palette.
-    style.textContent = `
-.erenodes-dom { font: 12px monospace; box-sizing: border-box; width: 100%; padding: 2px 0; color: var(--component-node-foreground, #ddd); }
+    const css = `
+.erenodes-dom {
+    font: 12px monospace; box-sizing: border-box; width: 100%;
+    min-height: 0; overflow: hidden; padding: 2px 0;
+    display: flex; flex-direction: column; gap: 5px;
+    color: var(--component-node-foreground, #ddd);
+}
+.erenodes-dom .ere-toolbar { flex: 0 0 auto; }
+.erenodes-dom .ere-scroll {
+    flex: 1 1 auto; min-height: 0;
+    overflow-x: hidden; overflow-y: hidden;
+    scrollbar-width: thin;
+}
+.erenodes-dom-content { box-sizing: border-box; width: 100%; }
 .erenodes-dom * { box-sizing: border-box; }
 .erenodes-dom .ere-flow { display: flex; flex-wrap: wrap; gap: 5px; align-items: flex-start; }
 .erenodes-dom .ere-btn {
@@ -186,7 +190,13 @@ function injectStyles() {
 }
 .erenodes-dom .ere-tile.inactive .ere-info { opacity: .5; }
 `;
-    document.head.appendChild(style);
+    let style = document.getElementById("erenodes-dom-style");
+    if (!style) {
+        style = document.createElement("style");
+        style.id = "erenodes-dom-style";
+        document.head.appendChild(style);
+    }
+    style.textContent = css;
 }
 
 // Root-element listeners are node-agnostic, so an element adopted from a
@@ -212,11 +222,19 @@ function bindRootListeners(el) {
             e.stopPropagation();
         });
     }
-    // Legacy renderer: the DomWidgets overlay swallows wheel events, so zooming
-    // stops working while the cursor is over the tag area. The area never
-    // scrolls itself (the node auto-fits its content), so hand the wheel back
-    // to the canvas. Vue nodes handle zoom themselves — leave them alone.
+    // Legacy renderer: DomWidgets overlay swallows wheel events. When the pill
+    // area is scrollable, keep the wheel entirely (including at scroll edges) so
+    // it never leaks into canvas zoom. Otherwise hand it to the canvas.
+    // Vue nodes handle zoom themselves — only stopPropagation while scrolling.
     el.addEventListener("wheel", (e) => {
+        const scrolls = app.ui?.settings?.getSettingValue?.("EreNodes.Nodes.TagAreaScroll", false) ?? false;
+        if (scrolls) {
+            const scroller = el.querySelector(".ere-scroll") || el;
+            if (scroller.scrollHeight > scroller.clientHeight + 1) {
+                e.stopPropagation();
+                return;
+            }
+        }
         if (window.LiteGraph?.vueNodesMode) return;
         e.preventDefault();
         e.stopPropagation();
@@ -409,59 +427,54 @@ export function attachTagDomWidget(node, mode) {
 
     for (const w of nativeWidgetsToHide(node, mode)) hideNativeWidget(w);
 
-    // `let`: the render target can be swapped for a previously mounted element
-    // after undo/redo (see the onAdded adoption below).
+    // `let`: hosts can be swapped for a previously mounted element after undo/redo.
+    // toolbar = sticky buttons; scroll/content = pills (only this scrolls).
     let el = document.createElement("div");
     el.className = "erenodes-dom";
+    let toolbar = document.createElement("div");
+    toolbar.className = "ere-toolbar ere-flow";
+    let scroll = document.createElement("div");
+    scroll.className = "ere-scroll";
+    let content = document.createElement("div");
+    content.className = "erenodes-dom-content";
+    scroll.appendChild(content);
+    el.appendChild(toolbar);
+    el.appendChild(scroll);
     bindRootListeners(el);
 
     let lastRenderedState = null;
     const render = () => {
         lastRenderedState = node.properties?._tagDataJSON || "[]";
-        el.textContent = "";
+        toolbar.textContent = "";
+        content.textContent = "";
+        renderButtons(node, toolbar, mode);
         const tagData = parseTags(node.properties?._tagDataJSON || "[]");
 
         if (mode === "multiline") {
-            const row = document.createElement("div");
-            row.className = "ere-flow";
-            renderButtons(node, row, mode);
-            el.appendChild(row);
             return;
         }
 
         if (mode === "toggle") {
-            const buttons = document.createElement("div");
-            buttons.className = "ere-flow";
-            renderButtons(node, buttons, mode);
-            el.appendChild(buttons);
-
             const list = document.createElement("div");
             list.style.display = "flex";
             list.style.flexDirection = "column";
             list.style.gap = "5px";
-            list.style.marginTop = "5px";
             for (let i = 0; i < tagData.length; i++) {
                 list.appendChild(renderToggleRow(node, tagData[i], i, colors));
             }
-            el.appendChild(list);
+            content.appendChild(list);
             return;
         }
 
         if (mode === "gallery") {
-            const buttons = document.createElement("div");
-            buttons.className = "ere-flow";
-            renderButtons(node, buttons, mode);
-            el.appendChild(buttons);
-
             const pillW = node.properties?._tagImageWidth ?? 100;
             const pillH = node.properties?._tagImageHeight ?? 100;
             const grid = document.createElement("div");
             grid.className = "ere-flow";
-            grid.style.marginTop = "5px";
             for (let i = 0; i < tagData.length; i++) {
                 grid.appendChild(renderGalleryTile(node, tagData[i], i, colors, pillW, pillH));
             }
-            el.appendChild(grid);
+            content.appendChild(grid);
             return;
         }
 
@@ -471,23 +484,21 @@ export function attachTagDomWidget(node, mode) {
             panel.addEventListener("click", (e) => {
                 if (e.target === panel) openInactiveDropdown(node, e);
             });
-            renderButtons(node, panel, mode);
             for (let i = 0; i < tagData.length; i++) {
                 if (!tagData[i].active) continue;
                 panel.appendChild(renderCloudPill(node, tagData[i], i, colors));
             }
-            el.appendChild(panel);
+            content.appendChild(panel);
             return;
         }
 
         // Default: cloud — all pills, inactive dimmed
         const flow = document.createElement("div");
         flow.className = "ere-flow";
-        renderButtons(node, flow, mode);
         for (let i = 0; i < tagData.length; i++) {
             flow.appendChild(renderCloudPill(node, tagData[i], i, colors));
         }
-        el.appendChild(flow);
+        content.appendChild(flow);
     };
 
     if (typeof node.addDOMWidget !== "function") {
@@ -504,24 +515,199 @@ export function attachTagDomWidget(node, mode) {
     }
     if (widget.options) widget.options.serialize = false;
 
-    let measuredH = 40;
-    widget.computeSize = (width) => [width ?? node.size[0], measuredH + 8];
+    // Height policy (mirrors the old canvas onDrawForeground + onResize clamp):
+    // - Fit (default): height locked to content; only width is free.
+    // - Scroll: user may shrink/grow; pills scroll under a sticky toolbar.
+    // Measure toolbar+content (not the stretched host) so setSize doesn't feed
+    // back into the measurement. Remeasure only when content height actually
+    // changes (real pill reflow) — width-only noise kept the old fitHeight.
+    const PILL_ROW_H = 20;
+    const scrollEnabled = () =>
+        app.ui?.settings?.getSettingValue?.("EreNodes.Nodes.TagAreaScroll", false) ?? false;
+
+    // One visible row of tags/thumbs — scroll mode must not shrink below this.
+    const oneRowHeight = () => {
+        if (mode === "multiline") return 0;
+        if (mode === "gallery") return node.properties?._tagImageHeight ?? 100;
+        return PILL_ROW_H;
+    };
+
+    const scrollMinHeight = () => {
+        const margin = widget.margin ?? 10;
+        const toolH = toolbar.offsetHeight || PILL_ROW_H;
+        const rowH = oneRowHeight();
+        // Floor is toolbar + one row only. Including the flex gap (and host
+        // padding) left enough room for the next row to peek at the bottom.
+        return toolH + rowH + margin * 2;
+    };
+
+    const naturalHeight = () => {
+        const margin = widget.margin ?? 10;
+        const toolH = toolbar.offsetHeight || 0;
+        const bodyH = content.offsetHeight || 0;
+        // Match the 5px flex gap between toolbar and scroll body when both exist,
+        // plus the host's padding: 2px 0 (without it fit mode clips the last row).
+        const gap = toolH && bodyH ? 5 : 0;
+        const pad = 4;
+        return Math.max(toolH + bodyH + gap + pad, 20) + margin * 2;
+    };
+
+    const heightBelow = () => {
+        const widgets = node.widgets ?? [];
+        const index = widgets.indexOf(widget);
+        if (index === -1) return 0;
+        let total = 0;
+        for (const w of widgets.slice(index + 1)) {
+            if (w.hidden || w._ereHidden) continue;
+            total += w.computedHeight ?? ((window.LiteGraph?.NODE_WIDGET_HEIGHT ?? 20) + 4);
+        }
+        return total;
+    };
+
+    const availableHeight = () => {
+        const margin = widget.margin ?? 10;
+        return node.size[1] - (widget.y ?? 30) - heightBelow() - margin * 2 - 4;
+    };
+
+    let fitHeight = 0;
+    let lastContentH = 0;
+    let applyingAutoHeight = false;
+    let fitUntil = 0;
+
+    const remeasureFitHeight = () => {
+        if (!toolbar.offsetHeight && !content.offsetHeight) return fitHeight;
+        fitHeight = Math.round((widget.y ?? 30) + naturalHeight() + heightBelow() + 4);
+        lastContentH = content.offsetHeight;
+        return fitHeight;
+    };
+
+    if (widget.options) {
+        widget.options.getMinHeight = () => {
+            if (scrollEnabled()) return scrollMinHeight();
+            // Stable floor from last measure so layout doesn't thrash mid-resize.
+            if (fitHeight > 0) {
+                return Math.max(scrollMinHeight(), fitHeight - (widget.y ?? 30) - heightBelow() - 4);
+            }
+            return naturalHeight();
+        };
+        widget.options.getMaxHeight = () => {
+            if (scrollEnabled()) return undefined;
+            if (fitHeight > 0) {
+                return Math.max(scrollMinHeight(), fitHeight - (widget.y ?? 30) - heightBelow() - 4);
+            }
+            return naturalHeight();
+        };
+    }
+    widget.computeSize = undefined;
+
+    const setScrollOverflow = (value) => {
+        if (scroll.style.overflowY !== value) scroll.style.overflowY = value;
+    };
+
+    const clampToFitHeight = () => {
+        if (!(fitHeight > 0) || Math.abs(node.size[1] - fitHeight) <= 0.5) return;
+        applyingAutoHeight = true;
+        try {
+            node.setSize([node.size[0], fitHeight]);
+        } finally {
+            applyingAutoHeight = false;
+        }
+    };
+
+    const applyHeightPolicy = () => {
+        if (!el.isConnected || !node.graph) return;
+        if (node.flags?.collapsed) return;
+        if (!toolbar.offsetHeight && !content.offsetHeight) return;
+
+        const scrolls = scrollEnabled();
+        setScrollOverflow(scrolls ? "auto" : "hidden");
+
+        // Nodes 2.0: don't fight Vue's ResizeObserver with setSize — cap the
+        // scroll body with max-height so the toolbar stays visible.
+        if (window.LiteGraph?.vueNodesMode) {
+            const available = availableHeight();
+            const toolH = toolbar.offsetHeight || 0;
+            const bodyH = content.offsetHeight || 0;
+            const bodyNatural = toolH + bodyH + (toolH && bodyH ? 5 : 0);
+            const fitting = performance.now() < fitUntil;
+            const minScroll = oneRowHeight() || PILL_ROW_H;
+            const scrollBudget = Math.max(minScroll, available - toolH - (toolH && bodyH ? 5 : 0));
+            const shrunk = scrolls && !fitting && available > scrollMinHeight() && available < bodyNatural - 2;
+            const maxH = shrunk ? `${Math.round(scrollBudget)}px` : "";
+            if (scroll.style.maxHeight !== maxH) scroll.style.maxHeight = maxH;
+            node._tagAreaCapped = shrunk;
+            return;
+        }
+
+        if (scroll.style.maxHeight) scroll.style.maxHeight = "";
+        node._tagAreaCapped = scrolls && !!node.properties?._tagAreaManualHeight;
+
+        if (scrolls && node.properties?._tagAreaManualHeight) return;
+
+        remeasureFitHeight();
+        if (!(fitHeight > 0) || Math.abs(node.size[1] - fitHeight) <= 1) return;
+
+        applyingAutoHeight = true;
+        try {
+            node.setSize([node.size[0], fitHeight]);
+        } finally {
+            applyingAutoHeight = false;
+        }
+        node.graph?.setDirtyCanvas(true, true);
+    };
+
     let syncScheduled = false;
     const syncSize = () => {
         if (syncScheduled) return;
         syncScheduled = true;
         requestAnimationFrame(() => {
             syncScheduled = false;
-            const h = el.scrollHeight;
-            if (h && Math.abs(h - measuredH) > 1) {
-                measuredH = h;
-                node.setSize([node.size[0], node.computeSize()[1]]);
-                node.graph?.setDirtyCanvas(true, true);
-            }
+            applyHeightPolicy();
         });
     };
-    const observer = new ResizeObserver(syncSize);
-    observer.observe(el);
+
+    node.onTagAreaPolicyChanged = () => {
+        if (node.properties && !scrollEnabled()) delete node.properties._tagAreaManualHeight;
+        applyHeightPolicy();
+    };
+
+    node.onFitTagArea = () => {
+        if (node.properties) delete node.properties._tagAreaManualHeight;
+        fitUntil = performance.now() + 300;
+        scroll.style.maxHeight = "";
+        node._tagAreaCapped = false;
+        applyHeightPolicy();
+    };
+
+    // Fit mode: lock height immediately on every resize (old canvas onResize).
+    // Scroll mode: first user drag takes ownership of height.
+    const origResize = node.onResize;
+    node.onResize = function (...args) {
+        const draggedByUser = app.canvas?.resizing_node === node;
+        if (!scrollEnabled() && !applyingAutoHeight && !window.LiteGraph?.vueNodesMode) {
+            clampToFitHeight();
+        } else if (draggedByUser && !applyingAutoHeight && scrollEnabled() && !window.LiteGraph?.vueNodesMode) {
+            node.properties = node.properties || {};
+            node.properties._tagAreaManualHeight = true;
+        }
+        if (window.LiteGraph?.vueNodesMode && !applyingAutoHeight) {
+            applyHeightPolicy();
+        }
+        return origResize?.apply(this, args);
+    };
+
+    // Remeasure only when pill content height actually changes (row reflow).
+    // Width-only ResizeObserver noise must not rewrite fitHeight — that was the flicker.
+    const observer = new ResizeObserver(() => {
+        const h = content.offsetHeight;
+        if (!scrollEnabled() && Math.abs(h - lastContentH) < 2) {
+            clampToFitHeight();
+            return;
+        }
+        syncSize();
+    });
+    observer.observe(content);
+    observer.observe(toolbar);
 
     const origUpdate = node.onUpdateTextWidget;
     node.onUpdateTextWidget = async function (...args) {
@@ -562,12 +748,21 @@ export function attachTagDomWidget(node, mode) {
                 .find(cand => cand !== el && cand.isConnected);
             if (mounted) {
                 el = mounted;
-                if (node._ereDom) node._ereDom.el = el;
+                toolbar = el.querySelector(".ere-toolbar") || toolbar;
+                scroll = el.querySelector(".ere-scroll") || scroll;
+                content = el.querySelector(".erenodes-dom-content") || content;
+                if (node._ereDom) {
+                    node._ereDom.el = el;
+                    node._ereDom.toolbar = toolbar;
+                    node._ereDom.scroll = scroll;
+                    node._ereDom.content = content;
+                }
                 // Keep the widget pointing at the live element in case Vue
                 // (re)mounts it later — same element either way.
                 widget.element = el;
                 observer.disconnect();
-                observer.observe(el);
+                observer.observe(content);
+                observer.observe(toolbar);
                 render();
                 syncSize();
             }
@@ -591,7 +786,7 @@ export function attachTagDomWidget(node, mode) {
     };
 
     hookGraphChanged();
-    node._ereDom = { widget, el, render, renderIfChanged };
+    node._ereDom = { widget, el, toolbar, scroll, content, render, renderIfChanged };
     render();
     syncSize();
     return widget;

@@ -181,6 +181,7 @@ Special thanks to the amazing open-source community:
 - **[ComfyUI-PromptPalette](https://github.com/kambara/ComfyUI-PromptPalette)** - Initial inspiration and foundational code
 - **[ComfyUI-EZ-AF-Nodes](https://github.com/ez-af/ComfyUI-EZ-AF-Nodes)** - Prompt Gallery node inspiration
 - **[DraconicDragon](https://github.com/DraconicDragon)** - Comprehensive tag lists and data
+- **[ToxesFoxes](https://github.com/ToxesFoxes)** - Scrollable tag area implementation
 
 ---
 

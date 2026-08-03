@@ -51,5 +51,16 @@ app.registerExtension({
             defaultValue: "Replace tags",
             options: ["Replace tags", "Append tags"].map(v => ({ text: v, value: v })),
         },
+        {
+            id: "EreNodes.Nodes.TagAreaScroll",
+            name: "Scrollable Tag Area",
+            tooltip: "When on, resizing a node smaller than its tags scrolls them. When off (default), the node always grows/shrinks to fit the tags — only width is free.",
+            type: "boolean",
+            defaultValue: false,
+            onChange: () => {
+                for (const node of app.graph?._nodes ?? []) node.onTagAreaPolicyChanged?.();
+                app.graph?.setDirtyCanvas?.(true, true);
+            },
+        },
     ],
 });
