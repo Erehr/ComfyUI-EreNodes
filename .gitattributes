@@ -1,0 +1,4 @@
+# Store all text files with LF line endings in the repo.
+# Working-tree files may be CRLF on Windows; git normalizes on commit,
+# which keeps EOL-only changes out of diffs and blame.
+* text=auto

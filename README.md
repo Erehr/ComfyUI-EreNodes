@@ -12,6 +12,7 @@ ComfyUI-EreNodes provides an intuitive and feature-rich solution for handling pr
 
 - [Available Nodes](#-available-nodes)
 - [Key Features](#-key-features)
+- [Compatibility](#-compatibility)
 - [Installation](#-installation)
 - [Getting Started](#-getting-started)
 - [Changelog](#-changelog)
@@ -30,6 +31,7 @@ ComfyUI-EreNodes provides an intuitive and feature-rich solution for handling pr
 | **Prompt Randomizer** | Randomize your prompt tags | Manual randomization button, Control after generate |
 | **Prompt Multiline** | Enhanced text input with EreNodes features | Full autocomplete, tag management |
 | **Prompt Filter** | CSV-based prompt validation | Tag filtering, validation |
+| **Prompt to Lora Stack** | Extracts and converts loras from prompt into  lora_stack
 
 ## ✨ Key Features
 
@@ -60,6 +62,12 @@ ComfyUI-EreNodes provides an intuitive and feature-rich solution for handling pr
 - **Visual Highlighting**: Clear highlighting of filtered terms for enhanced clarity
 
 ![Image](https://github.com/user-attachments/assets/42deb9e3-73fa-4891-9ec5-cfbd497f9d9e)
+
+## 🧭 Compatibility
+
+- **ComfyUI**: registered via standard `NODE_CLASS_MAPPINGS` (works on current and older installs). Node IDs are stable — workflows remain interchangeable.
+- **Subgraphs**: supported. The prefix separator is passed as a real input instead of being read from workflow metadata.
+- **Nodes 2.0 (Vue renderer)**: supported. Tag UI is DOM widgets in both the classic LiteGraph renderer and Nodes 2.0 (same implementation). The old canvas-drawn UI was removed; it remains available in git history.
 
 ## 📦 Installation
 
@@ -102,12 +110,18 @@ git clone https://github.com/erehr/ComfyUI-EreNodes.git
 - Enjoy intelligent tag completion with aliases
 
 **Managing Tag Groups:**
-- Right-click any tag in EreNodes → "Save as Tag Group"
-- Access saved groups through the Menu or + button
+- Click on any tag nodes ≡ menu button to "Save as Tag Group". Select (or create) folder, type filename and select optional image. 
+- Access saved groups through the ≡ 'Load Tag Group' (loading content of tag group) or + button 'Add tag' (loading tag group as single combined pill)
 - Import/export tag groups for sharing with the community
 
-**Lora Loading:**
-- For loading Lora directly from prompt node like [Lora Tag Loader](https://github.com/badjeff/comfyui_lora_tag_loader/) is required
+**LoRA Loading:**
+
+EreNodes provides flexible LoRA loading options to fit different workflow preferences:
+
+| Method | Description | Compatible Nodes | Use Case |
+|--------|-------------|------------------|----------|
+| **LoRA Stack** | Use "Prompt to LoRA Stack" node to extract `<lora:name:strength>` tags and connect to stack-compatible nodes | • [Efficiency Nodes](https://github.com/jags111/efficiency-nodes-comfyui)<br>• [ComfyRoll Custom Nodes](https://github.com/Suzie1/ComfyUI_Comfyroll_CustomNodes)<br>• [LoRA Manager](https://github.com/willmiao/ComfyUI-Lora-Manager) | Best for mixing multiple sources of LoRAs |
+| **Direct Loading** | Use nodes that load LoRAs directly from prompt text in place of standard LoRA loaders. | • [LoRA Tag Loader](https://github.com/badjeff/comfyui_lora_tag_loader)<br>• [Impact Wildcard Encode](https://github.com/ltdrdata/ComfyUI-Impact-Pack)<br>• [PCLazyLoRALoader](https://github.com/asagi4/comfyui-prompt-control) | Best for simple workflows or when using wildcards |
 
 ### 💡 Pro Tips
 
@@ -120,7 +134,14 @@ git clone https://github.com/erehr/ComfyUI-EreNodes.git
 
 ## 📋 Changelog
 
-### Version 2.1 - Latest
+### Version 3.0 - Latest
+- **Nodes 2.0 ready**: tag UI rendered as DOM widgets in both classic and Vue renderers
+- **Subgraph support**: prefix separator is a real (hidden) input; property panel remains the edit surface
+- **Gallery performance**: previews are plain `<img>` elements (browser cache, lazy loading) — no manual bitmap cache needed
+- **Randomizer**: "control after generate" now triggers once per completed prompt (works correctly with queued batches)
+- **Many bug fixes**: global autocomplete attachment, overwrite-confirm dialog, settings sync, stale text on workflow load, safer file-serving routes, gallery previews for filenames with special characters, button tooltips
+
+### Version 2.1
 - **New Node: Prompt Gallery**: Powerful and intuitive grid-based gallery for browsing and selecting tags
 - **Tag Group Image on Save**: You can now set a preview image when saving a Tag Group
 - **Change Image in Quick Edit**: Added the ability to change the preview image directly from the quick edit menu

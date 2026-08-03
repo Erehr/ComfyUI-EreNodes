@@ -1,5 +1,5 @@
 const cache = new Map();
-const notFound = Symbol('notFound'); // Sentinel value for 404s
+const notFound = Symbol('notFound'); // Sentinel for missing/absent content (404/204)
 
 /**
  * Fetches and caches content. Returns cached data directly if available, or a Promise if fetching.
@@ -10,54 +10,52 @@ const notFound = Symbol('notFound'); // Sentinel value for 404s
 export function getCache(url, type = 'json') {
     const cacheKey = `${type}:${url}`;
     const cached = cache.get(cacheKey);
-    
+
     // If already cached and resolved, return the data directly
     if (cached && !(cached instanceof Promise) && cached !== notFound) {
         return cached;
     }
-    
+
     // If marked as not found, return the notFound symbol
     if (cached === notFound) {
         return notFound;
     }
-    
+
     // If currently loading, return the existing promise
     if (cached instanceof Promise) {
         return cached;
     }
-    
+
     // Not cached yet, create and cache the promise
     const promise = new Promise(async (resolve, reject) => {
         try {
             const response = await fetch(url);
+            if (response.status === 204) {
+                // Treat 204 No Content the same as missing content
+                cache.set(cacheKey, notFound);
+                resolve(notFound);
+                return;
+            }
             if (response.ok) {
                 let data;
                 switch (type) {
-                    case 'json':
-                        data = await response.json();
+                    case 'json': {
+                        // Guard against empty body for safety
+                        const text = await response.text();
+                        data = text ? JSON.parse(text) : null;
                         break;
-                    case 'src':
+                    }
+                    case 'src': {
                         const blobSrc = await response.blob();
+                        // Empty blob -> treat as no content
+                        if (!blobSrc || blobSrc.size === 0) {
+                            cache.set(cacheKey, notFound);
+                            resolve(notFound);
+                            return;
+                        }
                         data = URL.createObjectURL(blobSrc);
                         break;
-                    case 'bitmap':
-                        // Check if we already have a blob from 'src' cache
-                        const srcCacheKey = `src:${url}`;
-                        const srcCached = cache.get(`src:${url}`);
-                        
-                        let blob;
-                        if (srcCached && !(srcCached instanceof Promise) && srcCached !== notFound) {
-                            // Reuse existing blob from src cache
-                            const blobUrl = srcCached;
-                            const blobResponse = await fetch(blobUrl);
-                            blob = await blobResponse.blob();
-                        } else {
-                            // Fetch new blob
-                            blob = await response.blob();
-                        }
-                        
-                        data = await createImageBitmap(blob);
-                        break;
+                    }
                     default:
                         throw new Error(`Unsupported cache type: ${type}`);
                 }
@@ -65,17 +63,19 @@ export function getCache(url, type = 'json') {
                 resolve(data);
             } else if (response.status === 404) {
                 cache.set(cacheKey, notFound);
-                reject(new Error('Content not found'));
+                // Resolve to sentinel instead of rejecting to avoid console spam loops
+                resolve(notFound);
             } else {
+                // For other errors, do not cache the failure; surface the error once
                 cache.delete(cacheKey);
-                reject(new Error(`Failed to fetch content: ${response.statusText}`));
+                reject(new Error(`Failed to fetch content: ${response.status} ${response.statusText}`));
             }
         } catch (error) {
             cache.delete(cacheKey);
             reject(error);
         }
     });
-    
+
     cache.set(cacheKey, promise);
     return promise;
 }
@@ -91,14 +91,37 @@ export function updateCache(url, data, type = 'json') {
 }
 
 /**
- * Clears a specific URL from the cache.
+ * Clears a specific URL from the cache (all content types).
  * @param {string} url The URL to remove.
  */
 export function clearCache(url) {
     // Clear all types for this URL
     for (const key of cache.keys()) {
         if (key.endsWith(`:${url}`)) {
+            const val = cache.get(key);
             cache.delete(key);
+            if (typeof val === 'string' && val.startsWith('blob:')) {
+                try { URL.revokeObjectURL(val); } catch {}
+            }
+        }
+    }
+}
+
+/**
+ * Clears every cache entry whose URL starts with the given prefix
+ * (all content types, including entries with query strings - used to
+ * invalidate preview thumbnails after an image is replaced).
+ * @param {string} urlPrefix
+ */
+export function clearCachePrefix(urlPrefix) {
+    for (const key of cache.keys()) {
+        const url = key.slice(key.indexOf(':') + 1);
+        if (url.startsWith(urlPrefix)) {
+            const val = cache.get(key);
+            cache.delete(key);
+            if (typeof val === 'string' && val.startsWith('blob:')) {
+                try { URL.revokeObjectURL(val); } catch {}
+            }
         }
     }
 }

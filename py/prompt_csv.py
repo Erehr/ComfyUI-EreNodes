@@ -1,6 +1,5 @@
 import os
 import csv
-import re
 import server
 from aiohttp import web
 
@@ -18,6 +17,56 @@ TAG_TYPES = {
 }
 
 TAG_DATA_CACHE = {}
+
+# (csv_file -> (mtime, (tag_set, alias_map))) used by the Prompt Filter node
+FILTER_MAP_CACHE = {}
+
+
+def get_filter_maps(csv_file):
+    """Return (tag_set, alias_map) for a CSV file, cached by mtime.
+
+    Previously the filter node re-read and re-parsed the whole CSV on every
+    execution; this caches the derived maps and invalidates when the file
+    changes on disk.
+    """
+    if not csv_file:
+        return None
+    csv_path = os.path.join(CSV_FILES_PATH, csv_file)
+    if not os.path.isfile(csv_path):
+        return None
+    try:
+        mtime = os.path.getmtime(csv_path)
+    except OSError:
+        return None
+
+    cached = FILTER_MAP_CACHE.get(csv_file)
+    if cached and cached[0] == mtime:
+        return cached[1]
+
+    tag_set = set()
+    alias_map = {}
+    try:
+        with open(csv_path, newline='', encoding=DEFAULT_ENCODING) as csvfile:
+            reader = csv.reader(csvfile)
+            next(reader, None)  # Skip header
+            for row in reader:
+                if len(row) < 4:
+                    continue
+                tag = row[0].strip().lower().replace('_', ' ')
+                if not tag:
+                    continue
+                tag_set.add(tag)
+                if row[3]:
+                    for alias in row[3].split(','):
+                        alias = alias.strip().lower().replace('_', ' ')
+                        if alias:
+                            alias_map[alias] = tag
+    except Exception:
+        return None
+
+    result = (tag_set, alias_map)
+    FILTER_MAP_CACHE[csv_file] = (mtime, result)
+    return result
 
 def load_tags_from_csv(csv_path):
     tags = []
@@ -43,9 +92,9 @@ def load_tags_from_csv(csv_path):
                         })
                     except (ValueError, IndexError):
                         continue
-        except Exception as e:
+        except Exception:
             pass
-    
+
     return tags
 
 def get_tag_data():
@@ -69,7 +118,10 @@ def get_tag_data():
 @server.PromptServer.instance.routes.get("/erenodes/search_tags")
 async def search_tags(request):
     query = request.query.get("query", "").lower().strip().replace('_', ' ')
-    limit = int(request.query.get("limit", 10))
+    try:
+        limit = max(1, min(int(request.query.get("limit", 10)), 100))
+    except (TypeError, ValueError):
+        limit = 10
 
     if not query or len(query) < 1:
         return web.json_response([])

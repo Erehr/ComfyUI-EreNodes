@@ -43,3 +43,4 @@ __autocomplete__/booru_complete.csv
 py/settings.json
 .cursor/rules/guidelines.mdc
 documentation.txt
+REFACTOR_PLAN.md

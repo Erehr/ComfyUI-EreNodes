@@ -1,14 +1,20 @@
 [project]
 name = "comfyui-erenodes"
-description = "A collection of prompt managent nodes with advanced tag parsing. Prompt tag cloud, mutiselect, toggle list, randomizer, filter, autocompete."
-version = "2.1.2"
-license = { file = "LICENSE.txt" }
-dependencies  = []
+description = "A collection of prompt management nodes with advanced tag parsing. Prompt tag cloud, multiselect, toggle list, randomizer, filter, autocomplete."
+version = "3.0.0"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+# safetensors ships with ComfyUI; declared for standalone tooling
+dependencies = ["safetensors"]
+classifiers = [
+    "Operating System :: OS Independent",
+]
 
 [project.urls]
 Repository = "https://github.com/Erehr/ComfyUI-EreNodes"
+"Bug Tracker" = "https://github.com/Erehr/ComfyUI-EreNodes/issues"
 
 [tool.comfy]
 PublisherId = "erehr"
-DisplayName = "ComfyUI-EreNodes" 
+DisplayName = "ComfyUI-EreNodes"
 Icon = ""

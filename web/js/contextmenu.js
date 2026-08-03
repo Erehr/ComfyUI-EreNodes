@@ -1,5 +1,6 @@
 import { app } from "../../../../scripts/app.js";
 import { getCache, clearCache } from "./cache.js";
+import { beginUndoTransaction, endUndoTransaction } from "./undo.js";
 
 // Base class for dynamic context menus
 export class DynamicContextMenu { // Added export
@@ -13,9 +14,10 @@ export class DynamicContextMenu { // Added export
         this.abortController = null;
     }
 
-    onItemSelected(option, event = null) {
+    onItemSelected(option, event = null, index = -1) {
         if (option && !option.disabled && option.callback) {
-            option.callback(event);
+            // Pass the index to the callback
+            option.callback(event, index);
         }
     }
 
@@ -63,7 +65,7 @@ export class DynamicContextMenu { // Added export
                 break;
             case "Enter":
                 if (this.highlighted !== -1) {
-                    this.onItemSelected(this.options[this.highlighted], e);
+                    this.onItemSelected(this.options[this.highlighted], e, this.highlighted);
                 }
                 handled = true;
                 break;
@@ -89,16 +91,26 @@ export class DynamicContextMenu { // Added export
         return handled;
     }
 
+    escapeHtml(text) {
+        return String(text)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
+    }
+
     highlight(text, query) {
-        if (!query || !text) return text;
+        // Escape first: names/aliases come from user CSVs and filenames, and the
+        // result is inserted via innerHTML.
+        if (!query || !text) return this.escapeHtml(text);
         const index = text.toLowerCase().indexOf(query.toLowerCase());
         if (index !== -1) {
-            const pre = text.substring(0, index);
-            const match = text.substring(index, index + query.length);
-            const post = text.substring(index + query.length);
+            const pre = this.escapeHtml(text.substring(0, index));
+            const match = this.escapeHtml(text.substring(index, index + query.length));
+            const post = this.escapeHtml(text.substring(index + query.length));
             return `${pre}<mark style="background-color: #414650; color: white;">${match}</mark>${post}`;
         }
-        return text;
+        return this.escapeHtml(text);
     }
 
     renderItems() {
@@ -159,7 +171,7 @@ export class DynamicContextMenu { // Added export
                 item.addEventListener("click", (e) => {
                     e.stopPropagation();
                     e.preventDefault();
-                    this.onItemSelected(option, e);
+                    this.onItemSelected(option, e, index);
                 });
 
                 item.addEventListener("mouseenter", () => {
@@ -179,11 +191,13 @@ export class DynamicContextMenu { // Added export
 
         const keyboardHandler = (e) => {
             if (this.filterBox && e.target === this.filterBox) {
-                if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown' && e.key !== 'Enter' && e.key !== 'Escape' && e.key !== 'Tab') {
+                const isNavKey = ['ArrowUp', 'ArrowDown', 'Enter', 'Escape', 'Tab'].includes(e.key);
+                const isOverridden = this.filterBoxOverrides && this.filterBoxOverrides.includes(e.key);
+
+                if (!isNavKey && !isOverridden) {
                     return;
                 }
             }
-            
             const handledByMenu = this.handleKeyboard(e);
             if (handledByMenu) {
                 e.preventDefault();
@@ -253,12 +267,12 @@ export class DynamicContextMenu { // Added export
     }
 
     setInitialHighlight() {
-        // First, try to find a "real" suggestion that isn't an "add" action.
-        let firstHighlight = this.options.findIndex(o => !o.disabled && o.type !== 'filter' && o.type !== 'separator' && o.type !== 'title' && o.type !== 'folder_up' && o.name && !o.name.startsWith('➕'));
-        
-        // If no "real" suggestion is found, fall back to highlighting the first available option (which could be "➕ Add tag...").
+        // First, try to find a "real" suggestion that isn't an action.
+        let firstHighlight = this.options.findIndex(o => !o.disabled && o.type !== 'filter' && o.type !== 'separator' && o.type !== 'title' && o.type !== 'action');
+
+        // If no "real" suggestion is found, check for an actionable item (like "Add tag: ...")
         if (firstHighlight === -1) {
-            firstHighlight = this.options.findIndex(o => !o.disabled && o.type !== 'filter' && o.type !== 'separator' && o.type !== 'title');
+            firstHighlight = this.options.findIndex(o => !o.disabled && o.type === 'action');
         }
 
         // Set the highlight. If nothing is found, this will correctly be -1.
@@ -419,7 +433,7 @@ export class DynamicContextMenu { // Added export
                             });
                         }
                     } catch (error) {
-                        console.error('Error saving image:', error);
+                        console.error('[EreNodes] Error saving image:', error);
                         app.extensionManager.toast.add({
                             severity: 'error',
                             summary: 'Save Operation Error',
@@ -465,7 +479,7 @@ export class FileContextMenu extends DynamicContextMenu {
             const data = await response.json();
             return data;
         } catch (error) {
-            console.error(`Error searching ${this.type} files:`, error);
+            console.error(`[EreNodes] Error searching ${this.type} files:`, error);
             // On error, don't try to calculate a parent. Let the UI handle it gracefully.
             return { items: [], currentPath: path, parentPath: undefined };
         }
@@ -516,12 +530,36 @@ export class FileContextMenu extends DynamicContextMenu {
         if (this.currentPath) {
             this.options.push({
                 name: "⬆️ Up",
-                type: 'folder_up',
+                type: 'action',
                 callback: () => {
                     this.updateOptions(parentPath !== undefined ? parentPath : "", "");
                 }
             });
             this.options.push({ type: 'separator' });
+        }
+        
+        // Add "Load all from folder" option if applicable
+        const addableFiles = files.filter(f => !this.existingTags.some(tag => tag.name === f.path && tag.type === this.type));
+        if (addableFiles.length > 0) {
+            this.options.push({
+                name: "➕ Load all from folder",
+                type: 'action',
+                callback: () => {
+                    if (this.onSelect) {
+                        const filesToLoad = addableFiles.map(file => ({
+                            name: file.path,
+                            type: this.type,
+                            extension: file.extension
+                        }));
+                        this.onSelect(filesToLoad); // Pass array of addable files
+                        this.close();
+                    }
+                }
+            });
+            this.options.push({ type: 'separator' });
+        }
+
+        if (this.currentPath) {
         }
         
         folders.forEach(folder => {
@@ -542,11 +580,23 @@ export class FileContextMenu extends DynamicContextMenu {
                     type: this.type,
                     path: file.path,
                     extension: file.extension,
-                    callback: (e) => {
+                    callback: (e, index) => {
                         if (this.onSelect) {
                             this.onSelect({ name: file.path, type: this.type, extension: file.extension });
                         }
-                        if (!e || !e.shiftKey) {
+                        if (e?.shiftKey) {
+                            this.existingTags.push({ name: file.path, type: this.type });
+                            // After updating the options, we want to control the highlight
+                            this.updateOptions(this.currentPath, this.currentWord).then(() => {
+                                let newHighlight = index;
+                                // If the removed item was the last one, the index will be out of bounds.
+                                // In that case, we want to highlight the new last item.
+                                if (newHighlight >= this.options.length) {
+                                    newHighlight = this.options.length - 1;
+                                }
+                                this.setHighlight(newHighlight);
+                            });
+                        } else {
                             this.close();
                         }
                     }
@@ -582,10 +632,9 @@ export class TagContextMenu extends DynamicContextMenu {
             const response = await fetch(`/erenodes/search_tags?query=${encodeURIComponent(query)}&limit=20`);
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
             const tags = await response.json();
-            
             suggestions = tags.filter(tag => !this.existingTags.some(existingTag => existingTag.name === tag.name && existingTag.type === 'tag'));
         } catch (error) {
-            console.error("Error searching tags:", error);
+            console.error("[EreNodes] Error searching tags:", error);
         }
         this.updateOptions(suggestions);
     }
@@ -614,13 +663,23 @@ export class TagContextMenu extends DynamicContextMenu {
 
             const displayHTML = this.highlight(option.name, query);
             let countHTML = option.count ? `<div style="font-size: 0.8em; opacity: 0.7; margin-left: 10px;">(${option.count.toLocaleString()})</div>` : '';
-            let aliasesHTML = (option.aliases && option.aliases.length) ? `<div style="font-size: 0.8em; opacity: 0.7;">${option.aliases.map(a => this.highlight(a, query)).join(', ')}</div>` : '';
+            
+            // Limit and prioritize aliases based on relevance to search term
+            let aliasesHTML = '';
+            if (option.aliases && option.aliases.length) {
+                const limitedAliases = this.getLimitedRelevantAliases(option.aliases, query, 10);
+                const totalAliases = option.aliases.length;
+                const aliasesText = limitedAliases.map(a => this.highlight(a, query)).join(', ');
+                const moreText = totalAliases > limitedAliases.length ? ` (+${totalAliases - limitedAliases.length})` : '';
+                aliasesHTML = `<div style="font-size: 0.8em; opacity: 0.7;">${aliasesText}${moreText}</div>`;
+            }
+            
             item.innerHTML = `<div style="display: flex; justify-content: space-between; align-items: center;"><div>${displayHTML}</div>${countHTML}</div>${aliasesHTML}`;
 
             item.addEventListener("click", (e) => {
                 e.stopPropagation();
                 e.preventDefault();
-                this.onItemSelected(option);
+                this.onItemSelected(option, e, index);
             });
 
             item.addEventListener("mouseenter", () => {
@@ -630,6 +689,22 @@ export class TagContextMenu extends DynamicContextMenu {
             // This handles "simple" tags (like add actions) and any other default cases
             super.renderSingleItem(item, option, index);
         }
+    }
+
+    getLimitedRelevantAliases(aliases, query, limit = 10) {
+        if (!aliases || aliases.length <= limit) return aliases;
+        
+        const queryLower = query.toLowerCase();
+        return aliases
+            .map(alias => {
+                const aliasLower = alias.toLowerCase();
+                let score = aliasLower === queryLower ? 1000 : aliasLower.startsWith(queryLower) ? 500 : aliasLower.includes(queryLower) ? 100 : 1;
+                score += Math.max(0, 50 - alias.length);
+                return { alias, score };
+            })
+            .sort((a, b) => b.score - a.score)
+            .slice(0, limit)
+            .map(item => item.alias);
     }
 
     show() {
@@ -679,8 +754,24 @@ export class TagContextMenuInsert extends TagContextMenu {
         if (query && (!exactMatch || tagSuggestions.length > 1)) {
             tagOptions.push({
                 name: `➕ Add tag: "${query}"`,
-                type: 'tag',
-                callback: () => { this.onSelect({ name: query, type: 'tag' }); this.searchTags(""); }
+                type: 'action',
+                callback: (e, index) => {
+                    const newTag = { name: query, type: 'tag' };
+                    this.onSelect(newTag);
+                    this.existingTags.push(newTag);
+
+                    if (e?.shiftKey) {
+                        this.searchTags(this.currentWord).then(() => {
+                            let newHighlight = index;
+                            if (newHighlight >= this.options.length) {
+                                newHighlight = this.options.length - 1;
+                            }
+                            this.setHighlight(newHighlight);
+                        });
+                    } else {
+                        this.searchTags("");
+                    }
+                }
             });
         }
         
@@ -688,7 +779,23 @@ export class TagContextMenuInsert extends TagContextMenu {
         tagSuggestions.forEach(s => tagOptions.push({
             ...s,
             type: 'tag',
-            callback: () => { this.onSelect({ name: s.name, type: 'tag' }); this.searchTags(""); }
+            callback: (e, index) => {
+                const newTag = { name: s.name, type: 'tag' };
+                this.onSelect(newTag);
+                this.existingTags.push(newTag);
+
+                if (e?.shiftKey) {
+                    this.searchTags(this.currentWord).then(() => {
+                        let newHighlight = index;
+                        if (newHighlight >= this.options.length) {
+                            newHighlight = this.options.length - 1;
+                        }
+                        this.setHighlight(newHighlight);
+                    });
+                } else {
+                    this.searchTags("");
+                }
+            }
         }));
         
         // Create our special options that appear at the top of this specific menu
@@ -714,10 +821,17 @@ export class TagContextMenuInsert extends TagContextMenu {
 
     switchToFileMenu(type) {
         this.close();
-        const fileMenu = new FileContextMenu(this.positioning.event, (selectedFileObject) => {
-            // selectedFileObject is already the correct {name, type} object passed from FileContextMenu
-            this.onSelect(selectedFileObject);
-            this.close(); // Close the parent TagContextMenuInsert as well
+        const fileMenu = new FileContextMenu(this.positioning.event, (selected) => {
+            // The callback can now receive a single object or an array of objects
+            const itemsToAdd = Array.isArray(selected) ? selected : [selected];
+            itemsToAdd.forEach(item => {
+                // Ensure we don't add duplicates if the user re-opens the menu
+                const alreadyExists = this.existingTags.some(tag => tag.name === item.name && tag.type === item.type);
+                if (!alreadyExists) {
+                    this.onSelect(item);
+                }
+            });
+            this.close(); // Close the parent TagContextMenuInsert
         }, type, this.existingTags);
         fileMenu.show();
     }
@@ -725,17 +839,19 @@ export class TagContextMenuInsert extends TagContextMenu {
 
 // For tag quick edit
 export class TagEditContextMenu extends DynamicContextMenu {
-    constructor(event, tagObject, saveCallback, deleteCallback, moveCallback, imageCallback, tagIndex = null, nodeScreenWidth = null, existingTags = []) { // Added nodeScreenWidth and existingTags
+    constructor(event, tagObject, saveCallback, deleteCallback, moveCallback, imageCallback, unpackCallback, tagIndex = null, nodeScreenWidth = null, existingTags = []) { // Added nodeScreenWidth and existingTags
         super(event, saveCallback); // The primary callback on save.
         this.tag = JSON.parse(JSON.stringify(tagObject)); // Deep copy to edit safely
         this.nodeScreenWidth = nodeScreenWidth; // Store node screen width
         this.deleteCallback = deleteCallback;
         this.moveCallback = moveCallback;
         this.imageCallback = imageCallback;
+        this.unpackCallback = unpackCallback;
         this.tagIndex = tagIndex; // Track by index instead of name
         this.existingTags = existingTags; // Store existing tags for file filtering
         this.isSpecialType = ['lora', 'embedding', 'group'].includes(this.tag.type);
         this.previewImage = null;
+        this.filterBoxOverrides = ['ArrowLeft', 'ArrowRight'];
 
         // Ensure defaults
         if (this.tag.strength === undefined) this.tag.strength = 1.0;
@@ -748,7 +864,8 @@ export class TagEditContextMenu extends DynamicContextMenu {
         this.options = [];
 
         // Add dynamic title based on tag type
-        this.options.push({ name: 'Edit ' + this.tag.type, type: 'title' });
+        const title = this.tag.type === 'group' ? 'Preview ' + this.tag.type : 'Edit ' + this.tag.type;
+        this.options.push({ name: title, type: 'title' });
 
         // 1. Name Control (conditional)
         if (this.isSpecialType) {
@@ -762,7 +879,7 @@ export class TagEditContextMenu extends DynamicContextMenu {
 
         // 2. Strength Control (not for groups)
         if (this.tag.type !== 'group') {
-             this.options.push({ type: 'strength_control' });
+             this.options.push({ name: 'strength', type: 'strength_control' });
         }
         
         // 3. Info Panel (for lora triggers, group contents)
@@ -782,6 +899,17 @@ export class TagEditContextMenu extends DynamicContextMenu {
                 callback: () => this.setPreview()
             });
         }
+        
+        if (this.tag.type === 'group') {
+            this.options.push({
+                name: "📦 Unpack",
+                callback: () => {
+                    if (this.unpackCallback) this.unpackCallback();
+                    this.close();
+                }
+            });
+        }
+
         // 5. Action Buttons
         const createCallback = (cb) => () => { cb(); this.close(); };
         this.options.push(
@@ -835,6 +963,7 @@ export class TagEditContextMenu extends DynamicContextMenu {
                 element = document.createElement("textarea");
                 element.className = "comfy-context-menu-filter";
                 element.value = this.tag.name;
+                element.style.background = "#222";
                 element.style.minWidth = "100%";
                 element.style.margin = "0";
                 element.style.width = "fit-content";
@@ -847,6 +976,10 @@ export class TagEditContextMenu extends DynamicContextMenu {
                     if (element.value.trim()) {
                         this.onSelect(this.updateTag());
                     }
+                });
+
+                element.addEventListener("click", () => {
+                    this.setHighlight(-1);
                 });
                 
                 this.filterBox = element;
@@ -898,24 +1031,38 @@ export class TagEditContextMenu extends DynamicContextMenu {
                 const incBtn = createButton("▶", (e) => { this.tag.strength = parseFloat((this.tag.strength + (e.shiftKey ? 0.1 : 0.05)).toFixed(2)); updateDisplay(); });
                 item.append(decBtn, textSpan, incBtn);
 
-                // Add drag functionality
+                item.addEventListener("mouseenter", () => {
+                    if (!option.disabled) this.setHighlight(index);
+                });
+
+                // Add drag functionality. The whole drag is one undo
+                // transaction — without it every 5px tick lands in undo
+                // history as its own step.
                 item.addEventListener('mousedown', (e) => {
                     if (e.button !== 0 || e.target.nodeName === "BUTTON") return;
                     e.preventDefault(); e.stopPropagation();
                     let startX = e.clientX, startValue = this.tag.strength;
+                    beginUndoTransaction();
                     const onMouseMove = (moveEvent) => {
                         this.tag.strength = parseFloat((startValue + Math.round((moveEvent.clientX - startX) / 5) * 0.05).toFixed(2));
                         updateDisplay();
                     };
-                    const onMouseUp = () => window.removeEventListener('mousemove', onMouseMove, true);
+                    const onMouseUp = () => {
+                        window.removeEventListener('mousemove', onMouseMove, true);
+                        endUndoTransaction();
+                    };
                     window.addEventListener('mousemove', onMouseMove, true);
-                    window.addEventListener('mouseup', onMouseUp, true);
+                    window.addEventListener('mouseup', onMouseUp, { capture: true, once: true });
                 });
                 break;
             
             case 'info_panel':
                 item.className = "litemenu-entry submenu disabled";
-                item.style.cssText = "max-width: 256px; display: flex; flex-wrap: wrap; gap: 2.5px; opacity: 1";
+                item.style.cssText = "max-width: 256px; display: flex; flex-wrap: wrap; gap: 2.5px; opacity: 1;";
+                // Apply half opacity only for non-interactive group previews
+                if (this.tag.type === 'group') {
+                    item.style.opacity = "0.6";
+                }
                 if (Array.isArray(option.content)) {
                     option.content.forEach(pill => item.appendChild(pill));
                 }
@@ -1006,9 +1153,9 @@ export class TagEditContextMenu extends DynamicContextMenu {
             let url;
             if (this.tag.type === 'lora') {
                 url = `/erenodes/get_lora_metadata?filename=${encodeURIComponent(this.tag.name + this.tag.extension)}`;
-                const metadata = getCache(url, 'json');
-                const resolvedMetadata = metadata instanceof Promise ? await metadata : metadata;
-                return this.processLoraMetadata(resolvedMetadata);
+                const tagsJson = getCache(url, 'json');
+                const resolvedTags = tagsJson instanceof Promise ? await tagsJson : tagsJson;
+                return this.processLoraMetadata(resolvedTags);
             } else if (this.tag.type === 'group') {
                 url = `/erenodes/get_tag_group?filename=${encodeURIComponent(this.tag.name + this.tag.extension)}`;
                 const groupTags = getCache(url, 'json');
@@ -1021,17 +1168,11 @@ export class TagEditContextMenu extends DynamicContextMenu {
         return null;
     }
 
-    processLoraMetadata(metadata) {
+    processLoraMetadata(tags) {
         const pills = [];
-        let freq_tags = metadata.ss_tag_frequency;
-        if (freq_tags && typeof freq_tags === 'string') {
-            try { freq_tags = JSON.parse(freq_tags); } catch(e) { freq_tags = null; }
-        }
-        if (freq_tags) {
-            let allTags = {};
-            for (const dir in freq_tags) for (const tag in freq_tags[dir]) allTags[tag] = (allTags[tag] || 0) + freq_tags[dir][tag];
-            const sortedTags = Object.entries(allTags).sort(([,a],[,b]) => b-a).slice(0, 20);
-            if (sortedTags.length > 0) sortedTags.forEach(([tag]) => pills.push(this.createPill(tag, true)));
+        if (Array.isArray(tags)) {
+            [...new Set(tags.map(t => String(t).trim()).filter(Boolean))]
+                .forEach(tag => pills.push(this.createPill(tag, true)));
         }
         return pills;
     }
@@ -1039,8 +1180,12 @@ export class TagEditContextMenu extends DynamicContextMenu {
     processGroupTags(groupTags) {
         const pills = [];
         if (groupTags && Array.isArray(groupTags) && groupTags.length > 0) {
-            const activeTags = groupTags.filter(t => t.active && t.name);
-            if (activeTags.length > 0) activeTags.forEach(tag => pills.push(this.createPill(tag, false)));
+            // Show all tags, not just active ones
+            groupTags.forEach(tag => {
+                if (tag.name) { // Ensure tag has a name
+                    pills.push(this.createPill(tag, false));
+                }
+            });
         }
         return pills;
     }
@@ -1072,11 +1217,18 @@ export class TagEditContextMenu extends DynamicContextMenu {
         } else {
             const tag = tagOrTrigger;
             displayName = tag.name;
-            pillFill = "#414650"; 
+            
+            if (tag.active === false) {
+                pillFill = "#262626";
+                pillEl.style.boxShadow = "0px 0px 0px 1px #444 inset";
+            } else {
+                pillFill = "#414650"; 
+                if (tag.type === 'lora') pillFill = "#415041"; // Dark green-ish
+                else if (tag.type === 'embedding') pillFill = "#504149"; // Dark purple-ish
+                else if (tag.type === 'group') pillFill = "#504c41"; // Dark orange-ish
+            }
+
             pillEl.style.cursor = "default";
-            if (tag.type === 'lora') pillFill = "#415041"; // Dark green-ish
-            else if (tag.type === 'embedding') pillFill = "#504149"; // Dark purple-ish
-            else if (tag.type === 'group') pillFill = "#504c41"; // Dark orange-ish
             if (tag.strength && tag.strength !== 1.0) displayName += `:${parseFloat(tag.strength).toFixed(2)}`;
         }
         pillEl.style.background = pillFill;
@@ -1110,10 +1262,6 @@ export class TagEditContextMenu extends DynamicContextMenu {
         }
         return tagCopy;
     }
-
-
-
-
 
 }
 
@@ -1289,7 +1437,7 @@ export class TagGroupContextMenu extends FileContextMenu {
                 this.updateOptions(this.currentPath, "");
             } else {
                 const error = await response.json();
-                console.error("Error creating folder:", error.error);
+                console.error("[EreNodes] Error creating folder:", error.error);
                 app.extensionManager.toast.add({
                     severity: "error",
                     summary: "Folder Creation Error",
@@ -1298,7 +1446,7 @@ export class TagGroupContextMenu extends FileContextMenu {
                 });
             }
         } catch (error) {
-            console.error("Error creating folder:", error);
+            console.error("[EreNodes] Error creating folder:", error);
             app.extensionManager.toast.add({
                 severity: "error",
                 summary: "Folder Creation Error",
