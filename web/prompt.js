@@ -158,24 +158,32 @@ export function applyContextMenuPatch() {
             if (selectedNodes.length === 1) {
                 const node = selectedNodes[0];
                 if (node && ERE_TAG_NODE_TYPES.includes(node.type)) {
-                    // Deliberately no preventDefault/stopPropagation: ComfyUI's
-                    // own paste handler must still see the event so pasting a
-                    // copied node keeps working. The two handlers split by
-                    // content instead: ComfyUI acts on workflow JSON, we act on
-                    // plain tag text. JSON/empty clipboard → not ours.
+                    // Block ComfyUI's paste handler NOW: it pastes its internal
+                    // node clipboard regardless of what the system clipboard
+                    // holds, so letting it run alongside us duplicated the last
+                    // copied node on every tag paste. We then decide by system
+                    // clipboard content: tag text → paste tags; JSON or empty
+                    // (a copied node / nothing) → hand the paste back to
+                    // ComfyUI manually.
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const comfyPaste = () => app.canvas?.pasteFromClipboard?.();
                     navigator.clipboard.readText().then(text => {
                         const trimmed = (text || "").trim();
-                        if (!trimmed) return;
-                        try {
-                            if (typeof JSON.parse(trimmed) === "object") return; // copied node / workflow
-                        } catch {} // not JSON → tag text
+                        let isTagText = !!trimmed;
+                        if (isTagText) {
+                            try {
+                                if (typeof JSON.parse(trimmed) === "object") isTagText = false; // copied node / workflow
+                            } catch {} // not JSON → tag text
+                        }
+                        if (!isTagText) return comfyPaste();
                         const pasteBehaviour = app.ui.settings.getSettingValue('EreNodes.Nodes.PasteAction', 'Replace tags');
                         if (pasteBehaviour === 'Append tags') {
                             node.onClipboardAppend();
                         } else {
                             node.onClipboardReplace();
                         }
-                    }).catch(() => {});
+                    }).catch(() => comfyPaste());
                 }
             }
         }
@@ -347,7 +355,11 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         let options = [
             { content: "Replace Tags from Clipboard", callback: () => node.onClipboardReplace?.() },
             { content: "Add Tags from Clipboard", callback: () => node.onClipboardAppend?.() },
-            null, 
+            null,
+            // Only while the tag area is capped / manually sized in scroll mode
+            ...(node._tagAreaCapped
+                ? [{ content: "Fit Height to Tags", callback: () => node.onFitTagArea?.() }]
+                : []),
             { content: "Toggle All Tags", callback: () => node.onToggleTags?.() },
             { content: "Remove All Tags", callback: () => node.onRemoveTags?.() },
             { content: "Remove Inactive Tags", callback: () => node.onRemoveTags?.('inactive') },
