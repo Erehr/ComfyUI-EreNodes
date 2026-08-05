@@ -380,9 +380,11 @@ export class DynamicContextMenu { // Added export
                         formData.append('name', this.tag.name);
                         formData.append('image_file', file, file.name);
                     } else {
-                         // For TagGroupContextMenu - store the image for later use and show preview
-                         this.previewImage = file;
-                         
+                         // For TagGroupContextMenu - store the image for later use and show preview.
+                         // NOTE: must not use this.previewImage here, showPreview() reassigns that
+                         // to the <img> element and would clobber the File.
+                         this.saveImageFile = file;
+
                          // Create a data URL to show the preview immediately
                          const reader = new FileReader();
                          reader.onload = (e) => {
@@ -1272,6 +1274,7 @@ export class TagGroupContextMenu extends FileContextMenu {
         this.mode = mode;
         this.saveMode = "browse"; // "browse" or "options"
         this.saveFileName = "";
+        this.saveImageFile = null; // File chosen via "Set Image" (kept separate from previewImage)
     }
 
     async updateOptions(path, query = "") {
@@ -1348,24 +1351,26 @@ export class TagGroupContextMenu extends FileContextMenu {
                 { type: 'separator' }
             ];
             
-            // Override file callbacks to show confirmation dialog
+            // Override file callbacks so clicking an existing file saves over it.
+            // File entries are created by FileContextMenu with type === this.type ('group'),
+            // not 'file'. The overwrite confirmation itself is handled by the save callback,
+            // which re-checks existence, so we don't prompt twice here.
             this.options = this.options.map(option => {
-                if (option.type === 'file') {
+                if (option.type === this.type) {
                     return {
                         ...option,
                         callback: async () => {
-                            const confirmed = await app.extensionManager.dialog.confirm({
-                                title: "Overwrite File",
-                                message: `Do you want to overwrite '${option.name.replace('📄 ', '')}'?`,
-                                type: "overwrite"
-                            });
-                            if (!confirmed) return;
-                            
                             if (this.onSelect) {
+                                // option.path is the path relative to the prompts root, without
+                                // extension (and may use OS separators). Filtered results can live
+                                // in subfolders, so derive the directory from it rather than
+                                // relying on this.currentPath.
+                                const rel = (option.path || '').replace(/\\/g, '/');
+                                const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '';
                                 this.onSelect({
-                                    filename: option.name.replace('📄 ', ''),
-                                    path: this.currentPath,
-                                    extension: option.extension,
+                                    filename: option.name + (option.extension || '.json'),
+                                    path: dir,
+                                    extension: option.extension || '.json',
                                     shouldReplace: false,
                                     imageFile: null
                                 });
@@ -1414,7 +1419,7 @@ export class TagGroupContextMenu extends FileContextMenu {
                 path: this.currentPath,
                 extension: '.json',
                 shouldReplace: shouldReplace,
-                imageFile: this.previewImage
+                imageFile: this.saveImageFile
             });
         }
         this.close();
