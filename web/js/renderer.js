@@ -9,6 +9,16 @@
 
 import { app } from "../../../scripts/app.js";
 import { api } from "../../../scripts/api.js";
+import {
+    attachPillDrag,
+    markDropZone,
+    injectDragStyles,
+    installDragGlobals,
+    pruneSelection,
+    handlePillSelectClick,
+    handlePillContextMenu,
+    consumeDragClick,
+} from "./dragdrop.js";
 
 // Re-render tag UIs after undo/redo. The change tracker restores graph state
 // and fires "graphChanged"; in the Vue renderer existing nodes keep their DOM
@@ -200,6 +210,8 @@ function injectStyles() {
         document.head.appendChild(style);
     }
     style.textContent = css;
+    // Appended after this sheet so drag/selection rules win ties.
+    injectDragStyles();
 }
 
 // Root-element listeners are node-agnostic, so an element adopted from a
@@ -258,9 +270,19 @@ function makeButton(node, label, display, title) {
     return btn;
 }
 
-function attachPillEvents(node, el, tag, index) {
+function attachPillEvents(node, el, tag, index, mode) {
+    // Drag & drop / multi-selection. Registers the pointerdown that may turn
+    // into a drag, tags the element with its data index and restores the
+    // selection outline after a re-render.
+    attachPillDrag(node, el, index, mode);
+
     el.addEventListener("click", (e) => {
         e.stopPropagation();
+        // A click that closes a drag must not toggle the tag.
+        if (consumeDragClick()) return;
+        // Ctrl/Shift click manage the selection instead of toggling; a plain
+        // click on a selected pill toggles the whole selection.
+        if (handlePillSelectClick(node, index, e)) return;
         node.onTagPillClick?.(e, [0, 0], { label: tag.name, index });
     });
     el.addEventListener("contextmenu", (e) => {
@@ -272,6 +294,8 @@ function attachPillEvents(node, el, tag, index) {
         // old canvas patch did) instead of the raw cursor position.
         const rect = el.getBoundingClientRect();
         const positionEvent = { clientX: rect.left, clientY: rect.bottom + 5 };
+        // A multi-selection gets bulk actions instead of single-tag editing.
+        if (handlePillContextMenu(node, index, e, positionEvent)) return;
         node.onTagQuickEdit?.(positionEvent, node, { label: tag.name, index }, width);
     });
 }
@@ -303,7 +327,7 @@ function renderButtons(node, container, mode) {
     }
 }
 
-function renderCloudPill(node, tag, index, colors) {
+function renderCloudPill(node, tag, index, colors, mode) {
     const pill = document.createElement("div");
     pill.className = "ere-pill" + (tag.active ? "" : " inactive");
     const fill = TYPE_FILL[tag.type] || DEFAULT_FILL;
@@ -325,7 +349,7 @@ function renderCloudPill(node, tag, index, colors) {
         span.textContent = st;
         pill.appendChild(span);
     }
-    attachPillEvents(node, pill, tag, index);
+    attachPillEvents(node, pill, tag, index, mode);
     return pill;
 }
 
@@ -362,7 +386,7 @@ function renderToggleRow(node, tag, index, colors) {
     }
     row.appendChild(label);
 
-    attachPillEvents(node, row, tag, index);
+    attachPillEvents(node, row, tag, index, "toggle");
     return row;
 }
 
@@ -412,7 +436,7 @@ function renderGalleryTile(node, tag, index, colors, pillW, pillH) {
         tile.appendChild(info);
     }
 
-    attachPillEvents(node, tile, tag, index);
+    attachPillEvents(node, tile, tag, index, "gallery");
     return tile;
 }
 
@@ -444,6 +468,10 @@ export function attachTagDomWidget(node, mode) {
     el.appendChild(toolbar);
     el.appendChild(scroll);
     bindRootListeners(el);
+    // Cross-node drops resolve the node from the element under the pointer.
+    el._ereNode = node;
+    el._ereMode = mode;
+    installDragGlobals();
 
     let lastRenderedState = null;
     const render = () => {
@@ -452,6 +480,8 @@ export function attachTagDomWidget(node, mode) {
         content.textContent = "";
         renderButtons(node, toolbar, mode);
         const tagData = parseTags(node.properties?._tagDataJSON || "[]");
+        // Selection is index-based; forget entries whose tag moved or vanished.
+        pruneSelection(node, tagData);
 
         if (mode === "multiline") {
             return;
@@ -462,6 +492,7 @@ export function attachTagDomWidget(node, mode) {
             list.style.display = "flex";
             list.style.flexDirection = "column";
             list.style.gap = "5px";
+            markDropZone(list, "column");
             for (let i = 0; i < tagData.length; i++) {
                 list.appendChild(renderToggleRow(node, tagData[i], i, colors));
             }
@@ -474,6 +505,7 @@ export function attachTagDomWidget(node, mode) {
             const pillH = node.properties?._tagImageHeight ?? 100;
             const grid = document.createElement("div");
             grid.className = "ere-flow";
+            markDropZone(grid, "flow");
             for (let i = 0; i < tagData.length; i++) {
                 grid.appendChild(renderGalleryTile(node, tagData[i], i, colors, pillW, pillH));
             }
@@ -485,11 +517,15 @@ export function attachTagDomWidget(node, mode) {
             const panel = document.createElement("div");
             panel.className = "ere-panel ere-flow";
             panel.addEventListener("click", (e) => {
+                // Not after a ctrl-drag selection, and not on a ctrl+click
+                // (that one belongs to the pill selection logic).
+                if (e.ctrlKey || e.metaKey || consumeDragClick()) return;
                 if (e.target === panel) openInactiveDropdown(node, e);
             });
+            markDropZone(panel, "flow");
             for (let i = 0; i < tagData.length; i++) {
                 if (!tagData[i].active) continue;
-                panel.appendChild(renderCloudPill(node, tagData[i], i, colors));
+                panel.appendChild(renderCloudPill(node, tagData[i], i, colors, mode));
             }
             content.appendChild(panel);
             return;
@@ -498,8 +534,9 @@ export function attachTagDomWidget(node, mode) {
         // Default: cloud — all pills, inactive dimmed
         const flow = document.createElement("div");
         flow.className = "ere-flow";
+        markDropZone(flow, "flow");
         for (let i = 0; i < tagData.length; i++) {
-            flow.appendChild(renderCloudPill(node, tagData[i], i, colors));
+            flow.appendChild(renderCloudPill(node, tagData[i], i, colors, "cloud"));
         }
         content.appendChild(flow);
     };
@@ -796,6 +833,8 @@ export function attachTagDomWidget(node, mode) {
                 .find(cand => cand !== el && cand.isConnected);
             if (mounted) {
                 el = mounted;
+                el._ereNode = node;
+                el._ereMode = mode;
                 toolbar = el.querySelector(".ere-toolbar") || toolbar;
                 scroll = el.querySelector(".ere-scroll") || scroll;
                 content = el.querySelector(".erenodes-dom-content") || content;

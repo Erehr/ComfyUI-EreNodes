@@ -453,12 +453,21 @@ export function initializeSharedPromptFunctions(node, textWidget) {
 
     };
 
-    node.onSaveTagGroup = (e) => {
+    /**
+     * @param {*} e             positioning event for the menu
+     * @param {?{tags: Array, indices: number[]}} subset
+     *        When given (pill multi-selection), only those tags are saved and
+     *        "save and convert" replaces just them — the rest of the node is
+     *        left alone.
+     */
+    node.onSaveTagGroup = (e, subset = null) => {
 
         const saveTagObject = async (tagObject) => {
             try {
                 let tagDataToSave;
-                if (node.properties._tagDataJSON !== undefined) {
+                if (subset) {
+                    tagDataToSave = subset.tags.map(t => ({ ...t }));
+                } else if (node.properties._tagDataJSON !== undefined) {
                     tagDataToSave = parseTags(node.properties._tagDataJSON || "[]");
                 } else {
                     const textWidget = node.widgets.find(w => w.name === "text");
@@ -539,10 +548,22 @@ export function initializeSharedPromptFunctions(node, textWidget) {
 
                     // Replace saved tags with new group tag if requested
                     if (tagObject.shouldReplace) {
-                        const remainingTags = originalTagData.filter(tag => tag.type === 'group');
                         const groupName = tagObject.path ? `${tagObject.path}/${tagObject.filename.replace('.json', '')}` : tagObject.filename.replace('.json', '');
                         const newGroupTag = { name: groupName, type: 'group', active: true, extension: '.json' };
-                        const finalTagData = [...remainingTags, newGroupTag];
+
+                        let finalTagData;
+                        if (subset) {
+                            // Swap just the selected tags for the group pill,
+                            // in place. Indices are ascending, so the first one
+                            // is also the insert position after the removal.
+                            const all = parseTags(node.properties._tagDataJSON || "[]");
+                            const drop = new Set(subset.indices);
+                            const at = Math.min(...subset.indices);
+                            finalTagData = all.filter((_, i) => !drop.has(i));
+                            finalTagData.splice(at, 0, newGroupTag);
+                        } else {
+                            finalTagData = [...originalTagData.filter(tag => tag.type === 'group'), newGroupTag];
+                        }
 
                         node.properties._tagDataJSON = JSON.stringify(finalTagData, null, 2);
                         if (node.onUpdateTextWidget) {
@@ -652,15 +673,18 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         captureUndoState();
     };
 
-    node.onExportTags = async () => {
+    /** @param {?Array} subsetTags export only these (pill multi-selection). */
+    node.onExportTags = async (subsetTags = null) => {
         let fileName = await getTextInput("Export Tags", "Enter filename for export (e.g., my_tags.json):", "");
-        if (fileName === false || fileName === null) return; 
+        if (fileName === false || fileName === null) return;
 
         fileName = String(fileName).trim();
         if (!fileName.toLowerCase().endsWith('.json')) fileName += '.json';
 
         let jsonString;
-        if (node.properties._tagDataJSON !== undefined) {
+        if (subsetTags) {
+            jsonString = JSON.stringify(subsetTags, null, 2);
+        } else if (node.properties._tagDataJSON !== undefined) {
             jsonString = node.properties._tagDataJSON || "[]";
         } else {
             const tagData = parseTextToTagData(textWidget.value);
@@ -917,22 +941,8 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             }
         };
 
-        const moveCallback = async (direction) => {
-            const currentTagData = parseTags(nodeInstance.properties._tagDataJSON || "[]");
-            if (tagIndex < 0 || tagIndex >= currentTagData.length) return;
-            const newIndex = tagIndex + direction;
-            if (newIndex < 0 || newIndex >= currentTagData.length) return;
-            
-            const [item] = currentTagData.splice(tagIndex, 1);
-            currentTagData.splice(newIndex, 0, item);
-            
-            // Update the index to track the moved item
-            tagIndex = newIndex;
-            
-            nodeInstance.properties._tagDataJSON = JSON.stringify(currentTagData, null, 2);
-            await nodeInstance.onUpdateTextWidget(nodeInstance);
-            app.graph.setDirtyCanvas(true);
-        };
+        // Reordering lives in the drag & drop layer (web/js/dragdrop.js) now —
+        // the quick edit menu no longer carries Move Up / Move Down.
 
         const imageCallback = () => {
             if (nodeInstance) {
@@ -946,7 +956,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         
         // The 'event' parameter (which is positionEvent from applyContextMenuPatch)
         // now has clientX and clientY correctly set.
-        new TagEditContextMenu(event, clickedTag, saveCallback, deleteCallback, moveCallback, imageCallback, unpackCallback, tagIndex, nodeScreenWidth, existingTags);
+        new TagEditContextMenu(event, clickedTag, saveCallback, deleteCallback, imageCallback, unpackCallback, tagIndex, nodeScreenWidth, existingTags);
     };
     
     node.onUpdateTextWidget = async (node) => {

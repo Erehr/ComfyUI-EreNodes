@@ -55,6 +55,13 @@ ComfyUI-EreNodes provides an intuitive and feature-rich solution for handling pr
 
 ![Image](https://github.com/user-attachments/assets/ef65357f-88cd-4cfd-bf5d-0b9e0a7a0c78)
 
+### 🖐️ Drag & Drop Tag Pills
+- **Reorder by Dragging**: Hold a pill for a moment (or just start moving it) to enter reorder mode — a live placeholder shows exactly where it will land
+- **Move Between Nodes**: Drag pills from one prompt node into another; hold **Alt** while dropping to copy instead of move
+- **Multi-Select**: **Ctrl+click** picks individual pills (they don't need to be next to each other), **Ctrl+drag** sweep a selected pill again to drop it, just like Explorer — and **Shift+click** selects a range
+- **Bulk Actions**: Right-click any pill in a selection for Enable / Disable / Toggle / Remove, or save and export just those tags as a group
+- **Works Everywhere**: Cloud, Toggle, MultiSelect, Randomizer and Gallery nodes all share the same behaviour
+
 ### 🔍 Smart Autocomplete
 - **Comprehensive Dictionaries**: Built-in tag lists from Danbooru and e621, plus support for custom CSV files in the `__autocomplete__` folder
 - **Intelligent Aliases**: Automatic tag alias detection and replacement with canonical terms
@@ -128,13 +135,21 @@ EreNodes provides flexible LoRA loading options to fit different workflow prefer
 - **Search Efficiently**: Use partial matches or space for multi word phrases
 - **Visual Organization**: Set preview images for your most-used ta groups
 - **Quick Edits**: Right-click any tag for instant editing options
+- **Rearrange Fast**: Drag pills to reorder them, or straight into another prompt node — Ctrl+click first to move several at once
 - **Experiment**: Use the Randomizer node to discover new prompt combinations
 - **Convertible**: All tag nodes can be converted to another under ≡ menu
 - **Customize output**: Separators between nodes and individual tags can be set customized in node Properties
 
 ## 📋 Changelog
 
-### Version 3.0 - Latest
+### Version 3.1 - Latest
+- **Drag & drop reorder**: press-and-hold (or move) a tag pill to reorder it, with a live drop placeholder and drag preview
+- **Drag between nodes**: move pills across any pill-based prompt nodes; **Alt** while dropping copies instead of moving, duplicate names are skipped
+- **Multi-select**: **Ctrl+click** toggles individual pills, **Ctrl+drag** rubber-bands a box over them (Explorer-style — re-sweeping a selected pill deselects it), **Shift+click** selects a range, **Esc** or a click outside clears it — a drag started on a selected pill carries the whole set
+- **Selection actions**: right-clicking a selected pill opens bulk Enable / Disable / Toggle / Remove, plus "Save Selected as Tag Group" and "Export Selected"
+- **Quick edit cleanup**: Move Up / Move Down were dropped from the right-click menu now that pills can simply be dragged
+
+### Version 3.0
 - **Nodes 2.0 ready**: tag UI rendered as DOM widgets in both classic and Vue renderers
 - **Subgraph support**: prefix separator is a real (hidden) input; property panel remains the edit surface
 - **Gallery performance**: previews are plain `<img>` elements (browser cache, lazy loading) — no manual bitmap cache needed
