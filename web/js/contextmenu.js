@@ -841,12 +841,11 @@ export class TagContextMenuInsert extends TagContextMenu {
 
 // For tag quick edit
 export class TagEditContextMenu extends DynamicContextMenu {
-    constructor(event, tagObject, saveCallback, deleteCallback, moveCallback, imageCallback, unpackCallback, tagIndex = null, nodeScreenWidth = null, existingTags = []) { // Added nodeScreenWidth and existingTags
+    constructor(event, tagObject, saveCallback, deleteCallback, imageCallback, unpackCallback, tagIndex = null, nodeScreenWidth = null, existingTags = []) { // Added nodeScreenWidth and existingTags
         super(event, saveCallback); // The primary callback on save.
         this.tag = JSON.parse(JSON.stringify(tagObject)); // Deep copy to edit safely
         this.nodeScreenWidth = nodeScreenWidth; // Store node screen width
         this.deleteCallback = deleteCallback;
-        this.moveCallback = moveCallback;
         this.imageCallback = imageCallback;
         this.unpackCallback = unpackCallback;
         this.tagIndex = tagIndex; // Track by index instead of name
@@ -913,10 +912,10 @@ export class TagEditContextMenu extends DynamicContextMenu {
         }
 
         // 5. Action Buttons
+        // (Move Up / Move Down were removed — pills are reordered by dragging
+        // them, see web/js/dragdrop.js.)
         const createCallback = (cb) => () => { cb(); this.close(); };
         this.options.push(
-            { name: "⬆️ Move Up", callback: createCallback(() => this.moveCallback(-1)) },
-            { name: "⬇️ Move Down", callback: createCallback(() => this.moveCallback(1)) },
             { name: "🗑️ Remove", callback: createCallback(() => this.deleteCallback()) }
         );
         
@@ -1467,4 +1466,68 @@ export class TagGroupContextMenu extends FileContextMenu {
         super.close();
     }
 
+}
+
+// For bulk actions on a multi-selection of tag pills (right click on a pill
+// that is part of the selection). Uses the custom menu rather than
+// LiteGraph.ContextMenu: the native one force-fits a filter input and rejects
+// synthetic position events (it validated the event class and fell back to the
+// top-left corner), neither of which can be turned off.
+export class TagSelectionContextMenu extends DynamicContextMenu {
+    /**
+     * @param {{clientX:number, clientY:number}} event anchor position
+     * @param {string} title       e.g. "15 tags selected"
+     * @param {Array<?{name:string, callback:Function, disabled?:boolean}>} actions
+     *        null entries render as separators.
+     */
+    constructor(event, title, actions) {
+        super(event, null);
+
+        this.options = [{ name: title, type: 'title' }];
+        for (const action of actions) {
+            if (!action) {
+                this.options.push({ type: 'separator' });
+                continue;
+            }
+            this.options.push({
+                name: action.name,
+                disabled: !!action.disabled,
+                callback: () => {
+                    this.close();
+                    action.callback?.();
+                },
+            });
+        }
+
+        this.show();
+    }
+
+    show() {
+        this.close();
+        this.root = document.createElement("div");
+        this.root.className = "litegraph litecontextmenu litemenubar-panel dark";
+        this.root.close = this.close.bind(this);
+        Object.assign(this.root.style, {
+            left: `${this.event?.clientX ?? 0}px`,
+            top: `${this.event?.clientY ?? 0}px`,
+            width: 'auto',
+            minWidth: '150px',
+        });
+
+        document.body.appendChild(this.root);
+        this.renderItems();
+        this.setupEventListeners();
+        this.clampToViewport();
+    }
+
+    // Pills near the right/bottom edge would push the menu off screen.
+    clampToViewport() {
+        const rect = this.root.getBoundingClientRect();
+        if (rect.right > window.innerWidth) {
+            this.root.style.left = `${Math.max(0, window.innerWidth - rect.width - 5)}px`;
+        }
+        if (rect.bottom > window.innerHeight) {
+            this.root.style.top = `${Math.max(0, window.innerHeight - rect.height - 5)}px`;
+        }
+    }
 }
