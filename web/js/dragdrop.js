@@ -70,11 +70,21 @@ function toast(severity, summary, detail) {
 // serialized into the workflow) as index → name pairs. Storing the name lets
 // pruneSelection() drop entries after the tag data shifted underneath us.
 
+// Nodes that currently hold a selection. Tracked explicitly rather than
+// swept from app.graph._nodes so that clearing still reaches a node the user
+// has navigated away from (subgraphs). Entries drain on the next clear-all.
+const selectedNodes = new Set();
+
 function selOf(node, create = false) {
     if (!node._ereSel && create) {
         node._ereSel = { indices: new Set(), names: new Map(), anchor: null };
     }
     return node._ereSel;
+}
+
+function trackSelection(node) {
+    if (node?._ereSel?.indices.size) selectedNodes.add(node);
+    else selectedNodes.delete(node);
 }
 
 export function isPillSelected(node, index) {
@@ -97,9 +107,14 @@ export function pruneSelection(node, tagData) {
         }
     }
     if (!s.indices.size) s.anchor = null;
+    trackSelection(node);
 }
 
 function selectIndices(node, indices, tags = getTags(node)) {
+    // Only one node holds a selection at a time: the highlight you can see is
+    // always exactly the set a drag will carry.
+    clearAllSelections(node);
+
     const s = selOf(node, true);
     s.indices.clear();
     s.names.clear();
@@ -108,11 +123,13 @@ function selectIndices(node, indices, tags = getTags(node)) {
         s.indices.add(i);
         s.names.set(i, tags[i].name);
     }
+    trackSelection(node);
     applySelectionClasses(node);
 }
 
 function clearSelectionState(node) {
     const s = node?._ereSel;
+    selectedNodes.delete(node);
     if (!s || (!s.indices.size && s.anchor == null)) return false;
     s.indices.clear();
     s.names.clear();
@@ -121,8 +138,11 @@ function clearSelectionState(node) {
     return true;
 }
 
-export function clearAllSelections() {
-    for (const n of app.graph?._nodes ?? []) clearSelectionState(n);
+/** @param {?object} except node to leave alone (the one taking over). */
+export function clearAllSelections(except = null) {
+    for (const n of [...selectedNodes]) {
+        if (n !== except) clearSelectionState(n);
+    }
 }
 
 /** Sync `.ere-selected` classes without a full re-render. */
@@ -151,6 +171,7 @@ export function handlePillSelectClick(node, index, e) {
     const s = selOf(node, true);
 
     if (e.ctrlKey || e.metaKey) {
+        clearAllSelections(node);   // selection stays scoped to one node
         const tags = getTags(node);
         if (s.indices.has(index)) {
             s.indices.delete(index);
@@ -160,6 +181,7 @@ export function handlePillSelectClick(node, index, e) {
             s.names.set(index, tags[index].name);
         }
         s.anchor = index;
+        trackSelection(node);
         applySelectionClasses(node);
         return true;
     }
@@ -514,6 +536,7 @@ function beginDrag() {
     let indices = isPillSelected(node, index) ? getSelectedIndices(node) : null;
     if (!indices) {
         clearSelectionState(node);
+        clearAllSelections();
         indices = [index];
     }
     indices = indices.filter(i => tags[i]);
