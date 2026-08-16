@@ -17,6 +17,8 @@
 import { app } from "../../../scripts/app.js";
 import { beginUndoTransaction, endUndoTransaction } from "./undo.js";
 import { TagSelectionContextMenu } from "./contextmenu.js";
+import { accentForTags, hexToRgbTriplet, TYPE_ACCENT, DEFAULT_ACCENT } from "./tagcolors.js";
+import { injectTagStyles } from "./tagview.js";
 
 const PILL_SELECTOR = ".ere-pill, .ere-toggle-row, .ere-tile";
 const HOLD_MS = 200;          // press-and-hold to enter reorder mode
@@ -291,11 +293,43 @@ function moveWithin(tags, movingIndices, targetIndex) {
 
 // ---------------------------------------------------------------- drag ghost
 
-function buildGhost(elements, primary, scale) {
+/**
+ * Count badges for the drag ghost, one per tag type.
+ *
+ * A mixed selection used to collapse to a single violet "11", which hid what
+ * was actually being carried. Now it reads "10" in tag-blue next to "1" in
+ * lora-green — the accent palette already encodes the types, so the badges just
+ * reuse it. A single-type drag keeps exactly one badge, as before.
+ */
+function buildCountBadges(tags) {
+    const counts = new Map();
+    for (const tag of tags) {
+        const type = tag?.type || "tag";
+        counts.set(type, (counts.get(type) || 0) + 1);
+    }
+    if (!counts.size) return null;
+
+    const wrap = document.createElement("div");
+    wrap.className = "ere-drag-counts";
+    // Stable, meaningful order rather than insertion order.
+    const order = ["tag", "lora", "embedding", "group"];
+    for (const type of [...counts.keys()].sort((a, b) => order.indexOf(a) - order.indexOf(b))) {
+        const badge = document.createElement("div");
+        badge.className = "ere-drag-count";
+        badge.style.background = TYPE_ACCENT[type] || DEFAULT_ACCENT;
+        badge.textContent = String(counts.get(type));
+        badge.title = `${counts.get(type)} ${type}`;
+        wrap.appendChild(badge);
+    }
+    return wrap;
+}
+
+function buildGhost(elements, primary, scale, tags = []) {
     const ghost = document.createElement("div");
-    // Keep the `.erenodes-dom` scope so the cloned pills keep their styling
-    // once they are re-parented to <body>.
-    ghost.className = "erenodes-dom ere-drag-ghost";
+    // `ere-surface` so the cloned pills keep their styling once re-parented to
+    // <body>. Deliberately NOT `erenodes-dom`: that class is what rootOf()
+    // matches, and the ghost must never register as a drop target.
+    ghost.className = "ere-surface ere-drag-ghost";
 
     for (const [i, src] of elements.slice(1, 3).entries()) {
         const clone = src.cloneNode(true);
@@ -316,11 +350,12 @@ function buildGhost(elements, primary, scale) {
     main.style.height = `${primary.offsetHeight}px`;
     ghost.appendChild(main);
 
-    if (elements.length > 1) {
-        const badge = document.createElement("div");
-        badge.className = "ere-drag-count";
-        badge.textContent = String(elements.length);
-        ghost.appendChild(badge);
+    const total = tags.length || elements.length;
+    if (total > 1) {
+        const badges = buildCountBadges(
+            tags.length ? tags : Array.from({ length: elements.length }, () => ({}))
+        );
+        if (badges) ghost.appendChild(badges);
     }
 
     ghost.style.transform = `scale(${scale})`;
@@ -371,10 +406,17 @@ function abortCanvasGesture() {
 
 function beginMarqueePress(node, root, e) {
     startPointerSession();
+    const additive = e.ctrlKey || e.metaKey;
     state.marquee = {
         node, root,
         startX: e.clientX, startY: e.clientY,
-        base: getSelectedIndices(node),   // Ctrl adds to what is already picked
+        // Ctrl adds to / XORs against the existing selection; a plain band on
+        // empty space replaces it outright, like Explorer.
+        base: additive ? getSelectedIndices(node) : [],
+        additive,
+        // A plain press on empty space that never becomes a band still clears
+        // the selection on release.
+        onPill: !!e.target?.closest?.(PILL_SELECTOR),
         el: null,
         active: false,
     };
@@ -466,10 +508,14 @@ function onWindowPointerUp(e) {
     // A marquee that never moved stays a plain ctrl+click, which the pill's
     // click handler turns into a selection toggle — so only swallow the click
     // when the rubber band actually opened.
-    if (state.marquee?.active) {
+    const m = state.marquee;
+    if (m?.active) {
         e.stopPropagation();
         clickSuppressed = true;
         setTimeout(() => { clickSuppressed = false; }, 50);
+    } else if (m && !m.onPill && !m.additive) {
+        // Plain press on empty tag area that never became a band: deselect.
+        clearSelectionState(m.node);
     }
     if (state.drag) {
         e.stopPropagation();
@@ -555,7 +601,11 @@ function beginDrag() {
     placeholder.style.width = `${el.offsetWidth}px`;
     placeholder.style.height = `${el.offsetHeight}px`;
 
-    const ghost = buildGhost(elements, el, scale);
+    // Colour every drag affordance after what is being dragged: blue for plain
+    // tags, green loras, red embeddings, amber groups, violet for a mixed set.
+    setDragAccent(indices.map(i => tags[i]));
+
+    const ghost = buildGhost(elements, el, scale, indices.map(i => tags[i]).filter(Boolean));
     document.body.appendChild(ghost);
     for (const pill of elements) pill.classList.add("ere-drag-source");
 
@@ -579,6 +629,9 @@ function beginDrag() {
         lastKey: null,
         alt: false,
         copying: false,
+        origin: null,
+        sidebarZone: null,
+        sidebarDrop: null,
         raf: 0,
     };
     state.pending = null;
@@ -599,14 +652,42 @@ function updateDrag(x, y) {
     d.ghost.style.left = `${x - d.grabX}px`;
     d.ghost.style.top = `${y - d.grabY}px`;
 
-    const root = rootOf(document.elementFromPoint(x, y));
+    const under = document.elementFromPoint(x, y);
+
+    // The sidebar is a second kind of drop target. What a drop means there
+    // depends on where the drag started (see onSidebarDrop): pills from a node
+    // are saved as a new tag group, entries already in the sidebar are moved.
+    // Checked before the node lookup because the sidebar is not a node and
+    // would otherwise read as "no valid target".
+    const zone = under?.closest?.("[data-ere-sidebar-drop]");
+    if (zone) {
+        if (d.placeholder.parentNode) d.placeholder.remove();
+        d.ghost.classList.remove("ere-no-drop");
+        highlightTarget(null);
+        setSidebarTarget(d, zone);
+        d.target = null;
+        d.dropIndex = null;
+        d.lastKey = null;
+        // Saving pills as a tag group does not remove them from their node, so
+        // show the originals dimmed-and-dashed exactly like an Alt copy — the
+        // gesture is not a move and should not look like one.
+        setCopyMode(d, !!d.sourceNode);
+        return;
+    }
+    setSidebarTarget(d, null);
+
+    const root = rootOf(under);
     const targetNode = root?._ereNode ?? null;
     const container = root?.querySelector(".ere-drop-zone");
     const mode = root?._ereMode;
 
     if (!targetNode || !container || !DND_MODES.has(mode)) {
         if (d.placeholder.parentNode) d.placeholder.remove();
-        d.ghost.classList.add("ere-no-drop");
+        // Bare canvas is a valid destination for an external payload — it makes
+        // a new node — so don't show the "no drop" cue there.
+        const canvasDrop = !d.sourceNode && d.externalTags?.length
+            && !!d.origin?.onCanvasDrop && overCanvas(x, y);
+        d.ghost.classList.toggle("ere-no-drop", !canvasDrop);
         highlightTarget(null);
         d.target = null;
         d.dropIndex = null;
@@ -635,6 +716,122 @@ function updateDrag(x, y) {
     d.target = targetNode;
     d.targetMode = mode;
     d.dropIndex = toDataIndex(pos, items);
+}
+
+/**
+ * Track (and highlight) a sidebar folder row as the drop target.
+ *
+ * The sidebar registers a handler on the element via `_ereSidebarDrop`; we only
+ * record it plus the folder path, so dragdrop.js stays ignorant of what saving
+ * a tag group actually involves.
+ */
+function setSidebarTarget(d, zone) {
+    if (d.sidebarZone === zone) return;
+    d.sidebarZone?.classList.remove("ere-sb-drop-target");
+    d.sidebarZone = zone || null;
+    if (!zone) {
+        d.sidebarDrop = null;
+        return;
+    }
+    zone.classList.add("ere-sb-drop-target");
+    d.sidebarDrop = {
+        path: zone.dataset.erePath || "",
+        onDrop: zone._ereSidebarDrop || null,
+    };
+}
+
+/**
+ * Start a drag whose payload comes from outside the graph (the sidebar).
+ *
+ * Reuses the whole existing machine — ghost, placeholder sizing, auto-scroll,
+ * duplicate rejection, undo wrapping — by leaving `sourceNode` null and putting
+ * the tags in `externalTags`. Callers own their own press/threshold handling and
+ * call this once the gesture is confirmed to be a drag.
+ *
+ * @param {object} opts
+ * @param {Array<object>} opts.tags   tags to insert on drop
+ * @param {string} opts.label         ghost caption
+ * @param {number} opts.x @param {number} opts.y   current pointer position
+ */
+export function startExternalDrag({ tags, label, x, y, origin = null }) {
+    if (state.drag) cancelDrag();
+    if (!Array.isArray(tags) || !tags.length) return false;
+
+    installDragGlobals();
+    // The renderer normally injects these, but a sidebar drag can happen before
+    // any node has mounted a widget. Both are idempotent.
+    injectTagStyles();
+    injectDragStyles();
+    setDragAccent(tags);
+
+    // A stand-in "pill" so the ghost looks like what will be inserted.
+    const proxy = document.createElement("div");
+    proxy.className = "ere-surface";
+    proxy.style.cssText = "position:fixed;left:-9999px;top:-9999px;";
+    const face = document.createElement("div");
+    face.className = "ere-pill";
+    face.textContent = label || `${tags.length} tags`;
+    proxy.appendChild(face);
+    document.body.appendChild(proxy);
+
+    const ghost = buildGhost([face], face, 1, tags);
+    document.body.appendChild(ghost);
+    proxy.remove();
+
+    const placeholder = document.createElement("div");
+    placeholder.className = "ere-drop-placeholder";
+    placeholder.style.width = "60px";
+    placeholder.style.height = `${PILL_ROW_H}px`;
+
+    state.drag = {
+        sourceNode: null,
+        sourceMode: null,
+        externalTags: tags.map(t => ({ ...t })),
+        // Where the drag came from. A sidebar-origin drop inside the sidebar is
+        // a move, not a "save these tags" — see onSidebarDrop.
+        origin,
+        indices: [],
+        elements: [],
+        ghost,
+        placeholder,
+        label: label || "",
+        sizedFor: null,
+        grabX: 10,
+        grabY: 10,
+        scale: 1,
+        target: null,
+        targetMode: null,
+        dropIndex: null,
+        lastX: x,
+        lastY: y,
+        lastKey: null,
+        alt: false,
+        copying: false,
+        sidebarZone: null,
+        sidebarDrop: null,
+        raf: 0,
+    };
+
+    document.body.classList.add("ere-dragging-active");
+    abortCanvasGesture();
+    window.addEventListener("keydown", onDragKey, true);
+    window.addEventListener("keyup", onDragKeyUp, true);
+    window.addEventListener("contextmenu", onDragContextMenu, true);
+    // The sidebar owns the pointer, so it must drive move/up itself.
+    window.addEventListener("pointermove", onWindowPointerMove, true);
+    window.addEventListener("pointerup", onWindowPointerUp, true);
+    window.addEventListener("pointercancel", onWindowPointerCancel, true);
+    updateDrag(x, y);
+    state.drag.raf = requestAnimationFrame(stepAutoScroll);
+    return true;
+}
+
+/** True when the point is over the graph canvas itself. */
+function overCanvas(x, y) {
+    const canvas = app.canvas?.canvas;
+    if (!canvas) return false;
+    const r = canvas.getBoundingClientRect();
+    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
 }
 
 /** Visible text of a pill, whatever shape it has. */
@@ -711,12 +908,35 @@ function stepAutoScroll() {
     d.raf = requestAnimationFrame(stepAutoScroll);
 }
 
+/**
+ * Publish the drag accent as CSS variables on <html>.
+ *
+ * The three affordances that need it — drop placeholder, ghost outline and the
+ * hovered node's ring — live in unrelated parts of the DOM (inside the target
+ * node, on <body>, on the node root), so a document-level variable is simpler
+ * than threading a colour through each. Only one drag runs at a time.
+ */
+function setDragAccent(tags) {
+    const accent = accentForTags(tags);
+    const style = document.documentElement.style;
+    style.setProperty("--ere-drag-accent", accent);
+    style.setProperty("--ere-drag-accent-rgb", hexToRgbTriplet(accent));
+}
+
+function clearDragAccent() {
+    const style = document.documentElement.style;
+    style.removeProperty("--ere-drag-accent");
+    style.removeProperty("--ere-drag-accent-rgb");
+}
+
 function teardownDrag() {
     const d = state.drag;
     if (!d) return null;
     if (d.raf) cancelAnimationFrame(d.raf);
     d.ghost.remove();
     d.placeholder.remove();
+    d.sidebarZone?.classList.remove("ere-sb-drop-target");
+    clearDragAccent();
     document.body.classList.remove("ere-dragging-active");
     for (const el of document.querySelectorAll(".ere-drag-source")) el.classList.remove("ere-drag-source");
     highlightTarget(null);
@@ -748,10 +968,78 @@ export function isDragActive() {
 
 async function finishDrag() {
     const d = teardownDrag();
-    if (!d || !d.target || d.dropIndex == null) return;
+    if (!d) return;
 
-    if (d.target === d.sourceNode) await dropWithinNode(d);
+    // Dropped on the sidebar rather than a node — hand the payload over and
+    // let it decide (it prompts for a filename and saves a tag group).
+    if (d.sidebarDrop) {
+        const tags = d.sourceNode
+            ? d.indices.map(i => getTags(d.sourceNode)[i]).filter(Boolean)
+            : d.externalTags;
+        await d.sidebarDrop.onDrop?.(tags, d.sidebarDrop.path, d.sourceNode, d.origin);
+        return;
+    }
+
+    // Dropped on bare canvas rather than on a node: an external payload becomes
+    // a brand-new node there. (Pill drags between nodes stay a no-op — there is
+    // nothing sensible to do with a tag dropped into empty space.)
+    if (!d.target && !d.sourceNode && d.externalTags?.length && overCanvas(d.lastX, d.lastY)) {
+        await d.origin?.onCanvasDrop?.(d.externalTags, d.lastX, d.lastY);
+        return;
+    }
+
+    if (!d.target || d.dropIndex == null) return;
+
+    // sourceNode === null means the drag came from outside the graph (the
+    // sidebar): there is nothing to remove from, so it is always an insert.
+    if (!d.sourceNode) await dropExternal(d);
+    else if (d.target === d.sourceNode) await dropWithinNode(d);
     else await dropAcrossNodes(d);
+}
+
+/**
+ * Insert tags carried in from outside the graph.
+ *
+ * Deliberately shares dropAcrossNodes' duplicate handling and undo wrapping,
+ * but has no source side: no removal, and Alt is a no-op (there is nothing to
+ * leave behind).
+ */
+async function dropExternal(d) {
+    const targetTags = getTags(d.target);
+    const existing = new Set(targetTags.map(t => t.name));
+
+    const accepted = [];
+    const rejected = [];
+    for (const tag of d.externalTags || []) {
+        if (!tag?.name || existing.has(tag.name)) {
+            if (tag?.name) rejected.push(tag.name);
+            continue;
+        }
+        existing.add(tag.name);
+        accepted.push(JSON.parse(JSON.stringify(tag)));
+    }
+
+    if (accepted.length) {
+        beginUndoTransaction();
+        try {
+            const insertAt = Math.max(0, Math.min(d.dropIndex, targetTags.length));
+            targetTags.splice(insertAt, 0, ...accepted);
+            await setTags(d.target, targetTags);
+            if (accepted.length > 1) {
+                selectIndices(d.target, accepted.map((_, i) => insertAt + i), targetTags);
+            }
+        } finally {
+            endUndoTransaction();
+        }
+    }
+
+    if (rejected.length) {
+        toast(
+            "warn",
+            accepted.length ? "Some tags skipped" : "Tags already present",
+            `${rejected.length} tag(s) already in the node: ${rejected.slice(0, 3).join(", ")}${rejected.length > 3 ? "…" : ""}`
+        );
+    }
 }
 
 async function dropWithinNode(d) {
@@ -936,19 +1224,24 @@ function onGlobalPointerDown(e) {
     // because we stop the event long before it gets there.
     try { window.LiteGraph?.currentMenu?.close?.(); } catch {}
 
-    // Ctrl/Cmd anywhere in the tag area (pill or empty space) starts a
-    // rubber-band selection — never a reorder. A press that does not move
-    // stays a plain ctrl+click and toggles the pill under the cursor.
-    if ((e.ctrlKey || e.metaKey) && !e.target?.closest?.(".ere-toolbar")) {
+    const inToolbar = !!e.target?.closest?.(".ere-toolbar");
+    const pill = e.target?.closest?.(PILL_SELECTOR);
+    const onPill = !!pill && pill.dataset.ereIndex !== undefined;
+
+    // Rubber-band selection, Windows Explorer style:
+    //   - empty space in the tag area  -> band, no modifier needed;
+    //   - on top of a pill             -> band only with Ctrl/Cmd, because a
+    //     plain press there means "click or drag this pill".
+    // Either way a press that never moves stays a plain click.
+    if (!inToolbar && (!onPill || e.ctrlKey || e.metaKey)) {
         e.stopPropagation();
         e.stopImmediatePropagation();
         beginMarqueePress(node, root, e);
         return;
     }
 
-    const pill = e.target?.closest?.(PILL_SELECTOR);
-    if (!pill || pill.dataset.ereIndex === undefined) {
-        // Toolbar buttons, the multiselect panel background, ...
+    if (!onPill) {
+        // Toolbar buttons and anything else that is not a pill.
         if (!state.drag) clearAllSelections();
         return;
     }
@@ -989,58 +1282,67 @@ export function installDragGlobals() {
 
 export function injectDragStyles() {
     const css = `
+/* --ere-drag-accent / --ere-drag-accent-rgb are set on <html> for the duration
+   of a drag (see setDragAccent) and describe what is being dragged: blue for
+   plain tags, green loras, red embeddings, amber groups, violet for a mixed
+   selection. The fallbacks keep the pre-drag blue for the selection outline,
+   which is drawn outside any drag. */
 /* Inset outline: the tag area clips overflow, so an outer ring would be cut
    off on edge pills. */
-.erenodes-dom .ere-selected {
-    outline: 2px solid var(--p-primary-color, #4a9eff);
+.ere-surface .ere-selected {
+    outline: 2px solid var(--ere-drag-accent, var(--p-primary-color, #4a9eff));
     outline-offset: -2px;
-    box-shadow: inset 0 0 8px rgba(74, 158, 255, .45);
+    box-shadow: inset 0 0 8px rgba(var(--ere-drag-accent-rgb, 74, 158, 255), .45);
 }
 /* Dragged pills leave the flow — unless Alt is held over another node, where
    they stay put (dimmed) to show the original is being kept. They keep
    .ere-drag-source either way, so they never count as drop candidates. */
-.erenodes-dom .ere-drag-source:not(.ere-drag-copy) { display: none !important; }
-.erenodes-dom .ere-drag-copy {
+.ere-surface .ere-drag-source:not(.ere-drag-copy) { display: none !important; }
+.ere-surface .ere-drag-copy {
     opacity: .4;
-    outline: 1px dashed var(--p-primary-color, #4a9eff);
+    outline: 1px dashed var(--ere-drag-accent, var(--p-primary-color, #4a9eff));
     outline-offset: -2px;
 }
-.erenodes-dom .ere-drop-placeholder {
+.ere-surface .ere-drop-placeholder {
     flex: 0 0 auto; pointer-events: none;
-    border: 1px dashed var(--p-primary-color, #4a9eff);
+    border: 1px dashed var(--ere-drag-accent, var(--p-primary-color, #4a9eff));
     border-radius: 6px;
-    background: rgba(74, 158, 255, .14);
+    background: rgba(var(--ere-drag-accent-rgb, 74, 158, 255), .14);
     animation: ere-drop-pulse .9s ease-in-out infinite alternate;
 }
 @keyframes ere-drop-pulse {
     from { opacity: .45; }
     to   { opacity: 1; }
 }
-.erenodes-dom.ere-drop-target {
-    outline: 1px dashed var(--p-primary-color, #4a9eff);
+.ere-surface.ere-drop-target {
+    outline: 1px dashed var(--ere-drag-accent, var(--p-primary-color, #4a9eff));
     outline-offset: 2px;
 }
-.erenodes-dom.ere-drag-ghost {
+.ere-surface.ere-drag-ghost {
     position: fixed; left: 0; top: 0; z-index: 10000;
     display: block; width: auto; min-height: 0; overflow: visible;
     pointer-events: none; transform-origin: top left;
     opacity: .92; filter: drop-shadow(0 3px 6px rgba(0, 0, 0, .6));
 }
-.erenodes-dom.ere-drag-ghost > * {
-    outline: 2px solid var(--p-primary-color, #4a9eff);
+.ere-surface.ere-drag-ghost > * {
+    outline: 2px solid var(--ere-drag-accent, var(--p-primary-color, #4a9eff));
     outline-offset: 1px;
 }
-.erenodes-dom.ere-drag-ghost.ere-no-drop { opacity: .5; }
-.erenodes-dom.ere-drag-ghost.ere-no-drop > * { outline-color: #b05050; }
-.erenodes-dom.ere-drag-ghost .ere-drag-count {
+.ere-surface.ere-drag-ghost.ere-no-drop { opacity: .5; }
+.ere-surface.ere-drag-ghost.ere-no-drop > * { outline-color: #b05050; }
+.ere-surface.ere-drag-ghost .ere-drag-counts {
     position: absolute; top: -7px; right: -9px; z-index: 1;
+    display: flex; flex-direction: row; gap: 2px;
+}
+.ere-surface.ere-drag-ghost .ere-drag-count {
     min-width: 16px; height: 16px; padding: 0 3px;
     border-radius: 8px; outline: none;
-    background: var(--p-primary-color, #4a9eff); color: #fff;
+    background: var(--ere-drag-accent, var(--p-primary-color, #4a9eff)); color: #fff;
     font: 10px/16px monospace; text-align: center;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, .45);
 }
 /* Copy mode (Alt over another node) */
-.erenodes-dom.ere-drag-ghost.ere-copy::after {
+.ere-surface.ere-drag-ghost.ere-copy::after {
     content: "+";
     position: absolute; top: -7px; left: -9px; z-index: 1;
     width: 16px; height: 16px; border-radius: 8px;

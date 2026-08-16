@@ -19,6 +19,15 @@ import {
     handlePillContextMenu,
     consumeDragClick,
 } from "./dragdrop.js";
+import {
+    SURFACE_CLASS,
+    injectTagStyles,
+    fallbackColors,
+    parseTags,
+    renderTagPill,
+    renderToggleRowEl,
+    renderTagTile,
+} from "./tagview.js";
 
 // Re-render tag UIs after undo/redo. The change tracker restores graph state
 // and fires "graphChanged"; in the Vue renderer existing nodes keep their DOM
@@ -37,10 +46,8 @@ function hookGraphChanged() {
 }
 
 // Custom tag-type palette (no ComfyUI equivalent)
-const TYPE_FILL = { lora: "#415041", embedding: "#504149", group: "#504C41" };
-const DEFAULT_FILL = "#414650";
-const TOGGLE_KNOB = { lora: "#89a189", embedding: "#9b8899", group: "#9b9188" };
-const TOGGLE_KNOB_DEFAULT = "#8899bb";
+// Colours live in tagcolors.js so the context menus and drag layer paint tags
+// exactly the same way (they used to keep drifting private copies).
 
 export const MODE_BY_TYPE = {
     ErePromptCloud: "cloud",
@@ -66,7 +73,13 @@ function hideNativeWidget(w) {
         w._ereOrigType = w.type;
         w.type = "converted-widget";
     }
-    if (w.element?.style) w.element.style.display = "none";
+    if (w.element?.style) {
+        w.element.style.display = "none";
+        // Belt and braces: if a renderer ever re-shows it (Vue manages the
+        // element itself), it must still never be a pointer target — a
+        // ctrl+drag landing on a stray textarea arms ComfyUI's box-select.
+        w.element.style.pointerEvents = "none";
+    }
 }
 
 function nativeWidgetsToHide(node, mode) {
@@ -80,137 +93,16 @@ function nativeWidgetsToHide(node, mode) {
     return list;
 }
 
-function fallbackColors() {
-    const LG = window.LiteGraph || {};
-    return {
-        widgetBg: LG.WIDGET_BGCOLOR || "#222",
-        widgetText: LG.WIDGET_TEXT_COLOR || "#DDD",
-        box: LG.NODE_DEFAULT_BOXCOLOR || "#666",
-    };
-}
-
-const parseTags = value => {
-    try {
-        const parsed = JSON.parse(value || "[]");
-        if (Array.isArray(parsed)) return parsed;
-    } catch {}
-    return [];
-};
-
-function displayNameFor(tag, stripFolders) {
-    let displayName = tag.name || "";
-    if (tag.type === 'lora' || tag.type === 'group') {
-        if (stripFolders) {
-            displayName = displayName.substring(Math.max(displayName.lastIndexOf('\\'), displayName.lastIndexOf('/')) + 1);
-        }
-        const dotIndex = displayName.lastIndexOf('.');
-        if (dotIndex !== -1) displayName = displayName.substring(0, dotIndex);
-    } else if (tag.type === 'embedding') {
-        displayName = displayName.replace(/^embedding:/, '');
-    }
-    return displayName;
-}
-
-function strengthText(tag) {
-    if (tag.strength && Number(tag.strength) !== 1.0) return ` ${Number(tag.strength).toFixed(2)}`;
-    return "";
-}
+// Colours, name formatting, pill/row/tile construction and the stylesheet all
+// live in tagview.js now, so the sidebar and the menu previews draw tags from
+// the exact same code the nodes do. This module keeps only the node-specific
+// parts: event wiring, layout modes and the height policy.
 
 function injectStyles() {
-    const css = `
-.erenodes-dom {
-    font: 12px monospace; box-sizing: border-box; width: 100%;
-    min-height: 0; overflow: hidden;
-    display: flex; flex-direction: column; gap: 5px;
-    color: var(--component-node-foreground, #ddd);
-}
-.erenodes-dom.ere-multiline {
-    height: auto; flex: 0 0 auto; gap: 0; overflow: visible;
-}
-.erenodes-dom .ere-toolbar { flex: 0 0 auto; }
-.erenodes-dom .ere-scroll {
-    flex: 1 1 auto; min-height: 0;
-    overflow-x: hidden; overflow-y: hidden;
-    scrollbar-width: thin;
-}
-.erenodes-dom-content { box-sizing: border-box; width: 100%; }
-.erenodes-dom * { box-sizing: border-box; }
-.erenodes-dom .ere-flow { display: flex; flex-wrap: wrap; gap: 5px; align-items: flex-start; }
-.erenodes-dom .ere-btn {
-    width: 20px; height: 20px; flex: 0 0 auto; padding: 0;
-    border-radius: 5px; border: 1px solid var(--component-node-border, #444);
-    display: flex; align-items: center; justify-content: center;
-    background: var(--component-node-widget-background, #353535);
-    color: var(--component-node-foreground-secondary, #aaa);
-    cursor: pointer; user-select: none; font: inherit; line-height: 18px;
-}
-.erenodes-dom .ere-btn:hover {
-    background: var(--component-node-widget-background-hovered, #2a2a2a);
-    color: var(--component-node-foreground, #ddd);
-}
-.erenodes-dom .ere-pill {
-    height: 20px; line-height: 18px; max-width: 100%;
-    border-radius: 6px; border: 1px solid transparent; padding: 0 5px;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    cursor: pointer; user-select: none; color: #FFF;
-}
-.erenodes-dom .ere-pill.inactive { opacity: .75; }
-.erenodes-dom .ere-strength { opacity: .5; }
-.erenodes-dom .ere-panel {
-    border: 1px solid var(--component-node-border, #444);
-    border-radius: 5px; padding: 5px;
-    background: var(--component-node-widget-background, #222);
-}
-.erenodes-dom .ere-toggle-row {
-    display: flex; align-items: center; width: 100%;
-    height: 20px; border-radius: 6px;
-    border: 1px solid var(--component-node-border, #444);
-    background: var(--component-node-widget-background, #222);
-    cursor: pointer; user-select: none; overflow: hidden;
-}
-.erenodes-dom .ere-toggle-row.inactive { opacity: .75; }
-.erenodes-dom .ere-toggle-row .ere-label {
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #FFF;
-}
-.erenodes-dom .ere-toggle-row.inactive .ere-label { color: inherit; }
-.erenodes-dom .ere-switch {
-    position: relative; width: 18px; height: 10px; margin: 0 12px 0 5px;
-    border-radius: 5px; background: #3b3b3b; flex: 0 0 auto;
-}
-.erenodes-dom .ere-switch .ere-knob {
-    position: absolute; top: -2px; width: 14px; height: 14px; border-radius: 50%;
-}
-.erenodes-dom .ere-tile {
-    position: relative; flex: 0 0 auto; overflow: hidden;
-    border-radius: 5px; border: 1px solid var(--component-node-border, #444);
-    background: var(--component-node-widget-background, #222);
-    cursor: pointer; user-select: none;
-}
-.erenodes-dom .ere-tile img {
-    position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
-}
-.erenodes-dom .ere-tile.inactive img { filter: grayscale(0.75); opacity: .25; }
-.erenodes-dom .ere-tile .ere-name {
-    position: absolute; left: 0; right: 0; bottom: 0; height: 20px; line-height: 20px;
-    padding: 0 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    color: #FFF; border-radius: 0 0 5px 5px;
-}
-.erenodes-dom .ere-tile.inactive .ere-name { opacity: .5; }
-.erenodes-dom .ere-tile .ere-info {
-    position: absolute; top: 2.5px; right: 2.5px; height: 15px; line-height: 15px;
-    padding: 0 3px; font-size: 10px; text-align: center;
-    background: #222; color: #FFF; border-radius: 5px; opacity: .75;
-}
-.erenodes-dom .ere-tile.inactive .ere-info { opacity: .5; }
-`;
-    let style = document.getElementById("erenodes-dom-style");
-    if (!style) {
-        style = document.createElement("style");
-        style.id = "erenodes-dom-style";
-        document.head.appendChild(style);
-    }
-    style.textContent = css;
-    // Appended after this sheet so drag/selection rules win ties.
+    // Tag styling lives in tagview.js (scoped to .ere-surface) so every surface
+    // shares one rule set. Drag/selection rules are appended after it so they
+    // win ties.
+    injectTagStyles();
     injectDragStyles();
 }
 
@@ -328,114 +220,19 @@ function renderButtons(node, container, mode) {
 }
 
 function renderCloudPill(node, tag, index, colors, mode) {
-    const pill = document.createElement("div");
-    pill.className = "ere-pill" + (tag.active ? "" : " inactive");
-    const fill = TYPE_FILL[tag.type] || DEFAULT_FILL;
-    if (tag.active) {
-        pill.style.background = fill;
-        pill.style.borderColor = fill;
-    } else {
-        pill.style.background = colors.widgetBg;
-        pill.style.borderColor = "#444";
-        pill.style.color = colors.widgetText;
-    }
-    let name = displayNameFor(tag, false);
-    if (tag.type === 'lora' && tag.triggers?.length > 0) name += ` [+${tag.triggers.length}]`;
-    pill.textContent = name;
-    const st = strengthText(tag);
-    if (st) {
-        const span = document.createElement("span");
-        span.className = "ere-strength";
-        span.textContent = st;
-        pill.appendChild(span);
-    }
+    const pill = renderTagPill(tag, { colors });
     attachPillEvents(node, pill, tag, index, mode);
     return pill;
 }
 
 function renderToggleRow(node, tag, index, colors) {
-    const row = document.createElement("div");
-    row.className = "ere-toggle-row" + (tag.active ? "" : " inactive");
-    if (!tag.active) row.style.color = colors.widgetText;
-
-    const sw = document.createElement("div");
-    sw.className = "ere-switch";
-    const knob = document.createElement("div");
-    knob.className = "ere-knob";
-    if (tag.active) {
-        knob.style.background = TOGGLE_KNOB[tag.type] || TOGGLE_KNOB_DEFAULT;
-        knob.style.right = "-2px";
-    } else {
-        knob.style.background = "#888";
-        knob.style.left = "-2px";
-    }
-    sw.appendChild(knob);
-    row.appendChild(sw);
-
-    const label = document.createElement("span");
-    label.className = "ere-label";
-    let name = displayNameFor(tag, false);
-    if (tag.type === 'lora' && tag.triggers?.length > 0) name += ` [+${tag.triggers.length}]`;
-    label.textContent = name;
-    const st = strengthText(tag);
-    if (st) {
-        const span = document.createElement("span");
-        span.className = "ere-strength";
-        span.textContent = st;
-        label.appendChild(span);
-    }
-    row.appendChild(label);
-
+    const row = renderToggleRowEl(tag, { colors });
     attachPillEvents(node, row, tag, index, "toggle");
     return row;
 }
 
 function renderGalleryTile(node, tag, index, colors, pillW, pillH) {
-    const tile = document.createElement("div");
-    tile.className = "ere-tile" + (tag.active ? "" : " inactive");
-    tile.style.width = `${pillW}px`;
-    tile.style.height = `${pillH}px`;
-
-    if (tag.type === 'lora' || tag.type === 'group' || tag.type === 'embedding') {
-        const img = document.createElement("img");
-        img.loading = "lazy";
-        img.draggable = false;
-        // Subfolder paths from the server use OS separators, so on Windows
-        // names arrive as "sub\lora". The old canvas code sent them raw and the
-        // browser normalized \ to / in the URL; once percent-encoded (%5C) that
-        // normalization no longer happens and the server can't find the file.
-        // Normalize to forward slashes first, then encode per path segment:
-        // keeps subfolder slashes literal for the {path:.*} route while
-        // encoding ?, #, +, & etc. inside filenames.
-        const encodedName = tag.name.replace(/\\/g, "/").split('/').map(encodeURIComponent).join('/');
-        img.src = `/erenodes/view/${tag.type}/${encodedName}?w=${pillW}&h=${pillH}&fit=cover`;
-        img.addEventListener("error", () => { img.style.display = "none"; });
-        tile.appendChild(img);
-    }
-
-    const nameBar = document.createElement("div");
-    nameBar.className = "ere-name";
-    const fill = TYPE_FILL[tag.type] || DEFAULT_FILL;
-    if (tag.active) {
-        nameBar.style.background = fill;
-    } else {
-        nameBar.style.background = colors.widgetBg;
-        nameBar.style.color = colors.widgetText;
-    }
-    nameBar.textContent = displayNameFor(tag, true);
-    tile.appendChild(nameBar);
-
-    let infoText = "";
-    if (tag.triggers?.length > 0) infoText += `[+${tag.triggers.length}]`;
-    const st = strengthText(tag);
-    if (st) infoText += (infoText ? " " : "") + st.trim();
-    if (infoText) {
-        const info = document.createElement("div");
-        info.className = "ere-info";
-        info.textContent = infoText;
-        tile.appendChild(info);
-    }
-
+    const tile = renderTagTile(tag, { colors, width: pillW, height: pillH });
     attachPillEvents(node, tile, tag, index, "gallery");
     return tile;
 }
@@ -457,7 +254,10 @@ export function attachTagDomWidget(node, mode) {
     // `let`: hosts can be swapped for a previously mounted element after undo/redo.
     // toolbar = sticky buttons; scroll/content = pills (only this scrolls).
     let el = document.createElement("div");
-    el.className = "erenodes-dom";
+    // Two classes on purpose: `erenodes-dom` is the structural hook drag & drop
+    // and the Vue-remount adoption query on; `ere-surface` is the visual scope
+    // shared with the sidebar and the menu previews (see tagview.js).
+    el.className = `erenodes-dom ${SURFACE_CLASS}`;
     let toolbar = document.createElement("div");
     toolbar.className = "ere-toolbar ere-flow";
     let scroll = document.createElement("div");

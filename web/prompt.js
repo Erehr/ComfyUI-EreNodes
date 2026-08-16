@@ -12,6 +12,92 @@ const parseTags = value => {
     return [];
 };
 
+/**
+ * Write a tag group to disk.
+ *
+ * Extracted from onSaveTagGroup so the sidebar can save through exactly the
+ * same path (overwrite confirmation, cache invalidation, toasts) instead of
+ * growing a second, subtly different implementation.
+ *
+ * @param {object} opts
+ * @param {string} [opts.path]      folder relative to the tag-group root
+ * @param {string} opts.filename    ".json" is appended if missing
+ * @param {Array<object>} opts.tags
+ * @param {File} [opts.imageFile]   optional preview image
+ * @param {boolean} [opts.overwriteSilently] skip the "already exists" prompt
+ * @returns {Promise<{ok: boolean, cancelled?: boolean, message?: string, fullPath: string}>}
+ */
+export async function saveTagGroup({ path = "", filename, tags, imageFile, overwriteSilently = false }) {
+    const name = filename.toLowerCase().endsWith(".json") ? filename : `${filename}.json`;
+    const fullPath = path ? `${path}/${name}` : name;
+
+    try {
+        if (!overwriteSilently) {
+            const checkResponse = await fetch(`/erenodes/get_tag_group?filename=${encodeURIComponent(fullPath)}`);
+            if (checkResponse.ok) {
+                // app.ui.dialog.show() is not a confirm dialog (returns nothing);
+                // use the extensionManager confirm dialog with a window.confirm fallback.
+                const message = `Tag group '${name}' already exists. Do you want to overwrite it?`;
+                const confirmed = app.extensionManager?.dialog?.confirm
+                    ? await app.extensionManager.dialog.confirm({ title: "File Exists", message })
+                    : window.confirm(message);
+                if (!confirmed) return { ok: false, cancelled: true, fullPath };
+            }
+        }
+
+        clearCache(`/erenodes/get_tag_group?filename=${encodeURIComponent(fullPath)}`);
+        // Also invalidate cached preview thumbnails for this group
+        // (src entries carry query strings, so prefix-match).
+        clearCachePrefix(`/erenodes/view/group/${fullPath.replace(/\.json$/i, "")}`);
+
+        const formData = new FormData();
+        formData.append('path', path || '');
+        formData.append('filename', name);
+        formData.append('tags_json', JSON.stringify(tags, null, 2));
+        if (imageFile) formData.append('image_file', imageFile, imageFile.name);
+
+        const response = await fetch('/erenodes/save_tag_group', { method: 'POST', body: formData });
+        const result = await response.json();
+
+        if (!response.ok) {
+            const errorMessage = result.error || result.message || "Unknown error saving tag group.";
+            console.error('[EreNodes] Error saving tag group:', errorMessage);
+            app.extensionManager?.toast?.add({
+                severity: "error", summary: "Save Error", detail: errorMessage, life: 5000,
+            });
+            return { ok: false, message: errorMessage, fullPath };
+        }
+
+        const successMessage = result.message || `Tag group '${name}' saved successfully.`;
+        app.extensionManager?.toast?.add({
+            severity: "success", summary: "Saved", detail: successMessage, life: 4000,
+        });
+        app.ereSidebar?.refresh?.();
+        return { ok: true, message: successMessage, fullPath };
+    } catch (error) {
+        console.error('[EreNodes] Error saving tag group:', error);
+        app.extensionManager?.toast?.add({
+            severity: "error", summary: "Save Operation Error", detail: error.message, life: 5000,
+        });
+        return { ok: false, message: error.message, fullPath };
+    }
+}
+
+/** Strip tag groups from a list — nesting a group inside a group is not allowed. */
+export function stripNestedGroups(tags, { warn = true } = {}) {
+    const groups = tags.filter(tag => tag.type === 'group');
+    if (!groups.length) return tags;
+    if (warn) {
+        app.extensionManager?.toast?.add({
+            severity: "warn",
+            summary: "Nested tag groups not allowed.",
+            detail: `${groups.length} tag group(s) skipped in saving.`,
+            life: 6000,
+        });
+    }
+    return tags.filter(tag => tag.type !== 'group');
+}
+
 function parseTag(tagString) {
     let originalString = (tagString || "").trim();
     if (!originalString) return null;
@@ -401,11 +487,27 @@ export function initializeSharedPromptFunctions(node, textWidget) {
                 resolvedGroupTags = groupTags instanceof Promise ? await groupTags : groupTags;
             } catch (error) {
                 console.error("[EreNodes] Error loading tag group.", error);
+                app.extensionManager?.toast?.add({
+                    severity: "error",
+                    summary: "Load Error",
+                    detail: `Could not read tag group '${tagObject.name}'.`,
+                    life: 5000
+                });
                 return;
             }
 
+            // This used to `throw` from a bare async callback — nothing caught
+            // it, so a malformed file produced an unhandled rejection and no
+            // user-visible feedback at all.
             if (!Array.isArray(resolvedGroupTags)) {
-                throw new Error('Loaded tag group is not a valid array.');
+                console.error("[EreNodes] Tag group is not an array:", tagObject.name, resolvedGroupTags);
+                app.extensionManager?.toast?.add({
+                    severity: "error",
+                    summary: "Invalid Tag Group",
+                    detail: `'${tagObject.name}' does not contain a list of tags.`,
+                    life: 5000
+                });
+                return;
             }
 
             if (node.type !== "ErePromptMultiline") {
@@ -475,77 +577,16 @@ export function initializeSharedPromptFunctions(node, textWidget) {
                 }
 
                 const originalTagData = [...tagDataToSave];
-                // Only filter out group tags if we're actually saving a tag group (not individual tags)
-                const groupTags = tagDataToSave.filter(tag => tag.type === 'group');
-                if (groupTags.length > 0) {
-                    tagDataToSave = tagDataToSave.filter(tag => tag.type !== 'group');
-                    app.extensionManager.toast.add({
-                        severity: "warn",
-                        summary: "Nested tag groups not allowed.",
-                        detail: `${groupTags.length} tag group(s) skipped in saving.`,
-                        life: 6000
-                    });
-                }
+                tagDataToSave = stripNestedGroups(tagDataToSave);
 
-                const jsonString = JSON.stringify(tagDataToSave, null, 2);
-                const fullPath = tagObject.path ? `${tagObject.path}/${tagObject.filename}` : tagObject.filename;
-                
-                // Check if file already exists and confirm overwrite
-                const checkResponse = await fetch(`/erenodes/get_tag_group?filename=${encodeURIComponent(fullPath)}`);
-                if (checkResponse.ok) {
-                    // app.ui.dialog.show() is not a confirm dialog (returns nothing);
-                    // use the extensionManager confirm dialog with a window.confirm fallback.
-                    let confirmed;
-                    const message = `Tag group '${tagObject.filename}' already exists. Do you want to overwrite it?`;
-                    if (app.extensionManager?.dialog?.confirm) {
-                        confirmed = await app.extensionManager.dialog.confirm({
-                            title: "File Exists",
-                            message,
-                        });
-                    } else {
-                        confirmed = window.confirm(message);
-                    }
-                    if (!confirmed) return;
-                }
-
-                clearCache(`/erenodes/get_tag_group?filename=${encodeURIComponent(fullPath)}`);
-                // Also invalidate cached preview thumbnails for this group
-                // (src entries carry query strings, so prefix-match).
-                clearCachePrefix(`/erenodes/view/group/${fullPath.replace(/\.json$/i, "")}`);
-
-                const formData = new FormData();
-                formData.append('path', tagObject.path || '');
-                formData.append('filename', tagObject.filename);
-                formData.append('tags_json', jsonString);
-
-                if (tagObject.imageFile) {
-                    formData.append('image_file', tagObject.imageFile, tagObject.imageFile.name);
-                }
-
-                const response = await fetch('/erenodes/save_tag_group', {
-                    method: 'POST',
-                    body: formData,
+                const saved = await saveTagGroup({
+                    path: tagObject.path,
+                    filename: tagObject.filename,
+                    tags: tagDataToSave,
+                    imageFile: tagObject.imageFile,
                 });
-                
-                const result = await response.json();
-                if (!response.ok) {
-                    const errorMessage = result.error || result.message || "Unknown error saving tag group.";
-                    console.error('[EreNodes] Error saving tag group:', errorMessage);
-                    app.extensionManager.toast.add({
-                        severity: "error",
-                        summary: "Save Error",
-                        detail: errorMessage,
-                        life: 5000
-                    });
-                } else {
-                    const successMessage = result.message || `Tag group '${tagObject.filename}' saved successfully.`;
-                    app.extensionManager.toast.add({
-                        severity: "success",
-                        summary: "Saved",
-                        detail: successMessage,
-                        life: 4000
-                    });
-
+                if (saved.cancelled || !saved.ok) return;
+                {
                     // Replace saved tags with new group tag if requested
                     if (tagObject.shouldReplace) {
                         const groupName = tagObject.path ? `${tagObject.path}/${tagObject.filename.replace('.json', '')}` : tagObject.filename.replace('.json', '');

@@ -1,6 +1,16 @@
 import { app } from "../../../../scripts/app.js";
-import { getCache, clearCache } from "./cache.js";
+import { getCache, clearCache, isNotFound } from "./cache.js";
 import { beginUndoTransaction, endUndoTransaction } from "./undo.js";
+import { DEFAULT_FILL } from "./tagcolors.js";
+import { renderTagPill, SURFACE_CLASS, injectTagStyles } from "./tagview.js";
+import { showPreviewFor, hidePreviewPanel } from "./preview.js";
+
+// Class on preview <img> elements so cleanup can target them precisely.
+const PREVIEW_CLASS = "ere-menu-preview";
+
+// A context menu can open before any node has mounted its widget, so the
+// shared tag stylesheet must be guaranteed here too (idempotent).
+injectTagStyles();
 
 // Base class for dynamic context menus
 export class DynamicContextMenu { // Added export
@@ -37,6 +47,9 @@ export class DynamicContextMenu { // Added export
         
         // Hide preview when closing if hidePreview method exists
         this.hidePreview();
+        // The rich panel lives on <body>, not inside the menu, so removing the
+        // menu root does not take it with it.
+        hidePreviewPanel(true);
     }
 
     handleKeyboard(e) {
@@ -252,18 +265,33 @@ export class DynamicContextMenu { // Added export
                 newItem.scrollIntoView({ block: 'nearest' });
             }
             
-            // Show preview for previewable types if showPreview method exists
+            // Preview the highlighted row. Groups and loras get the rich panel
+            // (thumbnail + the actual tags they contain, drawn with the node's
+            // own pill styling); anything else keeps the plain image preview.
             const option = this.options[index];
-            if (option && !option.disabled && this.showPreview &&
-                ['file', 'lora', 'embedding', 'group'].includes(option.type)) {
-                this.showPreview(`/erenodes/view/${option.type}/${option.path}`);
+            if (option && !option.disabled && ['file', 'lora', 'embedding', 'group'].includes(option.type)) {
+                if (option.type === 'group' || option.type === 'lora') {
+                    showPreviewFor({
+                        type: option.type,
+                        path: option.path,
+                        extension: option.extension,
+                        // Anchor to the menu, not the row: the panel sits beside
+                        // the whole list so it never covers the next item.
+                        anchor: this.root.getBoundingClientRect(),
+                    });
+                } else if (this.showPreview) {
+                    this.showPreview(`/erenodes/view/${option.type}/${option.path}`);
+                }
+            } else {
+                hidePreviewPanel();
             }
         } else {
+            hidePreviewPanel();
             // Hide preview when no item is highlighted if hidePreview method exists
             if (this.hidePreview) {
                 this.hidePreview();
             }
-        } 
+        }
     }
 
     setInitialHighlight() {
@@ -289,8 +317,13 @@ export class DynamicContextMenu { // Added export
         const imageUrl = url;
         const processImage = (url) => {
             if (!this.root || !this.root.isConnected) return;
+            // getCache resolves to a sentinel for 204/404 rather than rejecting
+            // (so a missing preview doesn't spam the console). Assigning that
+            // Symbol to img.src throws, so bail out here instead.
+            if (isNotFound(url) || typeof url !== 'string') return;
 
             this.previewImage = document.createElement('img');
+            this.previewImage.className = PREVIEW_CLASS;
 
             Object.assign(this.previewImage.style, {
                 position: 'fixed',
@@ -346,12 +379,13 @@ export class DynamicContextMenu { // Added export
     }
 
     hidePreview() {
-        // Remove all preview images from this instance's root to prevent accumulation or orphaned images
+        // Remove only *our* preview images. This used to sweep every <img> in
+        // the menu root, which would silently delete any image a menu item
+        // legitimately contained (e.g. a thumbnail rendered inside a row).
         if (this.root) {
-            const existingPreviews = this.root.querySelectorAll('img');
-            existingPreviews.forEach(img => img.remove());
+            this.root.querySelectorAll(`img.${PREVIEW_CLASS}`).forEach(img => img.remove());
         }
-        
+
         // Clear current instance's preview reference
         if (this.previewImage) {
             // Only call remove() if it's a DOM element, not a File object
@@ -369,7 +403,20 @@ export class DynamicContextMenu { // Added export
         input.style.display = 'none';
         document.body.appendChild(input);
 
+        // Both the change and the (removed) focus handler used to call
+        // removeChild unconditionally; whichever ran second threw NotFoundError.
+        // One idempotent teardown, and the promise settles exactly once.
+        let settled = false;
+        const cleanup = () => { if (input.isConnected) input.remove(); };
+
         return new Promise((resolve) => {
+            const finish = (value) => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                resolve(value);
+            };
+
             input.addEventListener('change', async (event) => {
                 const file = event.target.files[0];
                 if (file) {
@@ -391,9 +438,8 @@ export class DynamicContextMenu { // Added export
                              this.showPreview(e.target.result);
                          };
                          reader.readAsDataURL(file);
-                         
-                         resolve(file);
-                         document.body.removeChild(input);
+
+                         finish(file);
                          return;
                      }
 
@@ -444,14 +490,14 @@ export class DynamicContextMenu { // Added export
                         });
                     }
                 }
-                document.body.removeChild(input);
-                resolve(file);
+                finish(file);
             });
 
-            input.addEventListener('focus', () => {
-                document.body.removeChild(input);
-                resolve(null);
-            });
+            // Picker dismissed without choosing a file: 'change' never fires,
+            // so settle on 'cancel' instead. (The old 'focus' handler could fire
+            // from the programmatic .click() itself and resolve null while the
+            // user still had the dialog open.)
+            input.addEventListener('cancel', () => finish(null));
 
             input.click();
         });
@@ -487,10 +533,6 @@ export class FileContextMenu extends DynamicContextMenu {
         }
     }
     
-    setHighlight(index) {
-        super.setHighlight(index);
-    }
-
     async show(initialPath = "") {
         this.close();
 
@@ -561,9 +603,6 @@ export class FileContextMenu extends DynamicContextMenu {
             this.options.push({ type: 'separator' });
         }
 
-        if (this.currentPath) {
-        }
-        
         folders.forEach(folder => {
             this.options.push({
                 name: "📁 " + folder.name,
@@ -1058,8 +1097,10 @@ export class TagEditContextMenu extends DynamicContextMenu {
                 break;
             
             case 'info_panel':
-                item.className = "litemenu-entry submenu disabled";
-                item.style.cssText = "max-width: 256px; display: flex; flex-wrap: wrap; gap: 2.5px; opacity: 1;";
+                // ere-surface so the pills built by createPill pick up the same
+                // rules the nodes use (tagview.js scopes everything to it).
+                item.className = `litemenu-entry submenu disabled ${SURFACE_CLASS}`;
+                item.style.cssText = "max-width: 256px; display: flex; flex-wrap: wrap; gap: 5px; opacity: 1;";
                 // Apply half opacity only for non-interactive group previews
                 if (this.tag.type === 'group') {
                     item.style.opacity = "0.6";
@@ -1191,50 +1232,39 @@ export class TagEditContextMenu extends DynamicContextMenu {
         return pills;
     }
 
+    /**
+     * A pill for the info panel.
+     *
+     * Two quite different things share this: a *tag* from a group (read-only,
+     * must look exactly like the same tag inside a node) and a lora *trigger*
+     * word (clickable, toggles inclusion). The tag case defers entirely to the
+     * shared renderer; only the trigger case is bespoke.
+     */
     createPill(tagOrTrigger, isTrigger) {
-        const pillEl = document.createElement('span');
-        let displayName, pillFill;
-        pillEl.style.cssText = `padding: 2.5px 7.5px; border-radius: 5px; font-size: 11px; color: white; display: inline-block; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; vertical-align: middle; line-height: 1.5;`;
-        
-        if (isTrigger) {
-            displayName = tagOrTrigger;
-            const isTriggerActive = this.tag.triggers.includes(tagOrTrigger);
-            pillFill = isTriggerActive ? "#414650" : "#262626"; // Active/Inactive colors
-            pillEl.style.cursor = "pointer";
-            pillEl.style.boxShadow = isTriggerActive ? "" : "0px 0px 0px 1px #444 inset";
-            pillEl.onclick = () => {
-                const triggerIndex = this.tag.triggers.indexOf(tagOrTrigger);
-                if (triggerIndex > -1) {
-                    this.tag.triggers.splice(triggerIndex, 1);
-                    pillEl.style.background = "#262626"; // Inactive
-                    pillEl.style.boxShadow = "0px 0px 0px 1px #444 inset";
-                } else {
-                    this.tag.triggers.push(tagOrTrigger);
-                    pillEl.style.background = "#414650"; // Active
-                    pillEl.style.boxShadow = "";
-                }
-                this.onSelect(this.updateTag());
-            };
-        } else {
-            const tag = tagOrTrigger;
-            displayName = tag.name;
-            
-            if (tag.active === false) {
-                pillFill = "#262626";
-                pillEl.style.boxShadow = "0px 0px 0px 1px #444 inset";
-            } else {
-                pillFill = "#414650"; 
-                if (tag.type === 'lora') pillFill = "#415041"; // Dark green-ish
-                else if (tag.type === 'embedding') pillFill = "#504149"; // Dark purple-ish
-                else if (tag.type === 'group') pillFill = "#504c41"; // Dark orange-ish
-            }
+        if (!isTrigger) return renderTagPill(tagOrTrigger);
 
-            pillEl.style.cursor = "default";
-            if (tag.strength && tag.strength !== 1.0) displayName += `:${parseFloat(tag.strength).toFixed(2)}`;
-        }
-        pillEl.style.background = pillFill;
-        pillEl.textContent = displayName;
-        pillEl.title = displayName;
+        const pillEl = document.createElement('div');
+        pillEl.className = 'ere-pill';
+        const isTriggerActive = this.tag.triggers.includes(tagOrTrigger);
+        const paint = (active) => {
+            pillEl.style.background = active ? DEFAULT_FILL : "#262626";
+            pillEl.style.borderColor = active ? DEFAULT_FILL : "#444";
+        };
+        paint(isTriggerActive);
+        pillEl.style.cursor = "pointer";
+        pillEl.textContent = tagOrTrigger;
+        pillEl.title = tagOrTrigger;
+        pillEl.onclick = () => {
+            const triggerIndex = this.tag.triggers.indexOf(tagOrTrigger);
+            if (triggerIndex > -1) {
+                this.tag.triggers.splice(triggerIndex, 1);
+                paint(false);
+            } else {
+                this.tag.triggers.push(tagOrTrigger);
+                paint(true);
+            }
+            this.onSelect(this.updateTag());
+        };
         return pillEl;
     }
 
