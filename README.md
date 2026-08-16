@@ -46,6 +46,16 @@ ComfyUI-EreNodes provides an intuitive and feature-rich solution for handling pr
 - **Direct Node Integration**: Create tag groups directly from nodes with subfolder organization
 - **Quick Application**: Easy loading of saved tag groups as convenient pills or their content
 - **Import/Export**: Seamless sharing and backup of your tag collections
+- **Choose Where They Live**: Keep tag groups in the node folder, or in `ComfyUI/models/tag_groups` so they survive reinstalls and Manager updates — switching offers to copy your existing groups across
+
+### 🗂️ EreNodes Sidebar
+- **Native Sidebar Tab**: Browse tag groups, LoRAs and embeddings in a proper ComfyUI sidebar tab
+- **Search That Reads Inside**: Filter tag groups by filename *and* by the tags they actually contain
+- **Hover Previews**: Hover any entry to see its thumbnail and its tags, drawn with the exact same pills the nodes use
+- **Click to Add**: Click a tag group to drop a prefilled prompt node onto the canvas (node type is configurable)
+- **Drag Both Ways**: Drag an entry onto an existing node to append its tags — or drag a node's tag pills onto a sidebar folder to save them as a new tag group
+- **Multi-Select**: Ctrl+click, Shift+click or rubber-band drag over entries, exactly like tag pills in a node — then drag them all into a node at once, or right-click for bulk actions
+- **Pick Tags Out of a Preview**: Hover a tag group, move into the preview, select tags you want and drag just those into a prompt node
 
 ### ✏️ Advanced Tag Editing
 - **Effortless Replacement**: Quick edit tags or replacement of LoRAs, embeddings and Tag Groups
@@ -142,7 +152,13 @@ EreNodes provides flexible LoRA loading options to fit different workflow prefer
 
 ## 📋 Changelog
 
-### Version 3.1 - Latest
+### Version 3.2 - Latest
+- **EreNodes sidebar**: alternative way to manage tag groups in native sidebar tab with three sub-tabs (tag groups / LoRAs / embeddings), an accordion folder tree, live search, hover previews, click-to-add, and bi-directional drag & drop to and from prompt nodes
+- **Search inside tag groups**: the sidebar filter matches file names *and* the tags a group contains
+- **Configurable tag group folder**: keep them in the node folder (default, unchanged) or in `ComfyUI/models/tag_groups`, which survives reinstalls and Manager updates. Switching offers to copy existing groups — nothing is ever deleted. Advanced users can redirect it further with `tag_groups:` in `extra_model_paths.yaml`
+- **Type-coloured drag feedback**: the drop placeholder, drag ghost and target highlight now take the colour of what you're dragging — blue tags, green LoRAs, red embeddings, amber groups, violet for a mixed selection
+
+### Version 3.1
 - **Drag & drop reorder**: press-and-hold (or move) a tag pill to reorder it, with a live drop placeholder and drag preview
 - **Drag between nodes**: move pills across any pill-based prompt nodes; **Alt** while dropping copies instead of moving, duplicate names are skipped
 - **Multi-select**: **Ctrl+click** toggles individual pills, **Ctrl+drag** rubber-bands a box over them (Explorer-style — re-sweeping a selected pill deselects it), **Shift+click** selects a range, **Esc** or a click outside clears it — a drag started on a selected pill carries the whole set

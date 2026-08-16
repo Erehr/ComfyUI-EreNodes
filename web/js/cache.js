@@ -2,6 +2,21 @@ const cache = new Map();
 const notFound = Symbol('notFound'); // Sentinel for missing/absent content (404/204)
 
 /**
+ * True when getCache resolved to "there is no such content" (204/404/empty).
+ *
+ * The sentinel is deliberately not exported directly: callers only ever need to
+ * test for it, and handing out the Symbol invites it being stored somewhere.
+ * Callers that skip this check end up assigning a Symbol to e.g. `img.src`,
+ * which throws "Cannot convert a Symbol value to a string".
+ *
+ * @param {any} value Result of getCache()
+ * @returns {boolean}
+ */
+export function isNotFound(value) {
+    return value === notFound;
+}
+
+/**
  * Fetches and caches content. Returns cached data directly if available, or a Promise if fetching.
  * @param {string} url The URL of the content to fetch.
  * @param {string} type The type of content to cache (json, src).
