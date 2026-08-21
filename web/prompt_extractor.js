@@ -2,7 +2,7 @@ import { app } from "../../scripts/app.js";
 import { initializeSharedPromptFunctions, applyContextMenuPatch } from "./prompt.js";
 import { attachTagDomWidget } from "./js/renderer.js";
 import { parseTags } from "./js/parser.js";
-import { ACCEPTED_IMAGE_TYPES, isAcceptedImage, tagsFromResult, segmentCount, extractFromImage, reExtractByFilename } from "./js/util.js";
+import { ACCEPTED_IMAGE_TYPES, isAcceptedImage, tagsFromResult, segmentCount, extractFromImage, reExtractByFilename, forgetVerdicts } from "./js/util.js";
 
 const NODE_TYPE = "ErePromptExtractor";
 
@@ -37,6 +37,8 @@ function applyResult(node, result) {
     }
 
     node.properties._tagDataJSON = JSON.stringify(tags, null, 2);
+    // These pills are new to this session, so re-check them against disk rather than trusting a verdict cached for the same name earlier.
+    forgetVerdicts(tags);
     // Set before the update, so the change watcher does not fire on this one.
     node._extractSnapshot = node.properties._tagDataJSON;
     node.onUpdateTextWidget?.(node);

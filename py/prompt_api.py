@@ -101,9 +101,10 @@ async def check_files_handler(request):
             exists[key] = True
             continue
 
-        # An explicit extension wins; without one, try each the type allows.
+        # An explicit extension wins.
+        # Without one, try the bare name first: a lora recovered from prompt text carries its extension inside the name (`style.safetensors`), so appending another would probe `style.safetensors.safetensors`.
         extension = item.get("extension")
-        candidates = (extension,) if extension else config["extensions"]
+        candidates = (extension,) if extension else ("",) + tuple(config["extensions"])
 
         found = False
         for root in config["roots"]:

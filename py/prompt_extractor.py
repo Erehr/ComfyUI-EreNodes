@@ -313,6 +313,22 @@ def extract_from_workflow_graph(workflow):
                 return index
         return None
 
+    def input_name(node, index):
+        specs = node.get("inputs", []) or []
+        spec = specs[index] if index < len(specs) else None
+        return spec.get("name") if isinstance(spec, dict) else None
+
+    # Input indices with the text-bearing ones first.
+    # Slot order is not priority order: a CLIPTextEncode has `clip` at slot 0, and following that wire reaches whatever produced the CLIP - a LoRA scheduler fed by the same prompt chain - which then answers for the whole node and the real `text` wire is never tried.
+    def ordered_inputs(node):
+        specs = node.get("inputs", []) or []
+        named = {}
+        for index, spec in enumerate(specs):
+            if isinstance(spec, dict) and spec.get("name"):
+                named.setdefault(spec["name"], index)
+        order = [named[k] for k in TEXT_LINK_KEYS if k in named]
+        return order + [i for i in range(len(specs)) if i not in order]
+
     def collect(node_id, slot, visited, out):
         key = (node_id, slot)
         if key in visited:
@@ -327,6 +343,7 @@ def extract_from_workflow_graph(workflow):
             return
 
         node_type = str(node.get("type", ""))
+        order = ordered_inputs(node)
 
         # Upstream prefix first - it precedes this node's own contribution.
         prefix_index = input_index(node, "prefix")
@@ -339,13 +356,20 @@ def extract_from_workflow_graph(workflow):
                 out.append({"tags": tags})
             return
         if node_type in TEXT_NODE_TYPES:
+            # A text widget converted to an input keeps its old value in widgets_values, so a wired input always wins over the stored string.
+            wired = next((i for i in order
+                          if input_name(node, i) in ("text", "text_g", "string", "prompt")
+                          and (source_id, i) in source_of), None)
+            if wired is not None:
+                collect(source_id, wired, visited, out)
+                return
             text = _widget_text(node)
             if text:
                 out.append({"text": text})
                 return
 
         # Pass-through node: keep looking through its other inputs.
-        for index in range(len(node.get("inputs", []) or [])):
+        for index in order:
             if index == prefix_index:
                 continue
             before = len(out)

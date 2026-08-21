@@ -1,7 +1,7 @@
 import { app } from "../../scripts/app.js";
 import { TagContextMenuInsert, TagEditContextMenu, TagGroupContextMenu } from "./js/contextmenu.js";
 import { getCache, clearCache, clearCachePrefix, captureUndoState } from "./js/util.js";
-import { parseTags, parseTag, formatTag, parseTextToTagData, stripNestedGroups } from "./js/parser.js";
+import { parseTags, parseTag, formatTag, parseTextToTagData, stripNestedGroups, dedupeTags } from "./js/parser.js";
 
 /**
  * Write a tag group to disk — the one path for it, so the node menu and the sidebar share the overwrite confirmation, cache invalidation and toasts.
@@ -563,16 +563,8 @@ export function initializeSharedPromptFunctions(node, textWidget) {
                     const content = readerEvent.target.result;
                     const importedData = JSON.parse(content);
                     if (Array.isArray(importedData)) {
-                        const seenNames = new Set();
-                        const uniqueValidTags = [];
-                        for (const tag of importedData) {
-                            if (typeof tag.name === 'string' && typeof tag.active === 'boolean') {
-                                if (!seenNames.has(tag.name)) {
-                                    uniqueValidTags.push(tag);
-                                    seenNames.add(tag.name);
-                                }
-                            }
-                        }
+                        const uniqueValidTags = dedupeTags(importedData.filter(
+                            tag => typeof tag.name === 'string' && typeof tag.active === 'boolean'));
 
                         if (uniqueValidTags.length === 0 && importedData.length > 0) return;
 
@@ -731,17 +723,8 @@ export function initializeSharedPromptFunctions(node, textWidget) {
                     // Replace the group tag with its unpacked contents
                     currentTagData.splice(tagIndex, 1, ...unpackedTags);
                     
-                    // Remove duplicates that might have been introduced
-                    const finalTagData = [];
-                    const seenNames = new Set();
-                    for (const tag of currentTagData) {
-                        if (!seenNames.has(tag.name)) {
-                            finalTagData.push(tag);
-                            seenNames.add(tag.name);
-                        }
-                    }
-
-                    nodeInstance.properties._tagDataJSON = JSON.stringify(finalTagData, null, 2);
+                    nodeInstance.properties._tagDataJSON =
+                        JSON.stringify(dedupeTags(currentTagData), null, 2);
                     await nodeInstance.onUpdateTextWidget(nodeInstance);
                     app.graph.setDirtyCanvas(true);
                 }

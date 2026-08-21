@@ -1,7 +1,3 @@
-# Preview image storage.
-#
-# Covers are stored as WebP at a fixed display width, converted on save only — images already on disk are never rewritten.
-
 import os
 
 # Every image format this pack handles — covers it stores, and uploads it reads metadata from.

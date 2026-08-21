@@ -1,5 +1,5 @@
 import { app } from "../../../scripts/app.js";
-import { parseTextToTagData } from "./parser.js";
+import { parseTextToTagData, dedupeTags } from "./parser.js";
 
 // Fetch Cache
 
@@ -167,15 +167,7 @@ export function tagsFromResult(result, existing = []) {
         }
     }
 
-    // First occurrence wins: an upstream node set the tag, a later one merely repeated it, and the upstream entry carries the state we recovered.
-    const seen = new Set();
-    const tags = [];
-    for (const tag of collected) {
-        if (!tag?.name || seen.has(tag.name)) continue;
-        seen.add(tag.name);
-        tags.push(tag);
-    }
-    return tags;
+    return dedupeTags(collected);
 }
 
 /** How many nodes the prompt was spread across (for user-facing messages). */
@@ -292,6 +284,16 @@ async function request(items, era) {
         // It will be retried after a refresh.
         if (stale()) return;
         for (const item of items) verdicts.set(`${item.type}:${item.name}`, true);
+    }
+}
+
+/**
+ * Forget the verdicts for just these tags, so the next render re-checks them.
+ * Used after an extraction: the pills are new to this session, and a verdict cached for the same name may predate the file being installed or removed.
+ */
+export function forgetVerdicts(tags) {
+    for (const tag of tags || []) {
+        if (isCheckable(tag)) verdicts.delete(keyFor(tag));
     }
 }
 

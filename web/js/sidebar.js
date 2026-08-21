@@ -1,10 +1,11 @@
 import { app } from "../../../scripts/app.js";
-import { getCache, clearCachePrefix, isNotFound, loadStyle, clearMissingCache, isAcceptedImage, extractFromImage, tagsFromResult } from "./util.js";
+import { getCache, clearCachePrefix, isNotFound, loadStyle, clearMissingCache, isAcceptedImage, extractFromImage, tagsFromResult, forgetVerdicts } from "./util.js";
 import { SURFACE_CLASS, injectTagStyles, renderTagTile, previewUrl } from "./tagview.js";
 import { showPreviewFor, hidePreviewPanel, setPreviewHandlers } from "./preview.js";
 import { startExternalDrag, isDragActive, injectDragStyles } from "./dragdrop.js";
 import { TagSelectionContextMenu } from "./contextmenu.js";
 import { createTagEditor } from "./tageditor.js";
+import { dedupeTags } from "./parser.js";
 
 // Icon-button class string lifted verbatim from the frontend's Button.vue output (variant "muted-textonly", size "icon"); see reference/sidebar.html.
 // Reusing it means these buttons are the same size, radius, hover and focus treatment as the Refresh / Load-All buttons in the core sidebars.
@@ -137,7 +138,7 @@ async function tagsForRow(row, opts = {}) {
         const lists = await Promise.all(files.map(f => tagsForFile({
             ...f, tab: state.tab, type: "file",
         }, opts)));
-        return dedupe(lists.flat());
+        return dedupeTags(lists.flat());
     }
     return tagsForFile(row, opts);
 }
@@ -151,16 +152,7 @@ async function tagsForFile(row, { unpack = false } = {}) {
     return [{ name: row.path, type: "group", active: true, extension: row.extension || ".json" }];
 }
 
-function dedupe(tags) {
-    const seen = new Set();
-    const out = [];
-    for (const tag of tags) {
-        if (!tag?.name || seen.has(tag.name)) continue;
-        seen.add(tag.name);
-        out.push(tag);
-    }
-    return out;
-}
+
 
 // Filtering
 
@@ -408,7 +400,7 @@ function attachPress(el, row) {
             // A drag from a selected row carries the whole selection.
             const rows = state.selection.has(rowKey(row)) ? selectedRows() : [row];
             const lists = await Promise.all(rows.map(r => tagsForRow(r)));
-            const tags = dedupe(lists.flat());
+            const tags = dedupeTags(lists.flat());
             const label = rows.length > 1 ? `${rows.length} items` : row.name;
 
             // Tag groups drop as themselves; holding Alt drops their contents instead.
@@ -418,7 +410,7 @@ function attachPress(el, row) {
             let altLabel = "";
             if (state.tab === "group") {
                 const unpacked = await Promise.all(rows.map(r => tagsForRow(r, { unpack: true })));
-                altTags = dedupe(unpacked.flat());
+                altTags = dedupeTags(unpacked.flat());
                 altLabel = `${altTags.length} tag${altTags.length === 1 ? "" : "s"}`;
             }
 
@@ -658,6 +650,7 @@ function attachImageDrop(content) {
                 life: 6000,
             });
         }
+        forgetVerdicts(tags);
         openEditor({
             mode: "new",
             folder,
@@ -962,7 +955,7 @@ function openSelectionMenu(anchor) {
 
     const collect = async () => {
         const lists = await Promise.all(rows.map(r => tagsForRow(r, { unpack: true })));
-        return dedupe(lists.flat());
+        return dedupeTags(lists.flat());
     };
 
     const actions = [];

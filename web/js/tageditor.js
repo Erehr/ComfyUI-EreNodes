@@ -2,7 +2,7 @@ import { app } from "../../../scripts/app.js";
 import { initializeSharedPromptFunctions, saveTagGroup } from "../prompt.js";
 import { getCache, isNotFound, loadStyle, isAcceptedImage, ACCEPTED_IMAGE_TYPES, isKnownMissing, ensureChecked } from "./util.js";
 import { SURFACE_CLASS, injectTagStyles, renderTagPill, previewUrl } from "./tagview.js";
-import { parseTags } from "./parser.js";
+import { parseTags, dedupeTags } from "./parser.js";
 import { injectDragStyles, markDropZone, attachPillDrag, pruneSelection, handlePillSelectClick, handlePillContextMenu, consumeDragClick, clearAllSelections } from "./dragdrop.js";
 import { TagSelectionContextMenu } from "./contextmenu.js";
 
@@ -61,14 +61,7 @@ async function unpackGroups(host) {
         expanded.push(...copy);
     }
 
-    const seen = new Set();
-    const deduped = [];
-    for (const tag of expanded) {
-        if (!tag?.name || seen.has(tag.name)) continue;
-        seen.add(tag.name);
-        deduped.push(tag);
-    }
-    host.properties._tagDataJSON = JSON.stringify(deduped, null, 2);
+    host.properties._tagDataJSON = JSON.stringify(dedupeTags(expanded), null, 2);
     return true;
 }
 
