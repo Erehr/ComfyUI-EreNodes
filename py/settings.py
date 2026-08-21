@@ -3,10 +3,7 @@ import json
 
 SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
 
-# Keys are written by /erenodes/set_setting and read by name elsewhere, so this
-# is only the shape used when settings.json is missing or unreadable.
-# ('active_csv' used to be declared here but nothing ever read it - the CSV
-# selection lives under 'autocomplete.csv', see prompt_csv.get_tag_data.)
+# Only the shape used when settings.json is missing or unreadable; keys are written by /erenodes/set_setting and read by name elsewhere.
 DEFAULT_SETTINGS = {'autocomplete.csv': None}
 
 

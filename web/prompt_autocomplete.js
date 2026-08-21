@@ -1,4 +1,4 @@
-import { app } from "../../../scripts/app.js";
+import { app } from "../../scripts/app.js";
 import { TagContextMenu } from "./js/contextmenu.js";
 
 // Helper class for textarea caret operations
@@ -58,8 +58,7 @@ class TextAreaCaretHelper {
     }
 
     insertAtCursor(value, offset, finalOffset) {
-        // document.execCommand is deprecated; use setRangeText and dispatch an
-        // 'input' event so widget change callbacks still fire.
+        /** document.execCommand is deprecated; use setRangeText and dispatch an 'input' event so widget change callbacks still fire. */
         if (this.el.selectionStart != null) {
             const startPos = this.el.selectionStart;
             this.el.setRangeText(value, startPos + offset, this.el.selectionEnd, 'end');
@@ -178,6 +177,7 @@ class GlobalAutocomplete {
         this.currentWord = "";
         this.currentWordStart = 0;
         this.onKeyDown = this.onKeyDown.bind(this);
+        this.onInput = this.onInput.bind(this);
         this.onBlur = this.onBlur.bind(this);
         this.onClick = this.onClick.bind(this);
     }
@@ -188,6 +188,8 @@ class GlobalAutocomplete {
         this.attachedElement = inputElement;
         this.helper = new TextAreaCaretHelper(inputElement);
         this.attachedElement.addEventListener("keydown", this.onKeyDown, true);
+        // Composed text (Korean, Japanese, Chinese) never reaches onKeyDown as a finished character, so it needs its own event — see onInput.
+        this.attachedElement.addEventListener("input", this.onInput);
         this.attachedElement.addEventListener("blur", this.onBlur);
         this.attachedElement.addEventListener("click", this.onClick);
     }
@@ -195,10 +197,16 @@ class GlobalAutocomplete {
     detach() {
         if (this.attachedElement) {
             this.attachedElement.removeEventListener("keydown", this.onKeyDown, true);
+            this.attachedElement.removeEventListener("input", this.onInput);
             this.attachedElement.removeEventListener("blur", this.onBlur);
             this.attachedElement.removeEventListener("click", this.onClick);
             this.attachedElement = null;
             this.helper = null;
+        }
+        // A pending update would fire against the element we just let go of.
+        if (this.debounce) {
+            clearTimeout(this.debounce);
+            this.debounce = null;
         }
         this.closeMenu();
     }
@@ -274,6 +282,9 @@ class GlobalAutocomplete {
         
         // Handle regular character input.
         if (e.key.length === 1) {
+            // Mid-composition, `e.key` is whatever key was struck, not the character being formed — for Hangul it is a jamo that will be merged into a syllable that does not exist yet. onInput picks it up once the composition settles.
+            if (e.isComposing) return;
+
             // If a separator is typed, close the menu.
             if (/[,;"|}()\n]/.test(e.key)) {
                 this.closeMenu();
@@ -281,6 +292,21 @@ class GlobalAutocomplete {
                 // Otherwise, it's a word character, so show suggestions.
                 this.scheduleUpdate();
             }
+        }
+    }
+
+    /**
+     * Composed input (any IME). keydown reports the keystroke, not the character it produces, so onKeyDown alone left autocomplete dead in those languages.
+     * Also fires for plain typing, where scheduleUpdate's debounce absorbs it.
+     */
+    onInput(e) {
+        if (!e.data) return;   // deletions and composition starts carry no data
+
+        const lastChar = e.data.slice(-1);
+        if (/[,;"|}()\n]/.test(lastChar)) {
+            this.closeMenu();
+        } else {
+            this.scheduleUpdate();
         }
     }
 
@@ -324,7 +350,9 @@ class GlobalAutocomplete {
         const match = before.match(/([^,;"|}()\n]+)$/);
         if (match) {
             const word = match[0].replace(/^\s+/, "").replace(/\s/g, "_") || null;
-            if (word && word.length >= 2) {
+            // Two characters before suggesting keeps English from firing on every stray letter.
+            const minLength = word && /[^\x00-\x7F]/.test(word) ? 1 : 2;
+            if (word && word.length >= minLength) {
                 this.currentWordStart = before.length - match[0].length;
                 return word;
             }
@@ -354,11 +382,13 @@ class GlobalAutocomplete {
                 tag = tag.substring(1, tag.length - 1).trim();
             }
             
-            // Remove weight, e.g. "tag:1.2"
+            // Remove weight, e.g.
+            // "tag:1.2"
             const colonIndex = tag.lastIndexOf(':');
             if (colonIndex > 0) {
                 const potentialWeight = tag.substring(colonIndex + 1).trim();
-                // Basic check for a number. This won't catch [from:to:when] because "when" can be a word.
+                // Basic check for a number.
+                // This won't catch [from:to:when] because "when" can be a word.
                 if (/^[\d\.]+$/.test(potentialWeight) && !isNaN(parseFloat(potentialWeight))) {
                     return tag.substring(0, colonIndex).trim();
                 }
@@ -432,9 +462,7 @@ class GlobalAutocomplete {
 
         // Check for line wrap by comparing Y positions of word start and cursor end.
         if (Math.abs(endCoords.y - startCoords.y) > startCoords.lineHeight / 2) {
-            // The word has wrapped. We need to anchor the menu to the start of the *current* visual line.
-            // To do this, we can take the X coordinate from the start of the entire textarea,
-            // and the Y coordinate from the current cursor position.
+            // The word has wrapped.
             const leftEdgeCoords = getElementOrCursorCoords(this.attachedElement, 0);
             finalCoords = {
                 x: leftEdgeCoords.x,
@@ -500,13 +528,10 @@ class GlobalAutocomplete {
     }
 }
 
-// Initialize GlobalAutocomplete for general textareas
-// This needs to be done after the class definition.
+// Initialize GlobalAutocomplete for general textareas This needs to be done after the class definition.
 const ERE_NODE_TYPE_PREFIX = "ErePrompt";
 
-// Is this textarea the prompt input of one of our own nodes? Global autocomplete
-// gets turned off to avoid colliding with other extensions, but suggestions
-// are still expected inside EreNodes prompt fields (esp. Prompt Multiline).
+/** Is this textarea the prompt input of one of our own nodes? */
 function isEreNodeTextarea(target) {
     // Legacy: multiline (and any other) text widget owns the textarea as element/inputEl.
     for (const node of app.graph?._nodes ?? []) {
@@ -524,10 +549,28 @@ function isEreNodeTextarea(target) {
     return false;
 }
 
+/**
+ * Textareas the global autocomplete must keep its hands off, so another pack's own autocomplete does not open a second menu on the same keystroke.
+ * A setting rather than a vendor list, since we cannot know every pack that does this.
+ */
+function isExcludedTextarea(target) {
+    const raw = app.ui?.settings?.getSettingValue?.("EreNodes.Autocomplete.Exclude", "") ?? "";
+    for (const selector of raw.split(",").map(s => s.trim()).filter(Boolean)) {
+        try {
+            if (target.matches?.(selector) || target.closest?.(selector)) return true;
+        } catch {
+            // A typo in the setting is the user's to fix, but it must not take autocomplete down with it — skip the bad selector and carry on.
+            console.warn(`[EreNodes] Ignoring invalid autocomplete exclude selector: ${selector}`);
+        }
+    }
+    return false;
+}
+
 if (typeof app !== "undefined") {
     app.globalAutocompleteInstance = new GlobalAutocomplete(); // Store on app for access
     document.addEventListener("focusin", (e) => {
         if (e.target.tagName !== "TEXTAREA") return;
+        if (isExcludedTextarea(e.target)) return;
 
         const globalEnabled = app.ui.settings.getSettingValue('EreNodes.Autocomplete.Global', true);
         const nodesEnabled = app.ui.settings.getSettingValue('EreNodes.Autocomplete.Nodes', true);

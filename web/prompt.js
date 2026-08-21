@@ -1,31 +1,14 @@
 import { app } from "../../scripts/app.js";
-import { TagContextMenuInsert, TagEditContextMenu, TagGroupContextMenu, DynamicContextMenu } from "./js/contextmenu.js";
-import { getCache, updateCache, clearCache, clearCachePrefix } from "./js/cache.js";
-import { captureUndoState } from "./js/undo.js";
-
-
-const parseTags = value => {
-    try {
-        const parsed = JSON.parse(value || "[]");
-        if (Array.isArray(parsed)) return parsed;
-    } catch {}
-    return [];
-};
+import { TagContextMenuInsert, TagEditContextMenu, TagGroupContextMenu } from "./js/contextmenu.js";
+import { getCache, clearCache, clearCachePrefix, captureUndoState } from "./js/util.js";
+import { parseTags, parseTag, formatTag, parseTextToTagData, stripNestedGroups } from "./js/parser.js";
 
 /**
- * Write a tag group to disk.
+ * Write a tag group to disk — the one path for it, so the node menu and the sidebar share the overwrite confirmation, cache invalidation and toasts.
  *
- * Extracted from onSaveTagGroup so the sidebar can save through exactly the
- * same path (overwrite confirmation, cache invalidation, toasts) instead of
- * growing a second, subtly different implementation.
- *
- * @param {object} opts
- * @param {string} [opts.path]      folder relative to the tag-group root
- * @param {string} opts.filename    ".json" is appended if missing
- * @param {Array<object>} opts.tags
- * @param {File} [opts.imageFile]   optional preview image
- * @param {boolean} [opts.overwriteSilently] skip the "already exists" prompt
- * @returns {Promise<{ok: boolean, cancelled?: boolean, message?: string, fullPath: string}>}
+ * @param {string} [opts.path]  folder relative to the tag-group root
+ * @param {string} opts.filename  ".json" is appended if missing
+ * @param {boolean} [opts.overwriteSilently]  skip the "already exists" prompt
  */
 export async function saveTagGroup({ path = "", filename, tags, imageFile, overwriteSilently = false }) {
     const name = filename.toLowerCase().endsWith(".json") ? filename : `${filename}.json`;
@@ -35,8 +18,7 @@ export async function saveTagGroup({ path = "", filename, tags, imageFile, overw
         if (!overwriteSilently) {
             const checkResponse = await fetch(`/erenodes/get_tag_group?filename=${encodeURIComponent(fullPath)}`);
             if (checkResponse.ok) {
-                // app.ui.dialog.show() is not a confirm dialog (returns nothing);
-                // use the extensionManager confirm dialog with a window.confirm fallback.
+                // app.ui.dialog.show() is not a confirm dialog (returns nothing); use the extensionManager confirm dialog with a window.confirm fallback.
                 const message = `Tag group '${name}' already exists. Do you want to overwrite it?`;
                 const confirmed = app.extensionManager?.dialog?.confirm
                     ? await app.extensionManager.dialog.confirm({ title: "File Exists", message })
@@ -46,8 +28,7 @@ export async function saveTagGroup({ path = "", filename, tags, imageFile, overw
         }
 
         clearCache(`/erenodes/get_tag_group?filename=${encodeURIComponent(fullPath)}`);
-        // Also invalidate cached preview thumbnails for this group
-        // (src entries carry query strings, so prefix-match).
+        // Also invalidate cached preview thumbnails for this group (src entries carry query strings, so prefix-match).
         clearCachePrefix(`/erenodes/view/group/${fullPath.replace(/\.json$/i, "")}`);
 
         const formData = new FormData();
@@ -83,125 +64,6 @@ export async function saveTagGroup({ path = "", filename, tags, imageFile, overw
     }
 }
 
-/** Strip tag groups from a list — nesting a group inside a group is not allowed. */
-export function stripNestedGroups(tags, { warn = true } = {}) {
-    const groups = tags.filter(tag => tag.type === 'group');
-    if (!groups.length) return tags;
-    if (warn) {
-        app.extensionManager?.toast?.add({
-            severity: "warn",
-            summary: "Nested tag groups not allowed.",
-            detail: `${groups.length} tag group(s) skipped in saving.`,
-            life: 6000,
-        });
-    }
-    return tags.filter(tag => tag.type !== 'group');
-}
-
-function parseTag(tagString) {
-    let originalString = (tagString || "").trim();
-    if (!originalString) return null;
-
-    const groupMatch = originalString.match(/^group:(.+)$/);
-    if (groupMatch) {
-        return { name: groupMatch[1], type: 'group', active: true };
-    }
-
-    const loraMatch = originalString.match(/^<lora:([^:]+)(?::([\d.-]+))?>$/);
-    if (loraMatch) {
-        const name = loraMatch[1];
-        let strength = loraMatch[2] ? parseFloat(loraMatch[2]) : undefined;
-        if (strength === 1.0 || isNaN(strength)) strength = undefined;
-        
-        return { name: name, type: 'lora', strength, active: true };
-    }
-
-    let name = originalString;
-    let strength;
-
-    const strengthMatch = name.match(/^\((.*):([\d.-]+)\)$/);
-    if (strengthMatch) {
-        name = strengthMatch[1].trim();
-        strength = parseFloat(strengthMatch[2]);
-        if (isNaN(strength) || strength === 1.0) {
-            strength = undefined;
-        }
-    }
-
-    let type = 'tag';
-    if (name.startsWith('embedding:')) {
-        type = 'embedding';
-        name = name.substring('embedding:'.length);
-    }
-
-    return { name, type, strength, active: true };
-}
-
-function formatTag(tag) {
-
-    if (tag.type === 'lora') {
-        const strength = (tag.strength === undefined) ? 1.0 : tag.strength;
-        const strengthStr = (strength % 1 === 0) ? strength.toFixed(1) : strength;
-        const filename = tag.extension ? `${tag.name}${tag.extension}` : tag.name;
-        return `<lora:${filename}:${strengthStr}>`;
-    }
-
-    if (tag.type === 'embedding') {
-        return `embedding:${tag.name}`;
-    }
-
-    if (tag.type === 'group') {
-        const filename = tag.extension ? `${tag.name}${tag.extension}` : tag.name;
-        return `group:${filename}`;
-    }
-
-    if (tag.strength && tag.strength !== 1.0) {
-        return `(${tag.name}:${tag.strength})`;
-    }
-
-    return tag.name;
-}
-
-function parseTextToTagData(text, oldTagData = []) {
-    const oldTagsByName = new Map(oldTagData.map(t => [t.name, t]));
-    const lines = (text || "").split('\n');
-    const tagData = [];
-    let lastLineWasEmpty = false;
-
-    for (const line of lines) {
-        const trimmedLine = line.trim();
-
-        const tagStrings = (trimmedLine.split(/,(?![^()]*\))/g) || [])
-            .map(s => s.trim())
-            .filter(s => s);
-        
-        const newTags = tagStrings.map(parseTag).filter(Boolean);
-
-        if (newTags.length > 0) {
-            for (const tag of newTags) {
-                const oldTag = oldTagsByName.get(tag.name);
-                if (oldTag) {
-                    tag.active = oldTag.active;
-                } else {
-                    tag.active = true; 
-                }
-            }
-            tagData.push(...newTags);
-            lastLineWasEmpty = false;
-        }
-    }
-    
-    const finalTagData = [];
-    const seenNames = new Set();
-    for (const tag of tagData) {
-        if (tag.name && !seenNames.has(tag.name)) {
-            finalTagData.push(tag);
-            seenNames.add(tag.name);
-        }
-    }
-    return finalTagData;
-}
-
 const getTextInput = async (title, promptMessage, defaultValue = "") => {
     // Prefer the ComfyUI dialog API (window.prompt is blocked in some desktop/embedded contexts)
     if (app.extensionManager?.dialog?.prompt) {
@@ -221,9 +83,8 @@ const getTextInput = async (title, promptMessage, defaultValue = "") => {
     return value;
 };
 
-// Global keyboard shortcuts for tag nodes (Ctrl+V paste). The old
-// processContextMenu hijack for pill right-clicks is gone: quick edit is
-// handled by DOM contextmenu listeners on the pills (renderer.js).
+// Global keyboard shortcuts for tag nodes (Ctrl+V paste).
+// The old processContextMenu hijack for pill right-clicks is gone: quick edit is handled by DOM contextmenu listeners on the pills (renderer.js).
 let contextMenuPatched = false;
 const ERE_TAG_NODE_TYPES = ["ErePromptCloud", "ErePromptToggle", "ErePromptMultiSelect", "ErePromptRandomizer", "ErePromptGallery"];
 
@@ -244,13 +105,7 @@ export function applyContextMenuPatch() {
             if (selectedNodes.length === 1) {
                 const node = selectedNodes[0];
                 if (node && ERE_TAG_NODE_TYPES.includes(node.type)) {
-                    // Block ComfyUI's paste handler NOW: it pastes its internal
-                    // node clipboard regardless of what the system clipboard
-                    // holds, so letting it run alongside us duplicated the last
-                    // copied node on every tag paste. We then decide by system
-                    // clipboard content: tag text → paste tags; JSON or empty
-                    // (a copied node / nothing) → hand the paste back to
-                    // ComfyUI manually.
+                    // Block ComfyUI's handler first — it pastes its node clipboard whatever the system clipboard holds — then decide: tag text pastes tags, JSON hands it back.
                     e.preventDefault();
                     e.stopPropagation();
                     const comfyPaste = () => app.canvas?.pasteFromClipboard?.();
@@ -290,12 +145,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         node.properties._tagSeparator = ", "; // Default value
     }
 
-    // --- separator widget bridge ---
-    // User edits _prefixSeparator in the Properties panel (works in both
-    // renderers). Python's process() only receives widget/input values, not
-    // node.properties — so this hidden widget mirrors the property for the
-    // backend. onConfigure also repairs old workflows where positional widget
-    // values shifted when this input was first added.
+    // Separator bridge: _prefixSeparator is edited in the Properties panel, but process() only sees widget values — so this hidden widget mirrors it.
     const sepWidget = node.widgets?.find(w => w.name === "separator");
     if (sepWidget) {
         sepWidget.computeSize = () => [0, 0];
@@ -331,7 +181,6 @@ export function initializeSharedPromptFunctions(node, textWidget) {
     };
 
     // Capture existing onConfigure to allow chaining.
-    // Runs after a workflow's properties/widget values have been applied.
     const existingOnConfigure = node.onConfigure;
     node.onConfigure = function(info) {
         if (existingOnConfigure) {
@@ -340,10 +189,8 @@ export function initializeSharedPromptFunctions(node, textWidget) {
 
         const sep = this.widgets?.find(w => w.name === "separator");
         if (sep) {
-            // Migration: workflows saved before the separator widget existed
-            // have one fewer widget value, so positional loading can shift the
-            // next widget's value (randomizer's control combo, multiline's
-            // placeholder button) into the separator slot. Detect and repair.
+            // Workflows saved before the separator widget existed have one fewer widget value, so positional loading shifts the next widget's value into it.
+            // Detect that and hand it back.
             const ctrl = this.widgets?.find(w => w.name === "control after generate");
             const controlModes = ["fixed", "increment", "decrement", "randomize"];
             if (ctrl && (ctrl.value === undefined || ctrl.value === null) && controlModes.includes(sep.value)) {
@@ -361,9 +208,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             }
         }
 
-        // Re-derive the text widget from tag data now that properties are
-        // loaded (onNodeCreated runs before properties are applied, so the
-        // update there ran against empty data).
+        // Re-derive the text widget from tag data now that properties are loaded (onNodeCreated runs before properties are applied, so the update there ran against empty data).
         this.onUpdateTextWidget?.(this);
     };
 
@@ -496,9 +341,6 @@ export function initializeSharedPromptFunctions(node, textWidget) {
                 return;
             }
 
-            // This used to `throw` from a bare async callback — nothing caught
-            // it, so a malformed file produced an unhandled rejection and no
-            // user-visible feedback at all.
             if (!Array.isArray(resolvedGroupTags)) {
                 console.error("[EreNodes] Tag group is not an array:", tagObject.name, resolvedGroupTags);
                 app.extensionManager?.toast?.add({
@@ -528,8 +370,6 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             } else { // Handles ErePromptMultiline
                 const textWidget = node.widgets.find(w => w.name === "text");
                 if (textWidget) {
-                    // Use the node's specified tagSeparator, defaulting to ", "
-                    // And ensure \n in the separator string becomes an actual newline
                     const separator = (node.properties._tagSeparator || ", ").replace(/\\n/g, "\n");
                     const newTagsString = resolvedGroupTags.map(formatTag).join(separator);
                     
@@ -556,11 +396,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
     };
 
     /**
-     * @param {*} e             positioning event for the menu
-     * @param {?{tags: Array, indices: number[]}} subset
-     *        When given (pill multi-selection), only those tags are saved and
-     *        "save and convert" replaces just them — the rest of the node is
-     *        left alone.
+     * @param {?{tags, indices}} subset  a pill multi-selection: only these are saved, and "save and convert" replaces only them.
      */
     node.onSaveTagGroup = (e, subset = null) => {
 
@@ -576,43 +412,14 @@ export function initializeSharedPromptFunctions(node, textWidget) {
                     tagDataToSave = parseTextToTagData(textWidget ? textWidget.value : "");
                 }
 
-                const originalTagData = [...tagDataToSave];
                 tagDataToSave = stripNestedGroups(tagDataToSave);
 
-                const saved = await saveTagGroup({
+                await saveTagGroup({
                     path: tagObject.path,
                     filename: tagObject.filename,
                     tags: tagDataToSave,
                     imageFile: tagObject.imageFile,
                 });
-                if (saved.cancelled || !saved.ok) return;
-                {
-                    // Replace saved tags with new group tag if requested
-                    if (tagObject.shouldReplace) {
-                        const groupName = tagObject.path ? `${tagObject.path}/${tagObject.filename.replace('.json', '')}` : tagObject.filename.replace('.json', '');
-                        const newGroupTag = { name: groupName, type: 'group', active: true, extension: '.json' };
-
-                        let finalTagData;
-                        if (subset) {
-                            // Swap just the selected tags for the group pill,
-                            // in place. Indices are ascending, so the first one
-                            // is also the insert position after the removal.
-                            const all = parseTags(node.properties._tagDataJSON || "[]");
-                            const drop = new Set(subset.indices);
-                            const at = Math.min(...subset.indices);
-                            finalTagData = all.filter((_, i) => !drop.has(i));
-                            finalTagData.splice(at, 0, newGroupTag);
-                        } else {
-                            finalTagData = [...originalTagData.filter(tag => tag.type === 'group'), newGroupTag];
-                        }
-
-                        node.properties._tagDataJSON = JSON.stringify(finalTagData, null, 2);
-                        if (node.onUpdateTextWidget) {
-                            node.onUpdateTextWidget(node);
-                        }
-                        app.graph.setDirtyCanvas(true);
-                    }
-                }
             } catch (error) {
                 console.error('[EreNodes] Error saving tag group:', error);
                 app.extensionManager.toast.add({
@@ -812,6 +619,31 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         app.graph.setDirtyCanvas(true);
     };
 
+    /** Step every active tag along the list by `shift`, wrapping — the Randomizer's increment/decrement. */
+    const shiftActiveTags = async (shift) => {
+        const tagData = parseTags(node.properties._tagDataJSON || "[]");
+        const usable = tagData.filter(t => t.name);
+        if (usable.length < 2) return;
+
+        const activeIndices = [];
+        usable.forEach((tag, i) => { if (tag.active) activeIndices.push(i); });
+        // Nothing on means nothing to step; every one on means every step is a no-op.
+        // Both would otherwise burn a re-render per generation.
+        if (!activeIndices.length || activeIndices.length === usable.length) return;
+
+        usable.forEach(t => t.active = false);
+        for (const i of activeIndices) {
+            usable[(i + shift + usable.length) % usable.length].active = true;
+        }
+
+        node.properties._tagDataJSON = JSON.stringify(tagData, null, 2);
+        await node.onUpdateTextWidget(node);
+        app.graph.setDirtyCanvas(true);
+    };
+
+    node.onIncrement = () => shiftActiveTags(1);
+    node.onDecrement = () => shiftActiveTags(-1);
+
     node.onAddTag = (e, pos) => {
         const addTagObject = async (tagObject) => {
             if (!tagObject || !tagObject.name) return;
@@ -853,8 +685,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         }
 
         const tagData = parseTags(node.properties._tagDataJSON || "[]");
-        // Prefer the pill's tag index (set by nodes with index-aware pill maps,
-        // e.g. the gallery) - name lookup collides when two tags share a name.
+        // Index first: a name lookup collides when two tags share a name.
         const clickedTag = (clickedPill.index != null)
             ? tagData[clickedPill.index]
             : tagData.find(t => t.name === clickedPill.label);
@@ -866,7 +697,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         app.graph.setDirtyCanvas(true);
     };
     
-    node.onTagQuickEdit = async function(event, nodeInstance, clickedPill, nodeScreenWidth) { // Added nodeScreenWidth
+    node.onTagQuickEdit = async function(event, nodeInstance, clickedPill) {
         if (!clickedPill) return;
 
         const tagData = parseTags(nodeInstance.properties._tagDataJSON || "[]");
@@ -934,15 +765,13 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             if (isSpecialType) {
                 // Start with clickedTag to preserve properties like 'active', 'extension', etc.
                 finalTag = { ...clickedTag };
-                // Overwrite with all defined properties from editedTag
-                // This includes name (if changed by file selection) and potentially strength (if not 1.0)
+                // Overwrite with all defined properties from editedTag This includes name (if changed by file selection) and potentially strength (if not 1.0)
                 for (const key in editedTag) {
                     if (editedTag.hasOwnProperty(key)) {
                         finalTag[key] = editedTag[key];
                     }
                 }
-                // If updateTag deleted strength from editedTag (because it was 1.0),
-                // ensure it's also removed/undefined in finalTag.
+                /** If updateTag deleted strength from editedTag (because it was 1.0), ensure it's also removed/undefined in finalTag. */
                 if (editedTag.strength === undefined) {
                     delete finalTag.strength;
                 }
@@ -982,9 +811,6 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             }
         };
 
-        // Reordering lives in the drag & drop layer (web/js/dragdrop.js) now —
-        // the quick edit menu no longer carries Move Up / Move Down.
-
         const imageCallback = () => {
             if (nodeInstance) {
                 // Redraw the node to reflect the new image
@@ -995,9 +821,8 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         // Calculate existing tags for file filtering
         const existingTags = tagData.map(tag => ({ name: tag.name, type: tag.type }));
         
-        // The 'event' parameter (which is positionEvent from applyContextMenuPatch)
-        // now has clientX and clientY correctly set.
-        new TagEditContextMenu(event, clickedTag, saveCallback, deleteCallback, imageCallback, unpackCallback, tagIndex, nodeScreenWidth, existingTags);
+        // The 'event' parameter (which is positionEvent from applyContextMenuPatch) now has clientX and clientY correctly set.
+        new TagEditContextMenu(event, clickedTag, saveCallback, deleteCallback, imageCallback, unpackCallback, tagIndex, existingTags);
     };
     
     node.onUpdateTextWidget = async (node) => {
@@ -1022,8 +847,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
                 if (currentLineTags.length > 0) {
                     const line = currentLineTags.join(tagSeparator);
 
-                    // If there are already parts, and the last part is content (not a separator/newline),
-                    // then we need to add a separator before adding this new line of content.
+                    // If there are already parts, and the last part is content (not a separator/newline), then we need to add a separator before adding this new line of content.
                     if (parts.length > 0 && parts[parts.length - 1] !== tagSeparator && parts[parts.length - 1].trim() !== '') {
                         parts.push(tagSeparator);
                     }
@@ -1075,8 +899,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         if (currentLineTags.length > 0) {
             const line = currentLineTags.join(tagSeparator);
 
-            // If there are already parts, and the last part is content (not a separator/newline),
-            // then we need to add a separator before adding this new line of content.
+            // If there are already parts, and the last part is content (not a separator/newline), then we need to add a separator before adding this new line of content.
             if (parts.length > 0 && parts[parts.length - 1] !== tagSeparator && parts[parts.length - 1].trim() !== '') {
                 parts.push(tagSeparator);
             }
@@ -1090,8 +913,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
 
         // For multiline nodes, don't modify the text widget content when updating separators
         if (node.type !== "ErePromptMultiline") {
-            // Filter out any empty strings that might result from consecutive separators
-            // or separators at the beginning/end without content.
+            // Filter out any empty strings that might result from consecutive separators or separators at the beginning/end without content.
             let currentText = parts.filter(part => part.trim() !== '' || part === tagSeparator).join('');
             // If the final result is just the separator itself (e.g. only a separator was active), make it empty.
             if (currentText === tagSeparator && activeTags.filter(t => t.type !== 'group').length === 0) {
@@ -1103,8 +925,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         }
         // For multiline nodes, preserve the existing text content
 
-        // Undo checkpoint — no-op when nothing actually changed (the tracker
-        // diffs serialized state), so calls during workflow load are safe.
+        // Undo checkpoint — no-op when nothing actually changed (the tracker diffs serialized state), so calls during workflow load are safe.
         captureUndoState();
     };
 

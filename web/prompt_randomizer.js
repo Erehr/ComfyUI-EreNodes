@@ -9,9 +9,7 @@ app.registerExtension({
     setup() {
         applyContextMenuPatch();
 
-        // Fire once per completed prompt (the old "status" queue_remaining===0
-        // check only fired when the whole queue emptied, so queued batches
-        // only randomized once at the end).
+        // Fire once per completed prompt (the old "status" queue_remaining===0 check only fired when the whole queue emptied, so queued batches only randomized once at the end).
         api.addEventListener("execution_success", () => {
             setTimeout(() => {
                 const graph = app.graph;

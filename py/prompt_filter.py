@@ -10,8 +10,8 @@ def list_csv_files():
     return sorted(f for f in os.listdir(CSV_FILES_PATH) if f.endswith(".csv"))
 
 
+# Strip lora/embedding syntax, weights and wrapping brackets from a token.
 def _clean_token(token):
-    """Strip lora/embedding syntax, weights and wrapping brackets from a token."""
     token = re.sub(r'<lora:[^:>]+(:[^:>]+){1,2}>', '', token)
     token = re.sub(r'lora\([^)]+\)', '', token)
     token = re.sub(r'<[^>]+>', '', token)
@@ -27,8 +27,8 @@ def _clean_token(token):
     return token.replace(r'\(', '(').replace(r'\)', ')').strip()
 
 
+# Keep only tokens known to the CSV (as tag or alias).
 def filter_prompt(prompt, csv_file, alias_handling):
-    """Keep only tokens known to the CSV (as tag or alias)."""
     prompt = prompt.lower().replace("_", " ")
     tokens = [t.strip() for t in re.split(r'[,\n]', prompt) if t.strip()]
 

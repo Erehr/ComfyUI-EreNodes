@@ -1,0 +1,53 @@
+/* The tag group editor panel.
+   Its name row, cover row and buttons use ComfyUI's classes; this is the frame around them. */
+
+/* The name row, the cover row and the buttons are ComfyUI's own classes; what is left here is the panel frame and the cover pane's proportions. */
+.ere-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    height: 100%;
+    min-height: 0;
+    padding: 8px 8px 10px;
+}
+.ere-editor-dom {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+.ere-editor-dom .ere-scroll {
+    overflow-y: auto;
+}
+
+/* The cover sits where the tab strip would be, so it must not grow tall enough to push the pills off screen in a short sidebar. */
+.ere-editor-clear {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 50%;
+    cursor: pointer;
+    background: rgba(0, 0, 0, .6);
+    color: #fff;
+    font-size: 11px;
+    line-height: 1;
+}
+.ere-editor-clear:hover {
+    background: rgba(0, 0, 0, .85);
+}
+.ere-editor-empty {
+    padding: 8px 2px;
+    font-size: 11px;
+    opacity: .55;
+}
+.ere-editor-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+    flex: 0 0 auto;
+    padding-top: 2px;
+}

@@ -7,7 +7,8 @@ from .settings import get_erenodes_settings
 
 # Define constants for export
 CSV_FILES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "__autocomplete__")
-DEFAULT_ENCODING = 'utf-8'
+# utf-8-sig, not utf-8: several community tag files (the Korean danbooru sets in particular) are saved with a BOM, and without this the first row's tag comes back as "\ufeff1girl" — silently unmatchable, and it is always the highest-count tag in a count-sorted file.
+DEFAULT_ENCODING = 'utf-8-sig'
 TAG_TYPES = {
     0: "General",
     1: "Character",
@@ -22,13 +23,32 @@ TAG_DATA_CACHE = {}
 FILTER_MAP_CACHE = {}
 
 
-def get_filter_maps(csv_file):
-    """Return (tag_set, alias_map) for a CSV file, cached by mtime.
+# Yield data rows, skipping a header line if the file has one.
+#
+# Two shapes are in circulation, so it is detected rather than assumed: a real data row has an integer post count in column 3.
+def _open_rows(csvfile):
+    reader = csv.reader(csvfile)
+    first = next(reader, None)
+    if first is None:
+        return
+    if not _is_header(first):
+        yield first
+    for row in reader:
+        yield row
 
-    Previously the filter node re-read and re-parsed the whole CSV on every
-    execution; this caches the derived maps and invalidates when the file
-    changes on disk.
-    """
+
+def _is_header(row):
+    if len(row) < 3:
+        return False
+    try:
+        int(row[2])
+    except (TypeError, ValueError):
+        return True
+    return False
+
+
+# Return (tag_set, alias_map) for a CSV file, cached by mtime.
+def get_filter_maps(csv_file):
     if not csv_file:
         return None
     csv_path = os.path.join(CSV_FILES_PATH, csv_file)
@@ -47,9 +67,7 @@ def get_filter_maps(csv_file):
     alias_map = {}
     try:
         with open(csv_path, newline='', encoding=DEFAULT_ENCODING) as csvfile:
-            reader = csv.reader(csvfile)
-            next(reader, None)  # Skip header
-            for row in reader:
+            for row in _open_rows(csvfile):
                 if len(row) < 4:
                     continue
                 tag = row[0].strip().lower().replace('_', ' ')
@@ -72,9 +90,8 @@ def load_tags_from_csv(csv_path):
     tags = []
     if csv_path and os.path.isfile(csv_path):
         try:
-            with open(csv_path, newline='', encoding='utf-8') as csvfile:
-                reader = csv.reader(csvfile)
-                for row in reader:
+            with open(csv_path, newline='', encoding=DEFAULT_ENCODING) as csvfile:
+                for row in _open_rows(csvfile):
                     if len(row) < 3: continue
                     try:
                         name = row[0].strip().lower().replace('_', ' ')

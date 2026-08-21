@@ -1,8 +1,7 @@
 import re
 import os
 
-# <lora:name>, <lora:name:model_strength> or <lora:name:model_strength:clip_strength>
-# Supports negative strengths; name may not contain ':' or '>'.
+# <lora:name>, <lora:name:model_strength> or <lora:name:model_strength:clip_strength> Supports negative strengths; name may not contain ':' or '>'.
 LORA_REGEX = re.compile(r"<lora:([^:>]+)(?::(-?[0-9.]+))?(?::(-?[0-9.]+))?>")
 
 
@@ -13,8 +12,8 @@ def _to_float(value, fallback):
         return fallback
 
 
+# Extract LoRA tags into ComfyUI LORA_STACK format.
 def parse_lora_stack(prompt):
-    """Extract LoRA tags into ComfyUI LORA_STACK format."""
     lora_stack = []
     for name, model_s, clip_s in LORA_REGEX.findall(prompt or ""):
         filename = os.path.normpath(name)

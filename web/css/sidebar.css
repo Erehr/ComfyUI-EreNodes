@@ -1,0 +1,117 @@
+/* Only what ComfyUI's own Tailwind classes do not already provide: drag and selection affordances, grid view, inline naming. */
+
+/* Drag, selection and grid view — no upstream equivalent. */
+.ere-sidebar .ere-sb-body {
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+}
+.ere-sidebar .ere-sb-selected,
+.ere-sidebar .ere-sb-tile.ere-sb-selected {
+    background: rgba(var(--ere-drag-accent-rgb, 74, 158, 255), .18);
+    outline: 1px solid var(--ere-drag-accent, var(--p-primary-color, #4a9eff));
+    outline-offset: -1px;
+    border-radius: var(--p-border-radius-sm, 4px);
+}
+.ere-sb-drop-target {
+    outline: 2px dashed var(--ere-drag-accent, var(--p-primary-color, #4a9eff)) !important;
+    outline-offset: -2px;
+    background: rgba(var(--ere-drag-accent-rgb, 74, 158, 255), .12) !important;
+    border-radius: var(--p-border-radius-sm, 4px);
+}
+
+/* CSS grid, not flex-wrap: folder tiles and file tiles are different elements with different intrinsic widths, so a flex row packed them into different column counts and drifted further out of alignment the wider the panel got. */
+.ere-sidebar .ere-sb-grid {
+    display: grid;
+    gap: .5rem;
+    padding: .5rem;
+    grid-template-columns: repeat(auto-fill, var(--ere-tile-size, 96px));
+    justify-content: start;
+    align-items: start;
+}
+.ere-sidebar .ere-sb-tile {
+    position: relative;
+    cursor: pointer;
+    user-select: none;
+    width: var(--ere-tile-size, 96px);
+    height: var(--ere-tile-size, 96px);
+    border-radius: var(--p-border-radius-md, 6px);
+}
+.ere-sidebar .ere-sb-tile > .ere-tile {
+    width: 100% !important;
+    height: 100% !important;
+}
+.ere-sidebar .ere-sb-folder-tile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: .25rem;
+    border: 1px solid var(--p-content-border-color, var(--border-color, #444));
+    background: var(--p-content-background, var(--comfy-input-bg, #222));
+}
+.ere-sidebar .ere-sb-tile-name {
+    max-width: 100%;
+    padding: 0 .25rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+}
+.ere-sidebar .ere-sb-tile-badge {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+}
+.ere-sidebar .ere-sb-crumbs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px;
+    padding: .25rem .5rem;
+    opacity: .85;
+    font-size: .75rem;
+}
+.ere-sidebar .ere-sb-crumb {
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+    padding: 2px 4px;
+    border-radius: 4px;
+}
+.ere-sidebar .ere-sb-crumb:hover {
+    background: var(--p-content-hover-background, rgba(255, 255, 255, .08));
+}
+
+/* Inline naming (rename / new folder) — sized to sit inside a row without changing its height, so the tree does not jump when editing starts. */
+.ere-sidebar .ere-sb-inline {
+    min-width: 0;
+    flex: 1 1 auto;
+    height: 20px;
+    padding: 0 4px;
+    border-radius: var(--p-border-radius-sm, 4px);
+    border: 1px solid var(--p-primary-color, #4a9eff);
+    background: var(--p-content-background, var(--comfy-input-bg, #222));
+    color: inherit;
+    font: inherit;
+    font-size: .75rem;
+    outline: none;
+}
+.ere-sidebar .ere-sb-tile .ere-sb-inline {
+    width: 100%;
+    flex: 0 0 auto;
+}
+.ere-sidebar .ere-sb-empty {
+    padding: 1rem;
+    text-align: center;
+    opacity: .55;
+    font-size: .75rem;
+}
+.ere-sidebar .ere-sb-where {
+    margin-top: .4rem;
+    font-size: 10px;
+    opacity: .8;
+    word-break: break-all;
+}

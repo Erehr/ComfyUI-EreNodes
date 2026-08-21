@@ -2,6 +2,10 @@
 from .py import prompt_api  # noqa: F401
 from .py import prompt_csv  # noqa: F401
 
+# No routes of its own (prompt_api owns those), but importing it here surfaces
+# any problem at startup rather than on the first image drop.
+from .py import prompt_extractor  # noqa: F401
+
 from .py import prompt
 from .py import prompt_filter
 from .py import prompt_lora_stack

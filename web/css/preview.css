@@ -1,0 +1,65 @@
+/* The floating hover preview panel. */
+
+#erenodes-hover-preview {
+    position: fixed;
+    z-index: 10050;
+    pointer-events: none;
+    max-width: 320px;
+    max-height: 70vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid var(--component-node-border, #444);
+    background: var(--comfy-menu-bg, #202020);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, .55);
+}
+
+/* Interactive mode: the pointer can move into the panel and work with the pills.
+   Only enabled when the caller opts in, so menu previews (which sit under a moving cursor) stay click-through. */
+#erenodes-hover-preview.ere-preview-interactive {
+    pointer-events: auto;
+}
+#erenodes-hover-preview.ere-preview-interactive .ere-pill {
+    cursor: grab;
+}
+#erenodes-hover-preview[hidden] {
+    display: none;
+}
+#erenodes-hover-preview img.ere-preview-img {
+    display: block;
+    max-width: 100%;
+    max-height: 220px;
+    object-fit: contain;
+    border-radius: 5px;
+    align-self: center;
+}
+
+/* Must beat the rule above, which would otherwise re-show a broken image icon for every file that has no preview (a plain [hidden] attribute loses to any explicit display declaration). */
+#erenodes-hover-preview img.ere-preview-img[hidden] {
+    display: none;
+}
+
+/* Extra breathing room inside the cloud gives the rubber band somewhere to start; without it every pixel is a pill and a drag always grabs one. */
+#erenodes-hover-preview .ere-cloud {
+    overflow-y: auto;
+    max-height: 260px;
+    scrollbar-width: thin;
+    padding: 4px;
+    align-content: flex-start;
+    min-height: 28px;
+}
+#erenodes-hover-preview .ere-preview-empty {
+    font-size: 11px;
+    opacity: .55;
+}
+
+/* The shared rubber band sits at z-index 10000 — below this panel (10050), so inside the preview it was drawn behind the panel.
+   Lift it above, and state its appearance explicitly: over a small area the 1px dashed border dominates and the default fill read as almost solid blue. */
+.ere-marquee.ere-marquee-above {
+    z-index: 10060;
+    border: 1px solid rgba(var(--ere-drag-accent-rgb, 74, 158, 255), .5);
+    background: rgba(var(--ere-drag-accent-rgb, 74, 158, 255), .08);
+}
