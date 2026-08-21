@@ -31,6 +31,7 @@ ComfyUI-EreNodes provides an intuitive and feature-rich solution for handling pr
 | **Prompt Randomizer** | Randomize your prompt tags | Manual randomization button, Control after generate |
 | **Prompt Multiline** | Enhanced text input with EreNodes features | Full autocomplete, tag management |
 | **Prompt Filter** | CSV-based prompt validation | Tag filtering, validation |
+| **Prompt Extractor** | Recovers the prompt from a generated image as tag pills | Reads ComfyUI + A1111 metadata, positive-only, restores inactive tags |
 | **Prompt to Lora Stack** | Extracts and converts loras from prompt into  lora_stack
 
 ## ✨ Key Features
@@ -41,23 +42,31 @@ ComfyUI-EreNodes provides an intuitive and feature-rich solution for handling pr
 - **Selection Previews**: Visual feedback during file selection
 - **Custom Previews**: Easy custom preview image assignment
 
+### 🖼️ Prompt Extractor
+- **Drop an Image, Get Tags**: Drop any previously generated image on the node and its positive prompt comes back as editable tag pills
+- **Reads Everything**: ComfyUI's embedded graph, the editor workflow, and A1111/Forge parameters in PNG text chunks or JPEG/WebP EXIF
+- **Positive Only**: Traces the graph backwards from the sampler's `positive` input — negatives and unconnected leftover nodes are never picked up
+- **Recovers Toggled-Off Tags**: If the image came from an EreNodes workflow, tags that were switched *off* come back as inactive pills, with their strengths and types intact
+- **Just Tags After That**: Fully editable — toggle, add, reorder, drag into another node, or save as a tag group
+
 ### 📁 Tag Groups Management
 - **Favorite Prompts**: Save and organize your most-used prompts with tags, LoRAs, and trigger words
 - **Direct Node Integration**: Create tag groups directly from nodes with subfolder organization
 - **Quick Application**: Easy loading of saved tag groups as convenient pills or their content
 - **Import/Export**: Seamless sharing and backup of your tag collections
-- **Choose Where They Live**: Keep tag groups in the node folder, or in `ComfyUI/models/tag_groups` so they survive reinstalls and Manager updates — switching offers to copy your existing groups across
+- **Choose Where They Live**: Keep tag groups in the node folder or in `ComfyUI/models/tag_groups` so they survive reinstalls and Manager updates
 
 ### 🗂️ EreNodes Sidebar
 - **Native Sidebar Tab**: Browse tag groups, LoRAs and embeddings in a proper ComfyUI sidebar tab
 - **Search That Reads Inside**: Filter tag groups by filename *and* by the tags they actually contain
 - **Hover Previews**: Hover any entry to see its thumbnail and its tags, drawn with the exact same pills the nodes use
-- **Click to Add**: Click a tag group to drop a prefilled prompt node onto the canvas (node type is configurable)
-- **Drag Both Ways**: Drag an entry onto an existing node to append its tags — or drag a node's tag pills onto a sidebar folder to save them as a new tag group
-- **Multi-Select**: Ctrl+click, Shift+click or rubber-band drag over entries, exactly like tag pills in a node — then drag them all into a node at once, or right-click for bulk actions
+- **Drag Both Ways**: Drag an entry onto an existing node to add it — or drag a node's tag pills onto a sidebar folder to open the editor and save them as a new tag group
+- **Group or Contents, Your Choice**: A dragged tag group lands as one pill by default; hold **Alt** to drop its tags instead. The ghost tells you which
+- **Drop an Image to Build a Group**: Drop a generated image anywhere on the tree to create a group from its prompt, with the image kept as the cover
 - **Pick Tags Out of a Preview**: Hover a tag group, move into the preview, select tags you want and drag just those into a prompt node
 
 ### ✏️ Advanced Tag Editing
+- **Missing File Warnings**: LoRA, embedding and tag group pills turn red-bordered when the file they name isn't on disk
 - **Effortless Replacement**: Quick edit tags or replacement of LoRAs, embeddings and Tag Groups
 - **Strength Control**: Precise tag strength adjustment via buttons or intuitive click-dragging
 - **Rich Previews**: Set and view preview images for all content types
@@ -152,11 +161,17 @@ EreNodes provides flexible LoRA loading options to fit different workflow prefer
 
 ## 📋 Changelog
 
-### Version 3.2 - Latest
-- **EreNodes sidebar**: alternative way to manage tag groups in native sidebar tab with three sub-tabs (tag groups / LoRAs / embeddings), an accordion folder tree, live search, hover previews, click-to-add, and bi-directional drag & drop to and from prompt nodes
-- **Search inside tag groups**: the sidebar filter matches file names *and* the tags a group contains
-- **Configurable tag group folder**: keep them in the node folder (default, unchanged) or in `ComfyUI/models/tag_groups`, which survives reinstalls and Manager updates. Switching offers to copy existing groups — nothing is ever deleted. Advanced users can redirect it further with `tag_groups:` in `extra_model_paths.yaml`
-- **Type-coloured drag feedback**: the drop placeholder, drag ghost and target highlight now take the colour of what you're dragging — blue tags, green LoRAs, red embeddings, amber groups, violet for a mixed selection
+### Version 3.3 - Latest
+- **Tag group editor** in sidebar.
+- **Drop an image on the sidebar**: extracts its prompt *and* keeps the image as the group's cover
+- **Prompt Extractor node** - image drop area prompt extraction
+- **Missing file warnings** - red border on lora / embedding / tag group pills whose file isn't on disk
+
+### Version 3.2
+- **EreNodes sidebar**: anative sidebar for managing tag groups / LoRAs / embeddings
+- **Search inside tag groups**: sidebar filter matching file names *and* the tags a group contains
+- **Configurable tag group folder**: node folder (default, unchanged) or in `ComfyUI/models/tag_groups`
+- **Type-coloured drag feedback**: ghost and target highlight during tag drag
 
 ### Version 3.1
 - **Drag & drop reorder**: press-and-hold (or move) a tag pill to reorder it, with a live drop placeholder and drag preview

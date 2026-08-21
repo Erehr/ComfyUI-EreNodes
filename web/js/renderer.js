@@ -1,39 +1,11 @@
-// Tag UI renderer — unified DOM widgets for both classic LiteGraph and Nodes 2.0.
-//
-// Classic mounts the element in the DomWidgets overlay; Vue mounts it inside
-// the node. One implementation, no canvas onDrawForeground path.
-// Tag-type colors stay custom; chrome (buttons / panels) prefers ComfyUI's
-// --component-node-* theme variables when present.
-//
-// The previous canvas implementation was removed; see git history if needed.
-
 import { app } from "../../../scripts/app.js";
 import { api } from "../../../scripts/api.js";
-import {
-    attachPillDrag,
-    markDropZone,
-    injectDragStyles,
-    installDragGlobals,
-    pruneSelection,
-    handlePillSelectClick,
-    handlePillContextMenu,
-    consumeDragClick,
-} from "./dragdrop.js";
-import {
-    SURFACE_CLASS,
-    injectTagStyles,
-    fallbackColors,
-    parseTags,
-    renderTagPill,
-    renderToggleRowEl,
-    renderTagTile,
-} from "./tagview.js";
+import { attachPillDrag, markDropZone, injectDragStyles, installDragGlobals, pruneSelection,handlePillSelectClick,handlePillContextMenu,consumeDragClick } from "./dragdrop.js";
+import { SURFACE_CLASS, injectTagStyles, fallbackColors, renderTagPill, renderToggleRowEl, renderTagTile } from "./tagview.js";
+import { parseTags } from "./parser.js";
+import { isKnownMissing, ensureChecked } from "./util.js";
 
-// Re-render tag UIs after undo/redo. The change tracker restores graph state
-// and fires "graphChanged"; in the Vue renderer existing nodes keep their DOM
-// widget instances, so without this the pills kept showing the pre-undo state
-// (the data was restored correctly — a copy of the node pasted fine).
-// Cheap: only nodes whose tag JSON actually differs re-render.
+// Re-render tag UIs after undo/redo: the change tracker restores graph state and fires "graphChanged", but Vue keeps the existing DOM widget instances.
 let graphChangedHooked = false;
 function hookGraphChanged() {
     if (graphChangedHooked) return;
@@ -45,11 +17,8 @@ function hookGraphChanged() {
     });
 }
 
-// Custom tag-type palette (no ComfyUI equivalent)
-// Colours live in tagcolors.js so the context menus and drag layer paint tags
-// exactly the same way (they used to keep drifting private copies).
-
 export const MODE_BY_TYPE = {
+    ErePromptExtractor: "extract",
     ErePromptCloud: "cloud",
     ErePromptToggle: "toggle",
     ErePromptMultiSelect: "multiselect",
@@ -58,9 +27,7 @@ export const MODE_BY_TYPE = {
     ErePromptMultiline: "multiline",
 };
 
-// Hide transport widgets from both renderers.
-// Classic: widget.hidden + computeSize=[0,0]
-// Vue: options.hidden (and converted-widget type as a belt-and-suspenders)
+/** Hide transport widgets from both renderers. */
 function hideNativeWidget(w) {
     if (!w || w._ereHidden) return;
     w._ereHidden = true;
@@ -75,9 +42,7 @@ function hideNativeWidget(w) {
     }
     if (w.element?.style) {
         w.element.style.display = "none";
-        // Belt and braces: if a renderer ever re-shows it (Vue manages the
-        // element itself), it must still never be a pointer target — a
-        // ctrl+drag landing on a stray textarea arms ComfyUI's box-select.
+        // Belt and braces: if a renderer ever re-shows it (Vue manages the element itself), it must still never be a pointer target — a ctrl+drag landing on a stray textarea arms ComfyUI's box-select.
         w.element.style.pointerEvents = "none";
     }
 }
@@ -90,33 +55,33 @@ function nativeWidgetsToHide(node, mode) {
         const text = node.widgets?.find(w => w.name === "text");
         if (text) list.push(text);
     }
+    if (mode === "extract") {
+        // Transport only: the filename is shown as the image preview itself.
+        const image = node.widgets?.find(w => w.name === "image");
+        if (image) list.push(image);
+    }
     return list;
 }
 
-// Colours, name formatting, pill/row/tile construction and the stylesheet all
-// live in tagview.js now, so the sidebar and the menu previews draw tags from
-// the exact same code the nodes do. This module keeps only the node-specific
-// parts: event wiring, layout modes and the height policy.
+// Rendering lives in tagview.js; this module owns the node-specific parts — event wiring, layout modes and the height policy.
 
 function injectStyles() {
-    // Tag styling lives in tagview.js (scoped to .ere-surface) so every surface
-    // shares one rule set. Drag/selection rules are appended after it so they
-    // win ties.
     injectTagStyles();
-    injectDragStyles();
+    injectDragStyles();   // second, so its rules win ties
 }
 
-// Root-element listeners are node-agnostic, so an element adopted from a
-// previous node instance keeps its original listeners; the guard prevents
-// double-binding (which would e.g. forward middle-clicks twice).
+/**
+ * Root listeners are node-agnostic, so an adopted element keeps the ones it had.
+ * The guard stops them being bound twice.
+ */
 function bindRootListeners(el) {
     if (el._ereRootBound) return;
     el._ereRootBound = true;
 
-    // Stop pill interactions from dragging/selecting the node — except the
-    // middle button, which pans the canvas. Forward that to the canvas element
-    // in the legacy renderer (the overlay otherwise swallows it); litegraph
-    // takes pointer capture on pointerdown, so the rest of the drag follows.
+    /**
+     * Stop pill interactions from dragging/selecting the node — except the middle button, which pans the canvas.
+     * Forward that to the canvas element in the legacy renderer (the overlay otherwise swallows it); litegraph takes pointer capture on
+     */
     for (const type of ["pointerdown", "pointermove", "pointerup"]) {
         el.addEventListener(type, (e) => {
             const isMiddle = e.button === 1 || (e.buttons & 4) !== 0;
@@ -129,9 +94,9 @@ function bindRootListeners(el) {
             e.stopPropagation();
         });
     }
-    // Legacy renderer: DomWidgets overlay swallows wheel events. When the pill
-    // area is scrollable, keep the wheel entirely (including at scroll edges) so
-    // it never leaks into canvas zoom. Otherwise hand it to the canvas.
+    // Legacy renderer: DomWidgets overlay swallows wheel events.
+    // When the pill area is scrollable, keep the wheel entirely (including at scroll edges) so it never leaks into canvas zoom.
+    // Otherwise hand it to the canvas.
     // Vue nodes handle zoom themselves — only stopPropagation while scrolling.
     el.addEventListener("wheel", (e) => {
         const scrolls = app.ui?.settings?.getSettingValue?.("EreNodes.Nodes.TagAreaScroll", false) ?? false;
@@ -163,32 +128,27 @@ function makeButton(node, label, display, title) {
 }
 
 function attachPillEvents(node, el, tag, index, mode) {
-    // Drag & drop / multi-selection. Registers the pointerdown that may turn
-    // into a drag, tags the element with its data index and restores the
-    // selection outline after a re-render.
+    // Drag & drop / multi-selection.
+    // Registers the pointerdown that may turn into a drag, tags the element with its data index and restores the selection outline after a re-render.
     attachPillDrag(node, el, index, mode);
 
     el.addEventListener("click", (e) => {
         e.stopPropagation();
         // A click that closes a drag must not toggle the tag.
         if (consumeDragClick()) return;
-        // Ctrl/Shift click manage the selection instead of toggling; a plain
-        // click on a selected pill toggles the whole selection.
+        // Ctrl/Shift click manage the selection instead of toggling; a plain click on a selected pill toggles the whole selection.
         if (handlePillSelectClick(node, index, e)) return;
         node.onTagPillClick?.(e, [0, 0], { label: tag.name, index });
     });
     el.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const width = el.closest(".erenodes-dom")?.getBoundingClientRect()?.width
-            ?? el.getBoundingClientRect().width;
-        // Anchor the quick edit menu to the pill's bottom-left (same as the
-        // old canvas patch did) instead of the raw cursor position.
+        // Anchor the quick edit menu to the pill's bottom-left, not the raw cursor position.
         const rect = el.getBoundingClientRect();
         const positionEvent = { clientX: rect.left, clientY: rect.bottom + 5 };
         // A multi-selection gets bulk actions instead of single-tag editing.
         if (handlePillContextMenu(node, index, e, positionEvent)) return;
-        node.onTagQuickEdit?.(positionEvent, node, { label: tag.name, index }, width);
+        node.onTagQuickEdit?.(positionEvent, node, { label: tag.name, index });
     });
 }
 
@@ -209,6 +169,59 @@ function openInactiveDropdown(node, e) {
     }
 }
 
+/**
+ * The Prompt Extractor's image pane: a drop zone that becomes a preview.
+ * The node owns the behaviour; this only draws it.
+ */
+function renderExtractImage(node) {
+    const pane = document.createElement("div");
+    pane.className = "ere-extract-pane";
+
+    const filename = node.properties?._extractImage || "";
+    if (filename) {
+        const img = document.createElement("img");
+        img.loading = "lazy";
+        img.draggable = false;
+        img.alt = filename;
+        // ComfyUI's own input-image route, so it survives a workflow reload.
+        img.src = `/view?filename=${encodeURIComponent(filename)}&type=input&subfolder=`;
+        img.addEventListener("error", () => { img.style.display = "none"; });
+        pane.appendChild(img);
+    } else {
+        pane.classList.add("empty");
+        const empty = document.createElement("div");
+        empty.className = "ere-extract-empty";
+        empty.textContent = "Drop an image to recover its prompt.";
+        pane.appendChild(empty);
+    }
+
+    if (node._extractBusy) {
+        const busy = document.createElement("div");
+        busy.className = "ere-extract-busy";
+        busy.textContent = "Reading…";
+        pane.appendChild(busy);
+    }
+
+    pane.addEventListener("click", (e) => {
+        e.stopPropagation();
+        node.onExtractPick?.();
+    });
+    // Native HTML5 drop, not the pill drag layer: the payload is a file from the OS or another browser tab.
+    pane.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        pane.classList.add("ere-extract-over");
+    });
+    pane.addEventListener("dragleave", () => pane.classList.remove("ere-extract-over"));
+    pane.addEventListener("drop", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        pane.classList.remove("ere-extract-over");
+        node.onExtractDrop?.(e);
+    });
+    return pane;
+}
+
 function renderButtons(node, container, mode) {
     container.appendChild(makeButton(node, "button_menu", "≡", "Menu"));
     if (mode !== "multiline") {
@@ -219,30 +232,37 @@ function renderButtons(node, container, mode) {
     }
 }
 
+/**
+ * Outline a pill whose file is gone — ComfyUI's red node border, at pill scale.
+ * Marking only: the pill is still what the workflow says.
+ */
+function markIfMissing(el, tag) {
+    if (!isKnownMissing(tag)) return el;
+    el.classList.add("ere-missing");
+    const what = tag.type === "group" ? "Tag group" : tag.type === "lora" ? "LoRA" : "Embedding";
+    el.title = `${el.title || tag.name}\n${what} file not found`;
+    return el;
+}
+
 function renderCloudPill(node, tag, index, colors, mode) {
     const pill = renderTagPill(tag, { colors });
     attachPillEvents(node, pill, tag, index, mode);
-    return pill;
+    return markIfMissing(pill, tag);
 }
 
 function renderToggleRow(node, tag, index, colors) {
     const row = renderToggleRowEl(tag, { colors });
     attachPillEvents(node, row, tag, index, "toggle");
-    return row;
+    return markIfMissing(row, tag);
 }
 
 function renderGalleryTile(node, tag, index, colors, pillW, pillH) {
     const tile = renderTagTile(tag, { colors, width: pillW, height: pillH });
     attachPillEvents(node, tile, tag, index, "gallery");
-    return tile;
+    return markIfMissing(tile, tag);
 }
 
-/**
- * Attach the DOM tag UI to a node. Call after initializeSharedPromptFunctions.
- *
- * @param {LGraphNode} node
- * @param {"cloud"|"toggle"|"multiselect"|"randomizer"|"gallery"|"multiline"} mode
- */
+/** Attach the DOM tag UI to a node. Call after initializeSharedPromptFunctions. */
 export function attachTagDomWidget(node, mode) {
     if (node._ereDom) return node._ereDom.widget;
 
@@ -251,12 +271,9 @@ export function attachTagDomWidget(node, mode) {
 
     for (const w of nativeWidgetsToHide(node, mode)) hideNativeWidget(w);
 
-    // `let`: hosts can be swapped for a previously mounted element after undo/redo.
-    // toolbar = sticky buttons; scroll/content = pills (only this scrolls).
+    // `let`: hosts can be swapped for an already-mounted element after undo/redo. toolbar = sticky buttons; scroll/content = pills (only this scrolls).
     let el = document.createElement("div");
-    // Two classes on purpose: `erenodes-dom` is the structural hook drag & drop
-    // and the Vue-remount adoption query on; `ere-surface` is the visual scope
-    // shared with the sidebar and the menu previews (see tagview.js).
+    // Two classes on purpose: `erenodes-dom` is the structural hook drag & drop and the Vue-remount adoption query on; `ere-surface` is the visual scope shared with the sidebar and the menu previews (see tagview.js).
     el.className = `erenodes-dom ${SURFACE_CLASS}`;
     let toolbar = document.createElement("div");
     toolbar.className = "ere-toolbar ere-flow";
@@ -274,11 +291,24 @@ export function attachTagDomWidget(node, mode) {
     installDragGlobals();
 
     let lastRenderedState = null;
+    /** Defined further down (after the height policy); only ever called from inside render() or the observer, so it is always initialised by then. */
+    let applyExtractLayout = () => {};
+
     const render = () => {
         lastRenderedState = node.properties?._tagDataJSON || "[]";
+        const rendered = parseTags(lastRenderedState);
+        // Fire-and-forget: a late verdict triggers exactly one re-render, which reads from cache and schedules nothing.
+        // Guarded on the tag data being unchanged, so an edit made in flight is not undone.
+        ensureChecked(rendered).then((learned) => {
+            if (learned && node._ereDom && node.properties?._tagDataJSON === lastRenderedState) {
+                render();
+            }
+        });
         toolbar.textContent = "";
         content.textContent = "";
-        renderButtons(node, toolbar, mode);
+        // Extract mode renders its buttons inside the tag column instead, so they sit beside the image rather than spanning above both panes.
+        if (mode === "extract") toolbar.style.display = "none";
+        else renderButtons(node, toolbar, mode);
         const tagData = parseTags(node.properties?._tagDataJSON || "[]");
         // Selection is index-based; forget entries whose tag moved or vanished.
         pruneSelection(node, tagData);
@@ -313,12 +343,40 @@ export function attachTagDomWidget(node, mode) {
             return;
         }
 
+        if (mode === "extract") {
+            // Two panes: the image the prompt came from, and the pills it produced.
+            const split = document.createElement("div");
+            split.className = "ere-split";
+
+            split.appendChild(renderExtractImage(node));
+
+            // Buttons live with the tags, not above the whole node.
+            const column = document.createElement("div");
+            column.className = "ere-split-col";
+            const bar = document.createElement("div");
+            bar.className = "ere-toolbar ere-flow";
+            renderButtons(node, bar, mode);
+            column.appendChild(bar);
+
+            const flow = document.createElement("div");
+            flow.className = "ere-flow ere-split-tags";
+            markDropZone(flow, "flow");
+            for (let i = 0; i < tagData.length; i++) {
+                flow.appendChild(renderCloudPill(node, tagData[i], i, colors, "extract"));
+            }
+            column.appendChild(flow);
+            split.appendChild(column);
+
+            content.appendChild(split);
+            applyExtractLayout();
+            return;
+        }
+
         if (mode === "multiselect" || mode === "randomizer") {
             const panel = document.createElement("div");
             panel.className = "ere-panel ere-flow";
             panel.addEventListener("click", (e) => {
-                // Not after a ctrl-drag selection, and not on a ctrl+click
-                // (that one belongs to the pill selection logic).
+                // Not after a ctrl-drag selection, and not on a ctrl+click (that one belongs to the pill selection logic).
                 if (e.ctrlKey || e.metaKey || consumeDragClick()) return;
                 if (e.target === panel) openInactiveDropdown(node, e);
             });
@@ -355,14 +413,10 @@ export function attachTagDomWidget(node, mode) {
     }
     if (widget.options) widget.options.serialize = false;
 
-    // Multiline: ≡ button only, under the native textarea. Not subject to
-    // fit/scroll tag-area policy — the textarea owns vertical resize.
-    //
-    // Nodes 2.0 grid: rows are `auto` when shouldExpand(type) OR hasLayoutSize.
-    // hasLayoutSize is `typeof widget.computeLayoutSize === 'function'` — and
-    // DOMWidgetImpl always has that method, so both textarea + ≡ became `auto`
-    // and split free height 50/50. Shadow computeLayoutSize with a non-function
-    // so the ≡ row is `min-content`; keep computeSize for classic DomWidget.
+    /**
+     * Multiline: ≡ button only; the textarea owns vertical resize.
+     * Shadowing computeLayoutSize with a non-function makes the ≡ row min-content — the Nodes 2.0 grid would otherwise split the height 50/50.
+     */
     if (mode === "multiline") {
         el.classList.add("ere-multiline");
         scroll.style.display = "none";
@@ -376,8 +430,7 @@ export function attachTagDomWidget(node, mode) {
             widget.options.getHeight = () => barH();
         }
         widget.computeSize = () => [node.size?.[0] ?? 200, barH()];
-        // Own-property undefined shadows the prototype method (do not delete —
-        // delete would fall through to DOMWidgetImpl.computeLayoutSize again).
+        // Own-property undefined shadows the prototype method (do not delete — delete would fall through to DOMWidgetImpl.computeLayoutSize again).
         widget.computeLayoutSize = undefined;
 
         const origUpdate = node.onUpdateTextWidget;
@@ -402,12 +455,7 @@ export function attachTagDomWidget(node, mode) {
         return widget;
     }
 
-    // Height policy (mirrors the old canvas onDrawForeground + onResize clamp):
-    // - Fit (default): height locked to content; only width is free.
-    // - Scroll: user may shrink/grow; pills scroll under a sticky toolbar.
-    // Measure toolbar+content (not the stretched host) so setSize doesn't feed
-    // back into the measurement. Remeasure only when content height actually
-    // changes (real pill reflow) — width-only noise kept the old fitHeight.
+    // Height policy: Fit (default) locks height to content and leaves width free; Scroll lets the user size it and scrolls the pills under a sticky toolbar.
     const PILL_ROW_H = 20;
     const scrollEnabled = () =>
         app.ui?.settings?.getSettingValue?.("EreNodes.Nodes.TagAreaScroll", false) ?? false;
@@ -423,8 +471,8 @@ export function attachTagDomWidget(node, mode) {
         const margin = widget.margin ?? 10;
         const toolH = toolbar.offsetHeight || PILL_ROW_H;
         const rowH = oneRowHeight();
-        // Floor is toolbar + one row only. Including the flex gap (and host
-        // padding) left enough room for the next row to peek at the bottom.
+        // Floor is toolbar + one row only.
+        // Including the flex gap (and host padding) left enough room for the next row to peek at the bottom.
         return toolH + rowH + margin * 2;
     };
 
@@ -507,8 +555,7 @@ export function attachTagDomWidget(node, mode) {
         const scrolls = scrollEnabled();
         setScrollOverflow(scrolls ? "auto" : "hidden");
 
-        // Nodes 2.0: don't fight Vue's ResizeObserver with setSize — cap the
-        // scroll body with max-height so the toolbar stays visible.
+        /** Nodes 2.0: don't fight Vue's ResizeObserver with setSize — cap the scroll body with max-height so the toolbar stays visible. */
         if (window.LiteGraph?.vueNodesMode) {
             const available = availableHeight();
             const toolH = toolbar.offsetHeight || 0;
@@ -565,7 +612,6 @@ export function attachTagDomWidget(node, mode) {
     };
 
     // Fit mode: lock height immediately on every resize (old canvas onResize).
-    // Scroll mode: first user drag takes ownership of height.
     const origResize = node.onResize;
     node.onResize = function (...args) {
         const draggedByUser = app.canvas?.resizing_node === node;
@@ -581,9 +627,24 @@ export function attachTagDomWidget(node, mode) {
         return origResize?.apply(this, args);
     };
 
-    // Remeasure only when pill content height actually changes (row reflow).
-    // Width-only ResizeObserver noise must not rewrite fitHeight — that was the flicker.
+    // Remeasure only when content height changes — width-only observer noise rewriting fitHeight was the flicker.
+    const EXTRACT_WIDE_ON = 340;
+    const EXTRACT_WIDE_OFF = 320;
+    applyExtractLayout = () => {
+        if (mode !== "extract") return;
+        const split = content.querySelector(".ere-split");
+        if (!split) return;
+        const width = content.offsetWidth || 0;
+        if (!width) return;
+        const wide = split.classList.contains("wide")
+            ? width >= EXTRACT_WIDE_OFF
+            : width >= EXTRACT_WIDE_ON;
+        if (wide !== split.classList.contains("wide")) split.classList.toggle("wide", wide);
+    };
+    node.onExtractLayout = applyExtractLayout;
+
     const observer = new ResizeObserver(() => {
+        applyExtractLayout();
         const h = content.offsetHeight;
         if (!scrollEnabled() && Math.abs(h - lastContentH) < 2) {
             clampToFitHeight();
@@ -617,13 +678,7 @@ export function attachTagDomWidget(node, mode) {
             syncSize();
         }
     };
-    // Undo/redo in Nodes 2.0 recreates the node objects but Vue keeps the
-    // PREVIOUS node's element mounted (component keyed by node id), so a fresh
-    // element would render into the void while the stale one stays on screen.
-    // The node id is only final once the node is added to the graph, so adopt
-    // the element that is actually mounted for this id there, and render into
-    // that. In the legacy renderer old elements are unmounted on node removal,
-    // so adoption simply never triggers.
+    // Undo/redo in Nodes 2.0 recreates the node objects but Vue keeps the PREVIOUS node's element mounted (component keyed by node id), so a fresh element would render into the void while the stale one stays on screen.
     const origAdded = node.onAdded;
     node.onAdded = function (...args) {
         const r = origAdded?.apply(this, args);
@@ -644,8 +699,7 @@ export function attachTagDomWidget(node, mode) {
                     node._ereDom.scroll = scroll;
                     node._ereDom.content = content;
                 }
-                // Keep the widget pointing at the live element in case Vue
-                // (re)mounts it later — same element either way.
+                // Keep the widget pointing at the live element in case Vue (re)mounts it later — same element either way.
                 widget.element = el;
                 observer.disconnect();
                 observer.observe(content);

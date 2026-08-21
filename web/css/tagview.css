@@ -1,0 +1,299 @@
+/* Tag pills, toggle rows, gallery tiles and the extractor image pane.
+   Scoped to .ere-surface so every surface that draws a tag — nodes, menu previews, the sidebar — shares one rule set. */
+
+.ere-surface {
+    font: 12px monospace;
+    box-sizing: border-box;
+    color: var(--component-node-foreground, #ddd);
+}
+.ere-surface * {
+    box-sizing: border-box;
+}
+.erenodes-dom {
+    width: 100%;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+.erenodes-dom.ere-multiline {
+    height: auto;
+    flex: 0 0 auto;
+    gap: 0;
+    overflow: visible;
+}
+.erenodes-dom .ere-toolbar {
+    flex: 0 0 auto;
+}
+.erenodes-dom .ere-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+}
+.erenodes-dom-content {
+    box-sizing: border-box;
+    width: 100%;
+}
+.ere-surface .ere-flow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    align-items: flex-start;
+}
+.ere-surface .ere-btn {
+    width: 20px;
+    height: 20px;
+    flex: 0 0 auto;
+    padding: 0;
+    border-radius: 5px;
+    border: 1px solid var(--component-node-border, #444);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--component-node-widget-background, #353535);
+    color: var(--component-node-foreground-secondary, #aaa);
+    cursor: pointer;
+    user-select: none;
+    font: inherit;
+    line-height: 18px;
+}
+.ere-surface .ere-btn:hover {
+    background: var(--component-node-widget-background-hovered, #2a2a2a);
+    color: var(--component-node-foreground, #ddd);
+}
+.ere-surface .ere-pill {
+    height: 20px;
+    line-height: 18px;
+    max-width: 100%;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    padding: 0 5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+    color: #FFF;
+}
+.ere-surface .ere-pill.inactive {
+    opacity: .75;
+}
+.ere-surface .ere-pill.ere-more {
+    background: transparent;
+    border-color: var(--component-node-border, #444);
+    color: var(--component-node-foreground-secondary, #aaa);
+    cursor: default;
+}
+.ere-surface .ere-strength {
+    opacity: .5;
+}
+
+/* The file this pill names is not on disk — ComfyUI's red node border, at pill scale.
+   Marking only: the pill still says what the workflow says, and the file may be one download away.
+   The border replaces the existing 1px one and the box is border-box, so nothing reflows when it appears. */
+.ere-surface .ere-pill.ere-missing,
+.ere-surface .ere-toggle-row.ere-missing,
+.ere-surface .ere-tile.ere-missing {
+    border: 2px solid var(--ere-missing-color, #c50707);
+}
+.ere-surface .ere-panel {
+    border: 1px solid var(--component-node-border, #444);
+    border-radius: 5px;
+    padding: 5px;
+    background: var(--component-node-widget-background, #222);
+}
+.ere-surface .ere-toggle-row {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    height: 20px;
+    border-radius: 6px;
+    border: 1px solid var(--component-node-border, #444);
+    background: var(--component-node-widget-background, #222);
+    cursor: pointer;
+    user-select: none;
+    overflow: hidden;
+}
+.ere-surface .ere-toggle-row.inactive {
+    opacity: .75;
+}
+.ere-surface .ere-toggle-row .ere-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #FFF;
+}
+.ere-surface .ere-toggle-row.inactive .ere-label {
+    color: inherit;
+}
+.ere-surface .ere-switch {
+    position: relative;
+    width: 18px;
+    height: 10px;
+    margin: 0 12px 0 5px;
+    border-radius: 5px;
+    background: #3b3b3b;
+    flex: 0 0 auto;
+}
+.ere-surface .ere-switch .ere-knob {
+    position: absolute;
+    top: -2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+}
+.ere-surface .ere-tile {
+    position: relative;
+    flex: 0 0 auto;
+    overflow: hidden;
+    border-radius: 5px;
+    border: 1px solid var(--component-node-border, #444);
+    background: var(--component-node-widget-background, #222);
+    cursor: pointer;
+    user-select: none;
+}
+.ere-surface .ere-tile img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+.ere-surface .ere-tile.inactive img {
+    filter: grayscale(0.75);
+    opacity: .25;
+}
+.ere-surface .ere-tile .ere-name {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 20px;
+    line-height: 20px;
+    padding: 0 5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #FFF;
+    border-radius: 0 0 5px 5px;
+}
+.ere-surface .ere-tile.inactive .ere-name {
+    opacity: .5;
+}
+.ere-surface .ere-tile .ere-info {
+    position: absolute;
+    top: 2.5px;
+    right: 2.5px;
+    height: 15px;
+    line-height: 15px;
+    padding: 0 3px;
+    font-size: 10px;
+    text-align: center;
+    background: #222;
+    color: #FFF;
+    border-radius: 5px;
+    opacity: .75;
+}
+.ere-surface .ere-tile.inactive .ere-info {
+    opacity: .5;
+}
+
+/* --- Prompt Extractor ------------------------------------------------ */
+/* One column by default; the .wide class (set from a width breakpoint in JS) puts the image beside the tags.
+   A CSS container query would be the natural tool, but the node lives inside a CSS-transformed canvas where the query would measure the wrong box. */
+.ere-surface .ere-split {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.ere-surface .ere-split.wide {
+    flex-direction: row;
+    align-items: flex-start;
+}
+.ere-surface .ere-split.wide .ere-extract-pane {
+    width: 40%;
+    max-width: 220px;
+    flex: 0 0 auto;
+}
+.ere-surface .ere-split.wide .ere-split-col {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* Buttons live in this column, beside the image rather than above both panes. */
+.ere-surface .ere-split-col {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+.ere-surface .ere-split-tags {
+    align-content: flex-start;
+    min-height: 20px;
+}
+.ere-surface .ere-extract-pane {
+    position: relative;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px dashed var(--component-node-border, #444);
+    border-radius: 6px;
+    background: var(--component-node-widget-background, #222);
+    cursor: pointer;
+    overflow: hidden;
+    user-select: none;
+}
+
+/* Empty target only — once an image is in, it sets its own height.
+   Stacked (narrow node) the pane is full width, so a landscape 16:9 box reads as a drop target without eating the whole node.
+   Side-by-side it is a narrow column, where the same ratio would be a letterbox sliver, so flip to 9:16. */
+.ere-surface .ere-extract-pane.empty {
+    aspect-ratio: 16 / 9;
+    min-height: 72px;
+}
+.ere-surface .ere-split.wide .ere-extract-pane.empty {
+    aspect-ratio: 1 / 1;
+}
+.ere-surface .ere-extract-pane:hover,
+.ere-surface .ere-extract-pane.ere-extract-over {
+    border-color: var(--p-primary-color, #4a9eff);
+    background: rgba(74, 158, 255, .08);
+}
+.ere-surface .ere-extract-pane img {
+    display: block;
+    width: 100%;
+    height: auto;
+    object-fit: contain;
+}
+.ere-surface .ere-extract-empty {
+    padding: 12px;
+    font-size: 11px;
+    opacity: .6;
+    text-align: center;
+    line-height: 1.4;
+}
+
+/* Inside a context menu the pane is compact and must not inherit the menu's hover highlight. */
+.litemenu-entry.ere-menu-dropzone {
+    padding: 4px !important;
+    background: none !important;
+    cursor: default;
+}
+.litemenu-entry.ere-menu-dropzone .ere-extract-pane {
+    aspect-ratio: 16 / 9;
+    max-height: 120px;
+}
+.ere-surface .ere-extract-busy {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, .55);
+    font-size: 11px;
+}

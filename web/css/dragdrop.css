@@ -1,0 +1,121 @@
+/* Drag ghost, drop placeholder, selection outlines and the rubber band.
+   Loaded after tagview.css so its rules win ties. */
+
+/* --ere-drag-accent / --ere-drag-accent-rgb are set on <html> for the duration of a drag (see setDragAccent) and describe what is being dragged: blue for plain tags, green loras, red embeddings, amber groups, violet for a mixed selection.
+   The fallbacks keep the pre-drag blue for the selection outline, which is drawn outside any drag. */
+/* Inset outline: the tag area clips overflow, so an outer ring would be cut off on edge pills. */
+.ere-surface .ere-selected {
+    outline: 2px solid var(--ere-drag-accent, var(--p-primary-color, #4a9eff));
+    outline-offset: -2px;
+    box-shadow: inset 0 0 8px rgba(var(--ere-drag-accent-rgb, 74, 158, 255), .45);
+}
+
+/* Dragged pills leave the flow — unless Alt is held over another node, where they stay put (dimmed) to show the original is being kept.
+   They keep .ere-drag-source either way, so they never count as drop candidates. */
+.ere-surface .ere-drag-source:not(.ere-drag-copy) {
+    display: none !important;
+}
+.ere-surface .ere-drag-copy {
+    opacity: .4;
+    outline: 1px dashed var(--ere-drag-accent, var(--p-primary-color, #4a9eff));
+    outline-offset: -2px;
+}
+.ere-surface .ere-drop-placeholder {
+    flex: 0 0 auto;
+    pointer-events: none;
+    border: 1px dashed var(--ere-drag-accent, var(--p-primary-color, #4a9eff));
+    border-radius: 6px;
+    background: rgba(var(--ere-drag-accent-rgb, 74, 158, 255), .14);
+    animation: ere-drop-pulse .9s ease-in-out infinite alternate;
+}
+@keyframes ere-drop-pulse {
+    from {
+        opacity: .45;
+    }
+    to {
+        opacity: 1;
+    }
+}
+.ere-surface.ere-drop-target {
+    outline: 1px dashed var(--ere-drag-accent, var(--p-primary-color, #4a9eff));
+    outline-offset: 2px;
+}
+.ere-surface.ere-drag-ghost {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 10000;
+    display: block;
+    width: auto;
+    min-height: 0;
+    overflow: visible;
+    pointer-events: none;
+    transform-origin: top left;
+    opacity: .92;
+    filter: drop-shadow(0 3px 6px rgba(0, 0, 0, .6));
+}
+.ere-surface.ere-drag-ghost > * {
+    outline: 2px solid var(--ere-drag-accent, var(--p-primary-color, #4a9eff));
+    outline-offset: 1px;
+}
+.ere-surface.ere-drag-ghost.ere-no-drop {
+    opacity: .5;
+}
+.ere-surface.ere-drag-ghost.ere-no-drop > * {
+    outline-color: #b05050;
+}
+.ere-surface.ere-drag-ghost .ere-drag-counts {
+    position: absolute;
+    top: -7px;
+    right: -9px;
+    z-index: 1;
+    display: flex;
+    flex-direction: row;
+    gap: 2px;
+}
+.ere-surface.ere-drag-ghost .ere-drag-count {
+    min-width: 16px;
+    height: 16px;
+    padding: 0 3px;
+    border-radius: 8px;
+    outline: none;
+    background: var(--ere-drag-accent, var(--p-primary-color, #4a9eff));
+    color: #fff;
+    font: 10px/16px monospace;
+    text-align: center;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, .45);
+}
+
+/* Copy mode (Alt over another node) */
+.ere-surface.ere-drag-ghost.ere-copy::after {
+    content: "+";
+    position: absolute;
+    top: -7px;
+    left: -9px;
+    z-index: 1;
+    width: 16px;
+    height: 16px;
+    border-radius: 8px;
+    background: #4a9a5a;
+    color: #fff;
+    font: bold 11px/16px monospace;
+    text-align: center;
+}
+body.ere-dragging-active,
+body.ere-dragging-active * {
+    cursor: grabbing !important;
+}
+
+/* Ctrl+drag rubber band */
+.ere-marquee {
+    position: fixed;
+    z-index: 10000;
+    pointer-events: none;
+    border: 1px dashed var(--p-primary-color, #4a9eff);
+    background: rgba(74, 158, 255, .12);
+    border-radius: 2px;
+}
+body.ere-marquee-active,
+body.ere-marquee-active * {
+    cursor: crosshair !important;
+}

@@ -1,18 +1,9 @@
-// Floating hover preview for tag groups, loras and embeddings.
-//
-// One panel implementation, two call sites: the "Load Tag Group" / file context
-// menus (contextmenu.js) and the sidebar (sidebar.js). It shows the thumbnail if
-// there is one, plus the actual tags the file contains — rendered with the very
-// same pill code the nodes use (tagview.js), so a preview is pixel-identical to
-// what you get after loading the group.
-
-import { getCache, isNotFound } from "./cache.js";
+import { getCache, isNotFound, loadStyle } from "./util.js";
 import { injectTagStyles, renderTagCloud, SURFACE_CLASS, previewUrl } from "./tagview.js";
 
 const PANEL_ID = "erenodes-hover-preview";
 const MAX_PILLS = 60;
-// Long enough that arrowing down a list doesn't fire a request per row, short
-// enough to feel instant when the pointer settles.
+/** Long enough that arrowing down a list doesn't fire a request per row, short enough to feel instant when the pointer settles. */
 const HOVER_DELAY = 120;
 // Same press grammar as pills inside a node.
 const HOLD_MS = 200;
@@ -23,53 +14,7 @@ let hideTimer = 0;
 let showTimer = 0;
 let token = 0;
 
-function injectPreviewStyles() {
-    if (document.getElementById("erenodes-preview-style")) return;
-    const style = document.createElement("style");
-    style.id = "erenodes-preview-style";
-    style.textContent = `
-#${PANEL_ID} {
-    position: fixed; z-index: 10050; pointer-events: none;
-    max-width: 320px; max-height: 70vh; overflow: hidden;
-    display: flex; flex-direction: column; gap: 6px;
-    padding: 12px; border-radius: 8px;
-    border: 1px solid var(--component-node-border, #444);
-    background: var(--comfy-menu-bg, #202020);
-    box-shadow: 0 6px 20px rgba(0, 0, 0, .55);
-}
-/* Interactive mode: the pointer can move into the panel and work with the
-   pills. Only enabled when the caller opts in, so menu previews (which sit
-   under a moving cursor) stay click-through. */
-#${PANEL_ID}.ere-preview-interactive { pointer-events: auto; }
-#${PANEL_ID}.ere-preview-interactive .ere-pill { cursor: grab; }
-#${PANEL_ID}[hidden] { display: none; }
-#${PANEL_ID} img.ere-preview-img {
-    display: block; max-width: 100%; max-height: 220px;
-    object-fit: contain; border-radius: 5px; align-self: center;
-}
-/* Must beat the rule above, which would otherwise re-show a broken image icon
-   for every file that has no preview (a plain [hidden] attribute loses to any
-   explicit display declaration). */
-#${PANEL_ID} img.ere-preview-img[hidden] { display: none; }
-/* Extra breathing room inside the cloud gives the rubber band somewhere to
-   start; without it every pixel is a pill and a drag always grabs one. */
-#${PANEL_ID} .ere-cloud {
-    overflow-y: auto; max-height: 260px; scrollbar-width: thin;
-    padding: 4px; align-content: flex-start; min-height: 28px;
-}
-#${PANEL_ID} .ere-preview-empty { font-size: 11px; opacity: .55; }
-/* The shared rubber band sits at z-index 10000 — below this panel (10050), so
-   inside the preview it was drawn behind the panel. Lift it above, and state
-   its appearance explicitly: over a small area the 1px dashed border dominates
-   and the default fill read as almost solid blue. */
-.ere-marquee.ere-marquee-above {
-    z-index: 10060;
-    border: 1px solid rgba(var(--ere-drag-accent-rgb, 74, 158, 255), .5);
-    background: rgba(var(--ere-drag-accent-rgb, 74, 158, 255), .08);
-}
-`;
-    document.head.appendChild(style);
-}
+function injectPreviewStyles() { loadStyle("preview"); }
 
 function ensurePanel() {
     if (panel?.isConnected) return panel;
@@ -80,18 +25,14 @@ function ensurePanel() {
     // The panel renders tags, so it is a tag surface like any node.
     panel.className = SURFACE_CLASS;
     panel.hidden = true;
-    // Moving the pointer from the row into the panel must not close it — that
-    // is what makes the pills reachable.
+    // Moving the pointer from the row into the panel must not close it — that is what makes the pills reachable.
     panel.addEventListener("pointerenter", () => clearTimeout(hideTimer));
     panel.addEventListener("pointerleave", () => hidePreviewPanel());
     document.body.appendChild(panel);
     return panel;
 }
 
-/**
- * Place the panel beside an anchor rect, flipping and clamping so it always
- * stays on screen — same rules the old in-menu image preview used.
- */
+/** Place the panel beside an anchor rect, flipping and clamping so it always stays on screen — same rules the old in-menu image preview used. */
 function position(el, anchorRect) {
     el.style.left = "0px";
     el.style.top = "0px";
@@ -145,16 +86,9 @@ async function loadTags(type, path, extension) {
 /**
  * Show the preview for a file.
  *
- * @param {object} opts
- * @param {"group"|"lora"|"embedding"} opts.type
- * @param {string} opts.path      path without extension (as the server reports it)
- * @param {string} [opts.extension]
- * @param {DOMRect} opts.anchor   rect to position against
- * @param {boolean} [opts.image=true] include the thumbnail (off where the
- *        caller already shows one, e.g. the sidebar's grid view)
- * @param {boolean} [opts.interactive=false] let the pointer enter the panel and
- *        pick/drag individual tags out of it (sidebar only — menu previews sit
- *        under a moving cursor and must stay click-through)
+ * @param {DOMRect} opts.anchor  rect to position against
+ * @param {boolean} [opts.image=true]  include the thumbnail
+ * @param {boolean} [opts.interactive=false]  let the pointer enter and pick tags (sidebar only — menu previews must stay click-through)
  */
 export function showPreviewFor({ type, path, extension, anchor, image = true, interactive = false }) {
     if (!type || !path || !anchor) return hidePreviewPanel();
@@ -170,9 +104,6 @@ export function showPreviewFor({ type, path, extension, anchor, image = true, in
         el.classList.toggle("ere-preview-interactive", !!interactive);
 
         // The panel stays hidden until something has actually rendered into it.
-        // An `img` that is still loading (or will 404) is not content, so a file
-        // with no thumbnail and no tags never flashes an empty rounded box —
-        // whichever of the two arrives first is what reveals the panel.
         const img = document.createElement("img");
         img.className = "ere-preview-img";
         img.hidden = true;
@@ -205,8 +136,7 @@ export function showPreviewFor({ type, path, extension, anchor, image = true, in
             if (interactive) attachPillPicking(cloud, tags, el);
             hasTags = true;
         } else if (type === "group") {
-            // A group that exists but holds nothing is worth saying out loud;
-            // a lora with no trained words simply has nothing to add.
+            // A group that exists but holds nothing is worth saying out loud; a lora with no trained words simply has nothing to add.
             const empty = document.createElement("div");
             empty.className = "ere-preview-empty";
             empty.textContent = "Empty tag group";
@@ -218,12 +148,8 @@ export function showPreviewFor({ type, path, extension, anchor, image = true, in
 }
 
 /**
- * Make the pills in an interactive preview selectable and draggable.
- *
- * Click toggles one, Ctrl/Cmd adds, Shift extends a range — the same grammar as
- * pills inside a node. Dragging carries the picked set (or just the pill under
- * the cursor) into the graph through the shared drag machinery, so it lands in
- * a node or creates one on bare canvas exactly like a sidebar row does.
+ * Make the pills in an interactive preview selectable and draggable, with the same grammar as pills inside a node.
+ * Dragging carries the picked set into the graph through the shared drag machinery.
  */
 function attachPillPicking(cloud, tags, panelEl) {
     const pills = [...cloud.querySelectorAll(".ere-pill:not(.ere-more)")];
@@ -235,8 +161,7 @@ function attachPillPicking(cloud, tags, panelEl) {
         if (onPickChange) onPickChange(picked.size);
     };
 
-    // Dragging on the panel background rubber-bands over the pills, the same
-    // gesture as empty space inside a node or in the sidebar.
+    // Dragging on the panel background rubber-bands over the pills, the same gesture as empty space inside a node or in the sidebar.
     attachPanelMarquee(panelEl, pills, picked, sync);
 
     pills.forEach((pill, index) => {
@@ -274,9 +199,10 @@ function attachPillPicking(cloud, tags, panelEl) {
                 window.removeEventListener("pointerup", onUp, true);
                 if (dragging) return;
 
-                // A plain click does nothing: this is a preview, not an
-                // editor, and toggling a tag here would imply it changes the
-                // stored group. Only the explicit multi-select modifiers pick.
+                /**
+                 * A plain click does nothing: this is a preview, not an editor, and toggling a tag here would imply it changes the stored group.
+                 * Only the explicit multi-select modifiers pick.
+                 */
                 if (ev.ctrlKey || ev.metaKey) {
                     if (picked.has(index)) picked.delete(index);
                     else picked.add(index);
@@ -295,13 +221,7 @@ function attachPillPicking(cloud, tags, panelEl) {
     });
 }
 
-/**
- * Rubber-band selection over preview pills.
- *
- * Bound on the panel, not the cloud, so the padding around the pills is
- * draggable too. A press that lands on a pill is ignored here — that gesture
- * belongs to the pill itself (click = nothing, drag = carry it out).
- */
+/** Rubber-band selection over preview pills. */
 function attachPanelMarquee(panelEl, pills, picked, sync) {
     panelEl.addEventListener("pointerdown", (e) => {
         if (e.button !== 0) return;
@@ -355,10 +275,8 @@ function attachPanelMarquee(panelEl, pills, picked, sync) {
     });
 }
 
-// Injected by the sidebar rather than imported: a static
-// `import ... from "./dragdrop.js"` here would close the cycle
-// preview -> dragdrop -> contextmenu -> preview. Class exports are not hoisted,
-// so such a cycle risks a temporal-dead-zone error at module init.
+// Injected by the sidebar rather than imported: a static `import ... from "./dragdrop.js"` here would close the cycle preview -> dragdrop -> contextmenu -> preview.
+// Class exports are not hoisted, so such a cycle risks a temporal-dead-zone error at module init.
 let startDrag = null;
 let onCanvasDropFromPreview = null;
 let onPickChange = null;

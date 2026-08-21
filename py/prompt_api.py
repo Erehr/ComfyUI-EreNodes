@@ -10,6 +10,7 @@ from safetensors import safe_open
 from .prompt_csv import CSV_FILES_PATH, TAG_DATA_CACHE
 from .settings import get_erenodes_settings, save_erenodes_settings
 from . import paths
+from . import images
 from .paths import (
     IMAGE_EXTENSIONS,
     LOCATION_NODE,
@@ -20,22 +21,18 @@ from .paths import (
 )
 
 
-# --- Tag Group API Endpoints --- #
+# Tag Group API Endpoints
 #
-# There is deliberately no module-level `prompts_dir` constant any more: the
-# root is a user setting now, so every handler calls get_prompts_dir() and the
-# toggle takes effect without restarting ComfyUI.
+# No module-level `prompts_dir`: the root is a user setting, so handlers call get_prompts_dir() and the toggle takes effect without a restart.
 
 
+# Strip characters that are unsafe in a filename.
+# Spaces and underscores stay.
 def sanitize_filename(filename):
-    # Remove potentially unsafe characters, keep it simple, allow spaces and underscores
-    # Replace known problematic characters with underscore
     filename = re.sub(r'[\/:*?"<>|]', '_', filename)
-    # Basic protection against directory traversal
     filename = filename.replace('..', '_')
     return filename.strip()
 
-# --- API Endpoints ---
 
 @server.PromptServer.instance.routes.post("/erenodes/set_setting")
 async def set_setting_handler(request):
@@ -47,15 +44,10 @@ async def set_setting_handler(request):
         return web.json_response({"status": "error", "message": "Setting 'key' not provided"}, status=400)
 
     settings = get_erenodes_settings()
-    
-    # Simple key update, can be expanded for nested keys if needed
     settings[key] = value
-    
     save_erenodes_settings(settings)
 
-    # If the active CSV changed, invalidate the tag cache so it lazy-reloads
-    # on the next search. (Previously this branch checked a mismatched key and
-    # called load_tags_from_csv with a wrong signature - it never ran.)
+    # Invalidate the tag cache so it lazy-reloads on the next search.
     if key == "autocomplete.csv":
         TAG_DATA_CACHE.pop(value, None)
 
@@ -63,50 +55,73 @@ async def set_setting_handler(request):
 
 @server.PromptServer.instance.routes.get("/erenodes/list_csv_files")
 async def list_csv_files_handler(request):
-    # Ensure this uses the CSV_FILES_PATH from prompt_csv for consistency
-    # or a shared constant if autocomplete_dir is different
-    # For now, assuming CSV_FILES_PATH is the correct one for listing.
     if not os.path.isdir(CSV_FILES_PATH):
         return web.json_response([])
     
     files = [f for f in os.listdir(CSV_FILES_PATH) if f.endswith(".csv")]
     return web.json_response(files)
 
-@server.PromptServer.instance.routes.get("/erenodes/list_tag_groups")
-async def list_tag_groups_handler(request):
-    path_param = request.query.get("path", "")
-
-
-    safe_path_param = path_param.lstrip('/').lstrip('\\') # Remove leading slashes
-    safe_path_param = safe_path_param.replace("..", "_") # Prevent directory traversal
-
-
-
-    prompts_dir = get_prompts_dir()
-    current_scan_path = os.path.abspath(os.path.join(prompts_dir, safe_path_param))
-
-    if not is_within(prompts_dir, current_scan_path):
-        return web.json_response({"error": "Forbidden path"}, status=403)
-
-    if not os.path.exists(current_scan_path):
-        return web.json_response([])
-    if not os.path.isdir(current_scan_path):
-        return web.json_response([])
-
-    items = []
+# Report which of the given tags point at a file on disk.
+#
+# Takes {"items": [{"name", "type", "extension"}]} and returns {"exists": {"<type>:<name>": bool}}, keyed as sent.
+@server.PromptServer.instance.routes.post("/erenodes/check_files")
+async def check_files_handler(request):
     try:
-        for entry in os.listdir(current_scan_path):
-            entry_path = os.path.join(current_scan_path, entry)
-            if os.path.isdir(entry_path):
-                if not entry.startswith('.') and entry != "__pycache__":
-                    items.append({"name": entry, "type": "folder"})
-            elif os.path.isfile(entry_path) and entry.lower().endswith(".json"):
-                items.append({"name": entry, "type": "file"})
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
 
-        items.sort(key=lambda x: (x["type"] == "file", x["name"].lower()))
-        return web.json_response(items)
-    except Exception as e:
-        return web.json_response({"error": f"Error listing files: {str(e)}"}, status=500)
+    items = data.get("items")
+    if not isinstance(items, list):
+        return web.json_response({"error": "items must be a list"}, status=400)
+    # A node holds tens of pills, not thousands.
+    if len(items) > 500:
+        return web.json_response({"error": "Too many items"}, status=400)
+
+    exists = {}
+    configs = {}      # get_type_config resolves roots per call; cache them here
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        name = (item.get("name") or "").strip()
+        file_type = item.get("type")
+        if not name or file_type not in ("lora", "embedding", "group"):
+            continue
+
+        key = f"{file_type}:{name}"
+        if key in exists:
+            continue
+
+        if file_type not in configs:
+            configs[file_type] = get_type_config(file_type)
+        config = configs[file_type]
+        if not config or not config["roots"]:
+            # No folder configured, so we cannot tell — do not accuse it.
+            exists[key] = True
+            continue
+
+        # An explicit extension wins; without one, try each the type allows.
+        extension = item.get("extension")
+        candidates = (extension,) if extension else config["extensions"]
+
+        found = False
+        for root in config["roots"]:
+            abs_root = os.path.abspath(root)
+            for ext in candidates:
+                # `name` is client-supplied: check containment before probing.
+                candidate = os.path.normpath(os.path.join(abs_root, name + (ext or "")))
+                if not is_within(abs_root, candidate):
+                    continue
+                if os.path.isfile(candidate):
+                    found = True
+                    break
+            if found:
+                break
+        exists[key] = found
+
+    return web.json_response({"exists": exists})
+
 
 @server.PromptServer.instance.routes.get("/erenodes/get_tag_group")
 async def get_tag_group_handler(request):
@@ -142,10 +157,10 @@ async def get_tag_group_handler(request):
 @server.PromptServer.instance.routes.post("/erenodes/save_tag_group")
 async def save_tag_group_handler(request):
     try:
-        form_data = await request.post()  # Changed to handle FormData
-        
+        form_data = await request.post()
+
         filename = form_data.get("filename")
-        tags_json_str = form_data.get("tags_json") # Renamed to avoid conflict with json module
+        tags_json_str = form_data.get("tags_json")
         path_param = form_data.get("path", "")
         image_file_field = form_data.get("image_file", None)
 
@@ -160,7 +175,7 @@ async def save_tag_group_handler(request):
             return web.json_response({"error": "Forbidden save path"}, status=403)
 
         os.makedirs(target_dir, exist_ok=True)
-        safe_filename = sanitize_filename(os.path.basename(filename)) # This is the JSON filename
+        safe_filename = sanitize_filename(os.path.basename(filename))
         if not safe_filename.lower().endswith(".json"):
             safe_filename += ".json"
 
@@ -175,42 +190,22 @@ async def save_tag_group_handler(request):
 
         message = f"Tag group '{os.path.join(safe_path_param, safe_filename) if safe_path_param else safe_filename}' saved successfully."
 
-        # Save associated image if provided
+        # Save associated cover if provided.
+        # Stored as WebP at a fixed width - see py/images.py for why.
         if image_file_field and hasattr(image_file_field, 'file') and image_file_field.file:
             try:
-                image_original_filename = image_file_field.filename
-                # Ensure there's an original filename to get an extension from
-                if not image_original_filename:
-                    raise ValueError("Image file has no original filename.")
-
-                _, image_extension = os.path.splitext(image_original_filename)
-                if image_extension and image_extension.lower() not in IMAGE_EXTENSIONS:
-                    raise ValueError(f"Unsupported image type: {image_extension}")
-
-                # Ensure there's an extension
-                if not image_extension:
-                    # Decide handling: skip, default, or error. Prompt implies using original.
-                    # If truly no extension, it's safer to note it or skip.
-                    message += f" Image '{image_original_filename}' was not saved as it has no extension."
-                else:
-                    json_basename_no_ext, _ = os.path.splitext(safe_filename)
-                    image_save_filename = json_basename_no_ext + image_extension
-                    image_save_path = os.path.join(target_dir, image_save_filename)
-
-                    with open(image_save_path, 'wb') as f_img:
-                        image_file_field.file.seek(0) # Ensure stream is at the beginning
-                        shutil.copyfileobj(image_file_field.file, f_img)
-                    
-                    message += f" Image '{image_save_filename}' also saved."
+                basename = os.path.splitext(safe_filename)[0]
+                written = images.save_preview_image(image_file_field.file, target_dir, basename)
+                # A legacy cover.png beside the new cover.webp would keep being served, since view_file_handler probes extensions in order.
+                images.remove_other_previews(target_dir, basename, written)
+                message += f" Cover '{written}' also saved."
             except Exception as e:
-                # The tag group itself saved fine; report why the image did not
-                # instead of swallowing the reason.
+                # The tag group itself saved fine; report why the image did not instead of swallowing the reason.
                 print(f"[EreNodes] Failed to save preview image for '{safe_filename}': {e}")
-                message += f" Failed to save associated image: {e}"
+                message += f" Failed to save cover: {e}"
         elif image_file_field is not None:
-            # A value was posted under "image_file" but it is not a file part
-            # (no .file attribute) - e.g. an empty string from an untouched
-            # form field. Say so rather than hinting at a mystery failure.
+            # A value was posted under "image_file" but it is not a file part (no .file attribute) - e.g. an empty string from an untouched form field.
+            # Say so rather than hinting at a mystery failure.
             message += " (Ignored 'image_file': not an uploaded file.)"
 
         return web.json_response({"message": message})
@@ -221,12 +216,11 @@ async def save_tag_group_handler(request):
         return web.json_response({"error": "Internal server error"}, status=500)
 
 
-# --- Tag Group Location --- #
+# Tag Group Location
 
+# Current location plus both resolved paths, so the settings UI can show where things actually are without guessing at the install layout.
 @server.PromptServer.instance.routes.get("/erenodes/tag_groups_location")
 async def get_tag_groups_location_handler(request):
-    """Current location plus both resolved paths, so the settings UI can show
-    where things actually are without guessing at the install layout."""
     location = paths.get_location()
     node_dir = paths.node_prompts_dir()
     models_dir = paths.models_prompts_dir()
@@ -241,14 +235,12 @@ async def get_tag_groups_location_handler(request):
     })
 
 
+# Switch between the two allowed roots.
+#
+# Keywords only: no way to name an arbitrary directory over HTTP.
+# A different disk goes in extra_model_paths.yaml.
 @server.PromptServer.instance.routes.post("/erenodes/set_tag_groups_location")
 async def set_tag_groups_location_handler(request):
-    """Switch between the two allowed roots.
-
-    Only the two known keywords are accepted - there is deliberately no way to
-    name an arbitrary directory over HTTP. Users who need a different disk add
-    `tag_groups:` to extra_model_paths.yaml, which folder_paths picks up.
-    """
     try:
         data = await request.json()
     except Exception:
@@ -282,16 +274,15 @@ async def set_tag_groups_location_handler(request):
         "location": location,
         "previous": previous,
         "resolved": target,
-        # How many groups are still sitting in the location we just left, so the
-        # client can offer to copy them across.
+        # How many groups are still sitting in the location we just left, so the client can offer to copy them across.
         "legacy_count": paths.count_tag_groups(other) if previous != location else 0,
     })
 
 
+# Copy tag groups from one location to the other.
+# Never overwrites, never deletes - the source folder is left intact as a backup.
 @server.PromptServer.instance.routes.post("/erenodes/migrate_tag_groups")
 async def migrate_tag_groups_handler(request):
-    """Copy tag groups from one location to the other. Never overwrites, never
-    deletes - the source folder is left intact as a backup."""
     try:
         data = await request.json()
     except Exception:
@@ -312,15 +303,10 @@ async def migrate_tag_groups_handler(request):
     return web.json_response({"copied": copied, "skipped": skipped})
 
 
-# --- LORA API Endpoints --- #
+# LORA API Endpoints
 
+# Model folders for a type. folder_paths already merges extra_model_paths.yaml.
 def get_model_paths(model_type):
-    """Model folders for a type, via ComfyUI's folder_paths.
-
-    folder_paths already merges extra_model_paths.yaml (including Stability
-    Matrix and other manager setups), so the previous manual YAML parsing was
-    redundant and has been removed.
-    """
     try:
         return [p for p in folder_paths.get_folder_paths(model_type) if os.path.isdir(p)]
     except Exception:
@@ -337,8 +323,12 @@ async def get_lora_metadata_handler(request):
         if not lora_path:
             return web.json_response({"error": "Lora not found in any known folder"}, status=404)
 
-        # File reads (especially safetensors header reads on large files) are
-        # blocking - run them in a thread so the server event loop stays free.
+        # Same guard as save_file_image, for the same reason: `filename` is client-supplied. folder_paths.get_full_path sanitises in current ComfyUI, but it has not always, and this endpoint reads a file and returns part of its contents.
+        roots = get_model_paths("loras") + get_model_paths("loras_old")
+        if not any(is_within(os.path.abspath(root), lora_path) for root in roots):
+            return web.json_response({"error": "Forbidden path"}, status=403)
+
+        # File reads (especially safetensors header reads on large files) are blocking - run them in a thread so the server event loop stays free.
         tags = await asyncio.to_thread(_read_lora_tags, lora_path)
         return web.json_response(tags)
     except Exception as e:
@@ -376,14 +366,12 @@ def _read_lora_tags(lora_path):
 
     return tags
 
-# --- Unified File Search API Endpoint --- #
+# Unified File Search API Endpoint
 
+# Roots + extensions for a browsable file type, or None if unknown.
+#
+# Resolved per call, not cached: the tag-group root follows a live setting and model roots can change when extra_model_paths is reloaded.
 def get_type_config(file_type):
-    """Roots + extensions for a browsable file type, or None if unknown.
-
-    Resolved per call, not cached: the tag-group root follows a live setting and
-    model roots can change when extra_model_paths is reloaded.
-    """
     if file_type == 'lora':
         return {'roots': get_model_paths("loras"),
                 'extensions': ('.safetensors', '.pt', '.ckpt', '.lora')}
@@ -436,11 +424,7 @@ async def search_files_handler(request):
         scan_target_abs = None
         current_collection_root_abs = None
 
-        # Two modes, expressed as a list of (scan target, collection root) pairs:
-        #   - a path was given -> resolve it against whichever collection root
-        #     actually contains it, and scan only that one;
-        #   - no path -> scan every collection root (loras can live in several
-        #     folders via extra_model_paths.yaml).
+        # (scan target, collection root) pairs: a given path resolves against whichever root contains it; no path scans every root, since loras can live in several via extra_model_paths.yaml.
         if path_param:
             normalized_path_param = os.path.normpath(path_param.lstrip('/').lstrip('\\'))
             for root in collection_paths:
@@ -574,8 +558,7 @@ async def view_file_handler(request):
         return web.Response(status=400, text="Missing type or path")
 
     # Accept optional sizing params for cache-key stability on the client.
-    # We do not resize server-side (no extra deps), but presence of w/h/fit
-    # in the URL should not cause 404 when an image exists.
+    # We do not resize server-side (no extra deps), but presence of w/h/fit in the URL should not cause 404 when an image exists.
     _w = request.query.get("w")
     _h = request.query.get("h")
     _fit = request.query.get("fit")
@@ -591,7 +574,8 @@ async def view_file_handler(request):
     if not base_dirs:
         return web.Response(status=404, text=f"No folder configured for type '{type_name}'")
 
-    # This is a basic sanitization. The check below is more robust.
+    # This is a basic sanitization.
+    # The check below is more robust.
     # It prevents using '..' to escape the intended directories.
     path_param = path_param.replace("..", "_")
 
@@ -603,9 +587,7 @@ async def view_file_handler(request):
         # It's what we use as the base for finding a preview image.
         prospective_path_base = os.path.join(abs_root_dir, path_param)
 
-        # Security check: ensure the requested path is within the intended
-        # directory (see is_within — a sibling dir like ".../loras_x" must not
-        # pass a ".../loras" check).
+        # Security check: ensure the requested path is within the intended directory (see is_within — a sibling dir like ".../loras_x" must not pass a ".../loras" check).
         if is_within(abs_root_dir, prospective_path_base):
             # Check for both filename.extension and filename.preview.extension patterns
             for ext in potential_extensions:
@@ -621,8 +603,7 @@ async def view_file_handler(request):
                 if os.path.isfile(preview_image_path):
                     return web.FileResponse(preview_image_path)
     
-    # If we get here, no file was found in any of the directories
-    # Return 204 No Content to indicate "no preview available" without error noise.
+    # If we get here, no file was found in any of the directories Return 204 No Content to indicate "no preview available" without error noise.
     return web.Response(status=204)
 
 @server.PromptServer.instance.routes.post("/erenodes/save_file_image")
@@ -659,11 +640,14 @@ async def save_file_image_handler(request):
         if not config:
             return web.json_response({"error": f"Invalid file type: {file_type}"}, status=400)
 
-        # Find the actual file path
+        # `name` is client-supplied, so check containment against the root it resolved under before probing — is_within, not startswith, so a sibling like ".../loras_backup" cannot pass a ".../loras" check.
         file_path = None
         for root_dir in config['roots']:
+            abs_root = os.path.abspath(root_dir)
             for ext in config['extensions']:
-                potential_path = os.path.join(root_dir, file_name + ext)
+                potential_path = os.path.normpath(os.path.join(abs_root, file_name + ext))
+                if not is_within(abs_root, potential_path):
+                    continue
                 if os.path.exists(potential_path):
                     file_path = potential_path
                     break
@@ -673,42 +657,53 @@ async def save_file_image_handler(request):
         if not file_path:
             return web.json_response({"error": f"File not found: {file_name}"}, status=404)
 
-        # Get the directory and base name of the file
         file_dir = os.path.dirname(file_path)
         file_basename = os.path.splitext(os.path.basename(file_path))[0]
 
-        # Get image extension from the uploaded file
-        image_original_filename = image_file_field.filename
-        if not image_original_filename:
-            return web.json_response({"error": "Image file has no original filename"}, status=400)
+        try:
+            image_filename = images.save_preview_image(image_file_field.file, file_dir, file_basename)
+        except images.PreviewError as e:
+            return web.json_response({"error": str(e)}, status=400)
+        images.remove_other_previews(file_dir, file_basename, image_filename)
 
-        _, image_extension = os.path.splitext(image_original_filename)
-        if not image_extension:
-            return web.json_response({"error": "Image file has no extension"}, status=400)
-        if image_extension.lower() not in IMAGE_EXTENSIONS:
-            return web.json_response({"error": f"Unsupported image type: {image_extension}"}, status=400)
-
-        # Create the image filename with the same base name as the file
-        image_filename = file_basename + image_extension
-        image_path = os.path.join(file_dir, image_filename)
-
-        # Save the image
-        with open(image_path, 'wb') as f_img:
-            image_file_field.file.seek(0)
-            shutil.copyfileobj(image_file_field.file, f_img)
-
-        message = f"Image '{image_filename}' saved successfully for {file_type} '{file_name}'."
+        message = f"Cover '{image_filename}' saved for {file_type} '{file_name}'."
         return web.json_response({"message": message})
 
     except Exception:
         return web.json_response({"error": "Internal server error"}, status=500)
 
 
-# --- Sidebar API Endpoints --- #
+# Remove a tag group's cover image.
 #
-# The sidebar needs whole-tree data (an accordion expanding one level at a time
-# would be one request per folder) and content-aware search (matching tags
-# *inside* a group cannot be done client-side without downloading everything).
+# Tag groups only: lora and embedding covers live in the model folders and are shared with every other tool that reads them.
+@server.PromptServer.instance.routes.post("/erenodes/delete_file_image")
+async def delete_file_image_handler(request):
+    try:
+        data = await request.json()
+        name = (data.get("name") or "").strip()
+        if data.get("type") != "group":
+            return web.json_response({"error": "Only tag group covers can be removed"}, status=400)
+        if not name:
+            return web.json_response({"error": "Name not provided"}, status=400)
+
+        root = get_prompts_dir()
+        target = os.path.normpath(os.path.join(root, name))
+        if not is_within(root, target):
+            return web.json_response({"error": "Invalid path"}, status=400)
+        if not os.path.isfile(target + ".json"):
+            return web.json_response({"error": f"Tag group not found: {name}"}, status=404)
+
+        # keep="" matches nothing, so every extension is swept.
+        images.remove_other_previews(os.path.dirname(target), os.path.basename(target), "")
+        return web.json_response({"message": f"Cover removed for '{name}'."})
+
+    except Exception:
+        return web.json_response({"error": "Internal server error"}, status=500)
+
+
+# Sidebar API Endpoints
+#
+# Whole-tree data (one request instead of one per folder) and content-aware search, which cannot be done client-side without downloading everything.
 
 # path -> (mtime, [tag names]) so repeated searches only re-read changed files.
 _TAG_INDEX = {}
@@ -718,12 +713,10 @@ def _tree_excluded(name):
     return name.startswith('.') or name == "__pycache__"
 
 
+# Nested {folders, files} for one collection root.
+#
+# Paths in the result are relative to the root and always forward-slashed, so the client can use them directly in URLs regardless of host OS.
 def _build_tree(root, extensions, rel=""):
-    """Nested {folders, files} for one collection root.
-
-    Paths in the result are relative to the root and always forward-slashed, so
-    the client can use them directly in URLs regardless of host OS.
-    """
     abs_dir = os.path.join(root, rel) if rel else root
     folders, files = [], []
     try:
@@ -760,8 +753,7 @@ async def tree_handler(request):
     if not config:
         return web.json_response({"error": f"Invalid file type: {file_type}"}, status=400)
 
-    # Walking several model roots can be slow on a network share - keep the
-    # event loop free.
+    # Walking several model roots can be slow on a network share - keep the event loop free.
     def build():
         merged = {"folders": [], "files": []}
         for root in config['roots']:
@@ -780,8 +772,8 @@ async def tree_handler(request):
     return web.json_response(tree)
 
 
+# Tag names inside a group file, cached on mtime.
 def _tag_names_for(json_path):
-    """Tag names inside a group file, cached on mtime."""
     try:
         mtime = os.path.getmtime(json_path)
     except OSError:
@@ -805,9 +797,9 @@ def _tag_names_for(json_path):
     return names
 
 
+# Search tag groups by filename AND by the tags they contain.
 @server.PromptServer.instance.routes.get("/erenodes/search_tag_groups")
 async def search_tag_groups_handler(request):
-    """Search tag groups by filename AND by the tags they contain."""
     query = request.query.get("query", "").strip().lower()
     if not query:
         return web.json_response({"items": []})
@@ -835,8 +827,7 @@ async def search_tag_groups_handler(request):
                     "extension": os.path.splitext(filename)[1],
                     "type": "group",
                     "matchedName": name_hit,
-                    # Enough to show "why" a result matched without shipping the
-                    # whole group; the hover preview fetches the full list.
+                    # Enough to show "why" a result matched without shipping the whole group; the hover preview fetches the full list.
                     "matchedTags": matched[:8],
                 })
         items.sort(key=lambda x: (not x["matchedName"], x["path"].lower()))
@@ -850,12 +841,11 @@ async def search_tag_groups_handler(request):
     return web.json_response({"items": items})
 
 
+# Map a client-supplied relative path to an absolute one inside the root.
+#
+# Returns (abs_path, error_response).
+# The containment check is what keeps rename/delete from reaching outside the tag-group folder.
 def _resolve_group_path(rel_path, must_exist=True):
-    """Map a client-supplied relative path to an absolute one inside the root.
-
-    Returns (abs_path, error_response). The containment check is what keeps
-    rename/delete from reaching outside the tag-group folder.
-    """
     if not rel_path:
         return None, web.json_response({"error": "path not provided"}, status=400)
 
@@ -870,9 +860,10 @@ def _resolve_group_path(rel_path, must_exist=True):
     return target, None
 
 
+# Rename a tag group or a folder.
+# Preview images follow the .json.
 @server.PromptServer.instance.routes.post("/erenodes/rename_path")
 async def rename_path_handler(request):
-    """Rename a tag group or a folder. Preview images follow the .json."""
     try:
         data = await request.json()
     except Exception:
@@ -911,14 +902,11 @@ async def rename_path_handler(request):
     return web.json_response({"ok": True, "path": os.path.relpath(target, get_prompts_dir()).replace(os.sep, '/')})
 
 
+# Move a tag group or folder into another folder.
+#
+# Both ends resolve against the tag-group root, so neither can point outside it.
 @server.PromptServer.instance.routes.post("/erenodes/move_path")
 async def move_path_handler(request):
-    """Move a tag group (or folder) into another folder.
-
-    This is what dragging an entry onto a folder inside the sidebar does. Both
-    ends are resolved against the tag-group root, so neither the source nor the
-    destination can point outside it.
-    """
     try:
         data = await request.json()
     except Exception:
@@ -961,9 +949,9 @@ async def move_path_handler(request):
     })
 
 
+# Delete a tag group (plus its preview images) or an entire folder.
 @server.PromptServer.instance.routes.post("/erenodes/delete_path")
 async def delete_path_handler(request):
-    """Delete a tag group (plus its preview images) or an entire folder."""
     try:
         data = await request.json()
     except Exception:
@@ -986,3 +974,80 @@ async def delete_path_handler(request):
         return web.json_response({"error": f"Delete failed: {e}"}, status=500)
 
     return web.json_response({"ok": True})
+
+
+# Prompt Extractor
+
+# Pull the positive prompt out of an uploaded image.
+#
+# Saved into ComfyUI's input directory, like any LoadImage upload, so the node can re-read it and the workflow stays portable.
+@server.PromptServer.instance.routes.post("/erenodes/extract_prompt")
+async def extract_prompt_handler(request):
+    from . import prompt_extractor
+
+    try:
+        form = await request.post()
+    except Exception as e:
+        return web.json_response({"error": f"Bad upload: {e}"}, status=400)
+
+    field = form.get("image")
+    if field is None or not hasattr(field, "file"):
+        return web.json_response({"error": "No image uploaded"}, status=400)
+
+    original = os.path.basename(field.filename or "image.png")
+    if not original.lower().endswith(prompt_extractor.IMAGE_EXTENSIONS):
+        return web.json_response(
+            {"error": f"Unsupported image type: {original}"}, status=400)
+
+    input_dir = folder_paths.get_input_directory()
+    os.makedirs(input_dir, exist_ok=True)
+
+    # Never clobber an existing input: suffix until the name is free.
+    safe = sanitize_filename(original)
+    stem, ext = os.path.splitext(safe)
+    name, counter = safe, 1
+    while os.path.exists(os.path.join(input_dir, name)):
+        name = f"{stem}_{counter}{ext}"
+        counter += 1
+
+    target = os.path.join(input_dir, name)
+    try:
+        with open(target, "wb") as out:
+            field.file.seek(0)
+            shutil.copyfileobj(field.file, out)
+    except Exception as e:
+        return web.json_response({"error": f"Could not save image: {e}"}, status=500)
+
+    try:
+        # extract_from_image already prefers the editor graph when it contains our nodes (the only source that keeps strengths and inactive tags).
+        result = await asyncio.to_thread(prompt_extractor.extract_from_image, target)
+    except Exception as e:
+        print(f"[EreNodes] extract_prompt failed: {e}")
+        return web.json_response({"error": "Internal error while reading metadata"}, status=500)
+
+    result["filename"] = name
+    return web.json_response(result)
+
+
+# Re-extract from an image already in the input directory.
+@server.PromptServer.instance.routes.get("/erenodes/extract_prompt")
+async def extract_prompt_existing_handler(request):
+    from . import prompt_extractor
+
+    filename = request.query.get("filename", "")
+    if not filename:
+        return web.json_response({"error": "filename not provided"}, status=400)
+
+    input_dir = folder_paths.get_input_directory()
+    path = os.path.abspath(os.path.join(input_dir, os.path.basename(filename)))
+    if not is_within(input_dir, path) or not os.path.isfile(path):
+        return web.json_response({"error": "Image not found"}, status=404)
+
+    try:
+        result = await asyncio.to_thread(prompt_extractor.extract_from_image, path)
+    except Exception as e:
+        print(f"[EreNodes] extract_prompt failed: {e}")
+        return web.json_response({"error": "Internal error while reading metadata"}, status=500)
+
+    result["filename"] = os.path.basename(path)
+    return web.json_response(result)

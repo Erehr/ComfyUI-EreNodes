@@ -1,73 +1,31 @@
-// EreNodes sidebar tab.
-//
-// A native ComfyUI sidebar tab (registerSidebarTab, type "custom") that browses
-// tag groups, loras and embeddings, with the same hover preview and the same
-// pill styling the nodes use.
-//
-// STYLING: this deliberately mirrors the DOM and class names of the frontend's
-// own SidebarTabTemplate / ModelLibrarySidebarTab / TreeExplorer rather than
-// inventing its own look:
-//
-//   comfy-vue-side-bar-container > comfy-vue-side-bar-header (toolbar, search,
-//                                    dashed rule, tablist)
-//                                > comfy-vue-side-bar-body > ul[role=tree]
-//
-// IMPORTANT: the tree copies the **Nodes** sidebar, not the Model Library. Both
-// look alike, but the Model Library's is a PrimeVue `Tree` whose CSS PrimeVue
-// injects lazily on first mount of such a component — so opening this tab before
-// any other left the list completely unstyled. The Nodes tree is plain Tailwind
-// utilities, which are statically compiled and therefore always present. Same
-// reasoning retired the p-divider and p-badge here. Theming still comes for
-// free: those utilities resolve to ComfyUI's own colour variables.
-//
-// Implemented in plain DOM: the rest of this extension is plain DOM, and a
-// custom sidebar tab is handed a bare HTMLElement anyway. State lives in a
-// module-level singleton because `render(el)` runs again on every re-mount.
-
 import { app } from "../../../scripts/app.js";
-import { getCache, clearCachePrefix, isNotFound } from "./cache.js";
+import { getCache, clearCachePrefix, isNotFound, loadStyle, clearMissingCache, isAcceptedImage, extractFromImage, tagsFromResult } from "./util.js";
 import { SURFACE_CLASS, injectTagStyles, renderTagTile, previewUrl } from "./tagview.js";
 import { showPreviewFor, hidePreviewPanel, setPreviewHandlers } from "./preview.js";
 import { startExternalDrag, isDragActive, injectDragStyles } from "./dragdrop.js";
 import { TagSelectionContextMenu } from "./contextmenu.js";
+import { createTagEditor } from "./tageditor.js";
 
-// Icon-button class string lifted verbatim from the frontend's Button.vue
-// output (variant "muted-textonly", size "icon"); see reference/sidebar.html.
-// Reusing it means these buttons are the same size, radius, hover and focus
-// treatment as the Refresh / Load-All buttons in the core sidebars.
-const BUTTON_CLASS =
-    "relative inline-flex items-center justify-center gap-2 cursor-pointer touch-manipulation " +
-    "whitespace-nowrap appearance-none border-none rounded-md text-sm font-medium font-inter " +
-    "transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring " +
-    "disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none " +
-    "[&_svg:not([width]):not([height])]:size-4 [&_svg]:shrink-0 bg-transparent " +
-    "text-muted-foreground hover:bg-secondary-background-hover size-8";
-// Only a background + full-strength text; nothing invented, both utilities are
-// already used by the frontend.
+// Icon-button class string lifted verbatim from the frontend's Button.vue output (variant "muted-textonly", size "icon"); see reference/sidebar.html.
+// Reusing it means these buttons are the same size, radius, hover and focus treatment as the Refresh / Load-All buttons in the core sidebars.
+const BUTTON_CLASS = "relative inline-flex items-center justify-center gap-2 cursor-pointer touch-manipulation whitespace-nowrap appearance-none border-none rounded-md text-sm font-medium font-inter transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 bg-transparent text-muted-foreground hover:bg-secondary-background-hover size-8";
+// Only a background + full-strength text; nothing invented, both utilities are already used by the frontend.
 const BUTTON_ACTIVE = "bg-secondary-background text-base-foreground";
 
 // Text tab classes, copied from the Assets sidebar's tablist.
-const TAB_CLASS =
-    "flex shrink-0 items-center justify-center cursor-pointer rounded-lg border-none " +
-    "px-2.5 py-2 text-sm transition-all duration-200 focus-visible:ring-ring/20 " +
-    "outline-hidden focus-visible:ring-1";
+const TAB_CLASS = "flex shrink-0 items-center justify-center cursor-pointer rounded-lg border-none px-2.5 py-2 text-sm transition-all duration-200 focus-visible:ring-ring/20 outline-hidden focus-visible:ring-1";
 const TAB_ACTIVE = "bg-interface-menu-component-surface-hovered text-text-primary";
-const TAB_INACTIVE =
-    "bg-transparent text-text-secondary hover:bg-button-hover-surface focus:bg-button-hover-surface";
+const TAB_INACTIVE = "bg-transparent text-text-secondary hover:bg-button-hover-surface focus:bg-button-hover-surface";
 
-// Tree row classes, copied verbatim from the Nodes sidebar (see
-// reference/sidebar-nodes.html). All static Tailwind — nothing lazily injected.
-const ROW_CLASS =
-    "group/tree-node flex w-full min-w-0 cursor-pointer select-none items-center " +
-    "gap-3 overflow-hidden py-2 outline-none hover:bg-comfy-input rounded";
+// Tree row classes, copied verbatim from the Nodes sidebar (see reference/sidebar-nodes.html).
+// All static Tailwind — nothing lazily injected.
+const ROW_CLASS = "group/tree-node flex w-full min-w-0 cursor-pointer select-none items-center gap-3 overflow-hidden py-2 outline-none hover:bg-comfy-input rounded";
 const ROW_ICON = "size-4 shrink-0 text-muted-foreground";
 const ROW_LABEL = "text-foreground min-w-0 flex-1 truncate text-sm";
 const TREE_CLASS = "m-0 min-w-0 p-0 px-2 pb-2";
-// The Nodes tree has no counts; this is the same token vocabulary as its
-// buttons, so it themes with everything else. (PrimeVue's p-badge is lazily
-// injected and cannot be relied on.)
-const COUNT_CLASS =
-    "shrink-0 rounded bg-secondary-background px-1.5 py-0.5 text-xs text-muted-foreground";
+// The Nodes tree has no counts; this is the same token vocabulary as its buttons, so it themes with everything else.
+// (PrimeVue's p-badge is lazily injected and cannot be relied on.)
+const COUNT_CLASS = "shrink-0 rounded bg-secondary-background px-1.5 py-0.5 text-xs text-muted-foreground";
 
 const TABS = [
     { id: "group",     label: "Tag Groups", defaultView: "list" },
@@ -75,8 +33,7 @@ const TABS = [
     { id: "embedding", label: "Embeddings", defaultView: "grid" },
 ];
 
-// Only lucide icons the frontend already compiles can be used — an uncompiled
-// `icon-[lucide--x]` renders as nothing.
+// Only lucide icons the frontend already compiles can be used — an uncompiled `icon-[lucide--x]` renders as nothing.
 const VIEWS = [
     ["list", "icon-[lucide--list]",        "List view"],
     ["grid", "icon-[lucide--layout-grid]", "Grid view"],
@@ -86,7 +43,7 @@ const LS_VIEW = "EreNodes.Sidebar.view";
 const LS_EXPANDED = "EreNodes.Sidebar.expanded";
 const LS_TAB = "EreNodes.Sidebar.tab";
 
-const HOLD_MS = 200;       // matches the pill drag threshold
+const HOLD_MS = 200;
 const MOVE_THRESHOLD = 5;
 const TILE_SIZE = 96;
 
@@ -94,20 +51,21 @@ const state = {
     host: null,
     tab: TABS[0].id,
     query: "",
-    trees: {},          // tab id -> {folders, files}
+    trees: {},
     loading: false,
-    expanded: {},       // tab id -> Set of folder paths
-    view: {},           // tab id -> "list" | "grid"
-    crumb: {},          // tab id -> current folder path (grid view only)
+    expanded: {},
+    view: {},
+    crumb: {}, 
     selection: new Set(),
     anchor: null,
-    rows: [],           // flattened, in render order — for shift-range selection
-    location: null,     // {location, resolved, paths, counts} — informational
+    rows: [],
+    location: null,
     press: null,
     contentHits: null,
+    editor: null,
 };
 
-// ------------------------------------------------------------------- storage
+// Storage
 
 function loadJSON(key, fallback) {
     try {
@@ -137,7 +95,7 @@ function persistExpanded() {
 
 const activeTab = () => TABS.find(t => t.id === state.tab);
 
-// ---------------------------------------------------------------------- data
+// Data
 
 async function fetchTree(tab, { force = false } = {}) {
     if (state.trees[tab] && !force) return state.trees[tab];
@@ -169,27 +127,28 @@ function filesUnder(node, out = []) {
 }
 
 /**
- * Tags a row contributes when dropped on a node.
- *
- * A *folder* used to produce a single bogus tag named after the folder, which
- * the node then rendered as a missing file. It now contributes everything
- * inside it, recursively — the only reading that makes sense.
+ * Tags a row contributes when dropped on a node; a folder contributes its whole subtree.
+ * @param {{unpack?: boolean}} opts  expand groups instead of passing the pill.
  */
-async function tagsForRow(row) {
+async function tagsForRow(row, opts = {}) {
     if (row.type === "folder") {
         const node = nodeAtPath(state.trees[state.tab] || { folders: [], files: [] }, row.path);
         const files = filesUnder(node);
         const lists = await Promise.all(files.map(f => tagsForFile({
             ...f, tab: state.tab, type: "file",
-        })));
+        }, opts)));
         return dedupe(lists.flat());
     }
-    return tagsForFile(row);
+    return tagsForFile(row, opts);
 }
 
-async function tagsForFile(row) {
-    if (row.tab === "group") return (await loadGroupTags(row.path, row.extension)) || [];
-    return [{ name: row.path, type: row.tab, active: true, extension: row.extension }];
+/** A tag group contributes *itself*, as one group pill. */
+async function tagsForFile(row, { unpack = false } = {}) {
+    if (row.tab !== "group") {
+        return [{ name: row.path, type: row.tab, active: true, extension: row.extension }];
+    }
+    if (unpack) return (await loadGroupTags(row.path, row.extension)) || [];
+    return [{ name: row.path, type: "group", active: true, extension: row.extension || ".json" }];
 }
 
 function dedupe(tags) {
@@ -203,16 +162,11 @@ function dedupe(tags) {
     return out;
 }
 
-// ------------------------------------------------------------------ filtering
+// Filtering
 
 const matches = (text, query) => text.toLowerCase().includes(query);
 
-/**
- * Filter a tree to entries matching the query.
- *
- * Folders survive if their name matches or if any descendant does, so the path
- * to a hit stays visible; those branches are force-expanded by the renderer.
- */
+/** Filter a tree to entries matching the query. */
 function filterTree(node, query, contentHits) {
     const folders = [];
     for (const folder of node.folders || []) {
@@ -252,7 +206,7 @@ function countLeaves(folder) {
     return filesUnder(folder).length;
 }
 
-// ----------------------------------------------------------------- selection
+// Selection
 
 const rowKey = row => `${row.type}:${row.path}`;
 
@@ -300,9 +254,8 @@ function selectedRows() {
 }
 
 /**
- * Rubber-band selection over the rows, matching the pill marquee in nodes:
- * drag on empty space to replace the selection, hold Ctrl/Cmd to XOR against
- * what is already picked. A press that never moves is not a band.
+ * Rubber-band selection over the rows, matching the pill marquee in nodes: drag on empty space to replace the selection, hold Ctrl/Cmd to XOR against what is already picked.
+ * A press that never moves is not a band.
  */
 function beginMarquee(e, scroller) {
     const additive = e.ctrlKey || e.metaKey;
@@ -320,8 +273,7 @@ function beginMarquee(e, scroller) {
 
         const next = new Set(base);
         for (const el of scroller.querySelectorAll("[data-ere-key]")) {
-            // Tree rows nest (li holds the content div), so only count the
-            // element the user actually sees as a row.
+            // Tree rows nest (li holds the content div), so only count the element the user actually sees as a row.
             if (el.querySelector("[data-ere-key]")) continue;
             const r = el.getBoundingClientRect();
             if (r.left < left + width && r.right > left && r.top < top + height && r.bottom > top) {
@@ -357,7 +309,7 @@ function beginMarquee(e, scroller) {
     window.addEventListener("pointercancel", finish, true);
 }
 
-// -------------------------------------------------------------- node actions
+// Node Actions
 
 function defaultNodeType() {
     return app.ui?.settings?.getSettingValue?.("EreNodes.Sidebar.DefaultNode", "ErePromptCloud")
@@ -366,11 +318,7 @@ function defaultNodeType() {
 
 /**
  * Create a prompt node prefilled with `tags`.
- *
- * @param {Array<object>} tags
- * @param {string} [nodeType]
- * @param {?{x: number, y: number}} at  client coordinates to place it at
- *        (a drop point); centred in the viewport when omitted.
+ * @param {?{x, y}} at  drop point; centred in the viewport when omitted.
  */
 function createNodeWithTags(tags, nodeType = defaultNodeType(), at = null) {
     const LG = window.LiteGraph;
@@ -384,15 +332,13 @@ function createNodeWithTags(tags, nodeType = defaultNodeType(), at = null) {
         const { scale, offset } = canvas.ds;
         const rect = canvas.canvas.getBoundingClientRect();
         if (at) {
-            // Client -> graph coordinates, dropping the node's top-left roughly
-            // under the cursor.
+            // Client -> graph coordinates, dropping the node's top-left roughly under the cursor.
             node.pos = [
                 (at.x - rect.left) / scale - offset[0],
                 (at.y - rect.top) / scale - offset[1],
             ];
         } else {
-            // Centre of the visible canvas, nudged so repeated adds don't stack
-            // exactly on top of each other.
+            // Nudged, so repeated adds do not stack exactly on top of each other.
             const jitter = (app.graph._nodes.length % 6) * 24;
             node.pos = [
                 rect.width / 2 / scale - offset[0] - (node.size?.[0] ?? 200) / 2 + jitter,
@@ -414,11 +360,10 @@ function onCanvasDrop(tags, x, y) {
     createNodeWithTags(tags, defaultNodeType(), { x, y });
 }
 
-// ------------------------------------------------------------------- hovering
+// Hovering
 
 function anchorRect(el) {
-    // Anchor previews to the sidebar's edge, not the row, so the panel never
-    // covers the list the pointer is moving through.
+    // Anchor previews to the sidebar's edge, not the row, so the panel never covers the list the pointer is moving through.
     const panel = state.host?.getBoundingClientRect();
     const row = el.getBoundingClientRect();
     return panel
@@ -435,15 +380,14 @@ function attachHover(el, row) {
             anchor: anchorRect(el),
             // Grid view already shows the thumbnail on the tile itself.
             image: state.view[state.tab] !== "grid",
-            // Only tag groups have individually useful tags to pick out; a
-            // lora's trained words are informational.
+            // Only tag groups have individually useful tags to pick out; a lora's trained words are informational.
             interactive: row.tab === "group" && row.type === "file",
         });
     });
     el.addEventListener("pointerleave", () => hidePreviewPanel());
 }
 
-// --------------------------------------------------------------------- press
+// Press
 
 /**
  * Press handling: a click activates, a hold or a small move becomes a drag.
@@ -463,15 +407,26 @@ function attachPress(el, row) {
             hidePreviewPanel(true);
             // A drag from a selected row carries the whole selection.
             const rows = state.selection.has(rowKey(row)) ? selectedRows() : [row];
-            const lists = await Promise.all(rows.map(tagsForRow));
+            const lists = await Promise.all(rows.map(r => tagsForRow(r)));
             const tags = dedupe(lists.flat());
             const label = rows.length > 1 ? `${rows.length} items` : row.name;
+
+            // Tag groups drop as themselves; holding Alt drops their contents instead.
+            // Both payloads are resolved up front so the swap is instant — reading files mid-drag would stall the ghost.
+            // Only the Tag Groups tab has a second reading: a lora is a lora.
+            let altTags = null;
+            let altLabel = "";
+            if (state.tab === "group") {
+                const unpacked = await Promise.all(rows.map(r => tagsForRow(r, { unpack: true })));
+                altTags = dedupe(unpacked.flat());
+                altLabel = `${altTags.length} tag${altTags.length === 1 ? "" : "s"}`;
+            }
+
             startExternalDrag({
-                tags, label,
+                tags, label, altTags, altLabel,
                 x: state.press?.x ?? start.x,
                 y: state.press?.y ?? start.y,
-                // Lets a drop inside the sidebar move these entries instead of
-                // treating them as tags to save.
+                // Lets a drop inside the sidebar move these entries instead of treating them as tags to save.
                 origin: {
                     kind: "sidebar", tab: state.tab, rows,
                     onMove: moveRowsInto,
@@ -509,8 +464,7 @@ async function onRowActivate(row, e) {
     clearSelection();
 
     if (row.type === "folder") {
-        // List view expands in place; grid view navigates into the folder,
-        // because a nested accordion of grids is unreadable.
+        /** List view expands in place; grid view navigates into the folder, because a nested accordion of grids is unreadable. */
         if (state.view[state.tab] === "grid") {
             state.crumb[state.tab] = row.path;
             render();
@@ -519,7 +473,8 @@ async function onRowActivate(row, e) {
         }
         return;
     }
-    const tags = await tagsForRow(row);
+    // Click-to-add and the ➕ menu still expand a group into its tags.
+    const tags = await tagsForRow(row, { unpack: true });
     if (!tags.length) {
         app.extensionManager?.toast?.add({
             severity: "warn", summary: "Empty tag group",
@@ -538,17 +493,11 @@ function toggleFolder(path) {
     render();
 }
 
-// ------------------------------------------------------------- drops in-tree
+// Drops In Tree
 
 /**
  * Drop inside the sidebar.
- *
- * Two very different gestures land here:
- *  - dragging entries *within* the sidebar    -> move the files into the folder;
- *  - dragging tag pills *out of a node*       -> save them as a new tag group.
- *
- * Previously both took the save path, so reordering inside the sidebar wrongly
- * prompted for a filename.
+ * Two gestures land here: entries dragged *within* the sidebar move into the folder, tag pills dragged *out of a node* open the editor.
  */
 async function onSidebarDrop(tags, folderPath, sourceNode, origin) {
     if (origin?.kind === "sidebar") {
@@ -563,15 +512,14 @@ async function onSidebarDrop(tags, folderPath, sourceNode, origin) {
         return;
     }
 
-    const { saveTagGroup, stripNestedGroups } = await import("../prompt.js");
-    const clean = stripNestedGroups(tags.map(t => ({ ...t })));
-    if (!clean.length) return;
-
-    const name = await promptForName("Save tag group", "Name for the new tag group:");
-    if (!name) return;
-
-    await saveTagGroup({ path: folderPath, filename: name, tags: clean });
-    await refresh();
+    // Straight into the editor rather than a name prompt: the tags are already in hand, so there is no reason to make the user commit to a filename before seeing what is in the group.
+    // Nested groups are unpacked by the editor itself, so they arrive intact rather than being stripped.
+    openEditor({
+        mode: "new",
+        folder: folderPath,
+        name: "",
+        tags: tags.map(t => ({ ...t })),
+    });
 }
 
 /** Move dragged sidebar entries into a folder (tag groups only). */
@@ -596,11 +544,129 @@ async function moveRowsInto(rows, folderPath, tab) {
     await refresh();
 }
 
-function promptForName(title, message, defaultValue = "") {
-    if (app.extensionManager?.dialog?.prompt) {
-        return app.extensionManager.dialog.prompt({ title, message, defaultValue });
+// Inline Naming
+//
+// In the row itself, Explorer style, rather than a modal prompt that interrupts a gesture which has already said where the thing goes.
+
+/** Replace a label with an input until the user commits or cancels. */
+function inlineEdit(labelEl, value, { onCommit, onCancel } = {}) {
+    if (!labelEl?.parentElement) return null;
+
+    const input = el("input", "ere-sb-inline");
+    input.type = "text";
+    input.value = value;
+    input.spellcheck = false;
+    labelEl.style.display = "none";
+    labelEl.parentElement.insertBefore(input, labelEl.nextSibling);
+
+    let settled = false;
+    const finish = (commit) => {
+        if (settled) return;
+        settled = true;
+        const next = input.value.trim();
+        input.remove();
+        labelEl.style.display = "";
+        if (commit && next && next !== value) onCommit?.(next);
+        else onCancel?.();
+    };
+
+    /** The row underneath listens for presses (drag, selection, marquee); a click inside the input is none of those. */
+    for (const type of ["pointerdown", "click", "dblclick", "contextmenu"]) {
+        input.addEventListener(type, e => e.stopPropagation());
     }
-    return Promise.resolve(window.prompt(message, defaultValue));
+    input.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") { e.preventDefault(); finish(true); }
+        else if (e.key === "Escape") { e.preventDefault(); finish(false); }
+    });
+    input.addEventListener("blur", () => finish(false));
+
+    input.focus();
+    // Select the stem, not the extension — the part anyone actually retypes.
+    const stem = value.lastIndexOf(".");
+    if (stem > 0) input.setSelectionRange(0, stem);
+    else input.select();
+    return input;
+}
+
+/** The rendered element for a row, in whichever view is showing. */
+function rowElement(row) {
+    const key = rowKey(row);
+    return [...(state.host?.querySelectorAll("[data-ere-key]") || [])]
+        .find(el => el.dataset.ereKey === key) || null;
+}
+
+/**
+ * Dropping a generated image on the tree: extract, then open the editor.
+ * One of exactly two places that extract a prompt — the editor's own pane only sets a cover.
+ */
+function attachImageDrop(content) {
+    let zone = null;
+    const mark = (next) => {
+        if (zone === next) return;
+        zone?.classList.remove("ere-sb-drop-target");
+        zone = next || null;
+        zone?.classList.add("ere-sb-drop-target");
+    };
+    // `files` is empty until the drop lands; `types` is what dragover can see.
+    const carriesFile = (dt) => !!dt && [...(dt.types || [])].includes("Files");
+    const folderAt = (e) =>
+        e.target?.closest?.("[data-ere-sidebar-drop]")?.dataset?.erePath ?? "";
+
+    content.addEventListener("dragover", (e) => {
+        if (state.tab !== "group" || !carriesFile(e.dataTransfer)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+        mark(e.target?.closest?.("[data-ere-sidebar-drop]") || content);
+    });
+    content.addEventListener("dragleave", (e) => {
+        if (e.target === content || !content.contains(e.relatedTarget)) mark(null);
+    });
+    content.addEventListener("drop", async (e) => {
+        if (state.tab !== "group" || !carriesFile(e.dataTransfer)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const folder = folderAt(e);
+        mark(null);
+
+        const file = e.dataTransfer.files?.[0];
+        if (!file) return;
+        if (!isAcceptedImage(file)) {
+            app.extensionManager?.toast?.add({
+                severity: "error", summary: "Unsupported file",
+                detail: `${file.name} is not a PNG, JPEG or WebP.`, life: 5000,
+            });
+            return;
+        }
+
+        let tags = [];
+        try {
+            tags = tagsFromResult(await extractFromImage(file));
+        } catch (err) {
+            console.error("[EreNodes] Sidebar extraction failed.", err);
+            app.extensionManager?.toast?.add({
+                severity: "error", summary: "Extraction failed", detail: err.message, life: 5000,
+            });
+            return;
+        }
+        if (!tags.length) {
+            // Open anyway.
+            // The gesture was explicit and the cover is still useful; discarding it would just mean doing the drop twice.
+            app.extensionManager?.toast?.add({
+                severity: "warn", summary: "No prompt found",
+                detail: "The image had no readable prompt. Its cover was kept — drag tags in.",
+                life: 6000,
+            });
+        }
+        openEditor({
+            mode: "new",
+            folder,
+            // Not prefilled from the filename: ComfyUI output names are timestamps, so it would only ever need clearing.
+            name: "",
+            tags,
+            coverFile: file,
+        });
+    });
 }
 
 /** Register an element as a drop destination for the drag layer. */
@@ -610,11 +676,9 @@ function markDropFolder(el, path) {
     el._ereSidebarDrop = onSidebarDrop;
 }
 
-// ------------------------------------------------------------------ rendering
+// Rendering
 //
-// The DOM below mirrors the Nodes sidebar: a flat <ul role="tree"> of rows
-// styled purely with Tailwind utilities. See makeTreeRow for why that tab and
-// not the Model Library.
+// Mirrors the Nodes sidebar: a flat <ul role="tree"> of Tailwind-styled rows.
 
 function el(tag, className, parent) {
     const node = document.createElement(tag);
@@ -624,18 +688,8 @@ function el(tag, className, parent) {
 }
 
 /**
- * One tree row, in the Nodes sidebar's markup.
- *
- * Copied from reference/sidebar-nodes.html rather than from the Model Library:
- * the Nodes tree is built from **plain Tailwind utility classes**, whereas the
- * Model Library tree is a PrimeVue `Tree` whose CSS PrimeVue injects lazily —
- * the first time a component of that type mounts. Utility classes live in the
- * frontend's statically compiled stylesheet, so they are present from the first
- * paint: no warm-up, no lazily-loaded dependency, and still fully themed (they
- * resolve to ComfyUI's own variables, e.g. `hover:bg-comfy-input`).
- *
- * The list is flat, exactly as the Nodes tab renders it: hierarchy is conveyed
- * by `padding-left` — 8px at level 1, +24px per level after that.
+ * One tree row, in the Nodes sidebar's markup (see the module header for why that one).
+ * Flat list: hierarchy is padding-left, 8px at level 1 then +24px.
  */
 function makeTreeRow(row, { open = false } = {}) {
     const isFolder = row.type === "folder";
@@ -666,6 +720,7 @@ function makeTreeRow(row, { open = false } = {}) {
     el("i", `${isFolder ? "icon-[lucide--folder]" : fileIcon(row)} ${ROW_ICON}`, item);
 
     const label = el("span", ROW_LABEL, item);
+    label.dataset.ereLabel = "";     // inlineEdit swaps this for an input
     label.textContent = row.name;
 
     if (isFolder && row.count) {
@@ -691,8 +746,7 @@ function collectRows(node, out, container, searching, level = 1) {
             tab: state.tab, count: countLeaves(folder), level,
         };
         out.push(row);
-        // While searching, every surviving branch is opened so hits are visible
-        // without the user having to expand anything.
+        // While searching, every surviving branch is opened so hits are visible without the user having to expand anything.
         const open = searching || state.expanded[state.tab].has(folder.path);
         container.appendChild(makeTreeRow(row, { open }));
         if (open) collectRows(folder, out, container, searching, level + 1);
@@ -713,11 +767,11 @@ function makeTile(row) {
     wrap.title = row.path;
 
     if (row.type === "folder") {
-        // Size comes from the grid's --ere-tile-size, so folder tiles and file
-        // tiles are guaranteed to occupy identical cells.
+        // Size comes from the grid's --ere-tile-size, so folder tiles and file tiles are guaranteed to occupy identical cells.
         wrap.classList.add("ere-sb-folder-tile");
         el("i", "icon-[lucide--folder] size-8 text-muted-foreground", wrap);
         const name = el("div", "ere-sb-tile-name", wrap);
+        name.dataset.ereLabel = "";
         name.textContent = row.name;
         if (row.count) {
             const badge = el("span", `${COUNT_CLASS} ere-sb-tile-badge`, wrap);
@@ -787,8 +841,7 @@ function render() {
         if (!query) renderBreadcrumb(body, path);
 
         const level = query ? flatten(filtered) : nodeAtPath(filtered, path);
-        // `ere-surface` here (not on the root): the tiles are drawn by the same
-        // code the Gallery node uses and need its styling.
+        // `ere-surface` here (not on the root): the tiles are drawn by the same code the Gallery node uses and need its styling.
         const grid = el("div", `ere-sb-grid ${SURFACE_CLASS}`, body);
         grid.style.setProperty("--ere-tile-size", `${TILE_SIZE}px`);
         for (const folder of level.folders || []) {
@@ -829,8 +882,7 @@ function flatten(node, out = { folders: [], files: [] }) {
 function emptyMessage(query) {
     const msg = el("div", "ere-sb-empty");
     msg.textContent = query ? `No matches for "${query}"` : "Nothing here yet";
-    // "Nothing here" is confusing when the folder is configurable, so say which
-    // one is actually being read.
+    /** "Nothing here" is confusing when the folder is configurable, so say which one is actually being read. */
     if (!query && state.tab === "group" && state.location?.resolved) {
         const where = el("div", "ere-sb-where", msg);
         where.textContent = state.location.resolved;
@@ -839,7 +891,7 @@ function emptyMessage(query) {
     return msg;
 }
 
-// ------------------------------------------------------------- row context menu
+// Row Context Menu
 
 /** Prompt node types offered by the row menu, in node-picker order. */
 const NODE_TYPES = [
@@ -855,13 +907,13 @@ function openRowMenu(row, e) {
     e.stopPropagation();
     hidePreviewPanel(true);
 
-    // Open where the click happened, not under the row — a menu that always
-    // appears at the item's bottom-left feels detached from the gesture.
+    // Open where the click happened, not under the row — a menu that always appears at the item's bottom-left feels detached from the gesture.
     const anchor = { clientX: e.clientX, clientY: e.clientY };
 
-    // Right-clicking inside a multi-selection acts on the whole set, exactly
-    // like right-clicking a selected pill in a node. Right-clicking outside one
-    // clears it and falls through to the single-row menu below.
+    /**
+     * Right-clicking inside a multi-selection acts on the whole set, exactly like right-clicking a selected pill in a node.
+     * Right-clicking outside one clears it and falls through to the single-row menu below.
+     */
     if (state.selection.size > 1) {
         if (state.selection.has(rowKey(row))) return openSelectionMenu(anchor);
         clearSelection();
@@ -869,13 +921,16 @@ function openRowMenu(row, e) {
 
     const actions = [];
 
-    // One entry per node type, each naming the node it creates. There is no
-    // generic "Add as node" any more: it duplicated whichever type came first.
+    /**
+     * One entry per node type, each naming the node it creates.
+     * There is no generic "Add as node" any more: it duplicated whichever type came first.
+     */
     for (const [label, type] of NODE_TYPES) {
         actions.push({
             name: `➕ Add as ${label}`,
             callback: async () => {
-                const tags = await tagsForRow(row);
+                // Expanded, like click-to-add — see onRowActivate.
+                const tags = await tagsForRow(row, { unpack: true });
                 if (tags.length) createNodeWithTags(tags, type);
             },
         });
@@ -884,6 +939,10 @@ function openRowMenu(row, e) {
     // Only tag groups are ours to rewrite; model files belong to ComfyUI.
     if (row.tab === "group") {
         actions.push(null);   // separator
+        if (row.type === "file") {
+            actions.push({ name: "✎ Edit tag group", callback: () => editTagGroup(row) });
+        }
+        actions.push({ name: "🏷️ New tag group here", callback: () => newTagGroup(folderOf(row)) });
         actions.push({ name: "📁 New folder here", callback: () => createFolder(folderOf(row)) });
         actions.push({ name: "✏️ Rename", callback: () => renameRow(row) });
         if (row.type === "file") {
@@ -902,7 +961,7 @@ function openSelectionMenu(anchor) {
     if (!rows.length) return;
 
     const collect = async () => {
-        const lists = await Promise.all(rows.map(tagsForRow));
+        const lists = await Promise.all(rows.map(r => tagsForRow(r, { unpack: true })));
         return dedupe(lists.flat());
     };
 
@@ -966,30 +1025,78 @@ function openBackgroundMenu(e) {
         { clientX: e.clientX, clientY: e.clientY },
         here || "Tag Groups",
         [
+            { name: "🏷️ New tag group", callback: () => newTagGroup(here) },
             { name: "📁 New folder", callback: () => createFolder(here) },
             { name: "🔄 Refresh", callback: () => refresh() },
         ]
     );
 }
 
-async function createFolder(parentPath = "") {
-    const name = await promptForName("New folder", "Folder name:");
-    if (!name) return;
-    const result = await postJson("/erenodes/create_folder", { path: parentPath, folderName: name });
-    if (!result) return;
-    // Reveal what was just created.
-    const created = parentPath ? `${parentPath}/${name}` : name;
-    state.expanded[state.tab].add(created);
-    if (parentPath) state.expanded[state.tab].add(parentPath);
-    persistExpanded();
-    await refresh();
+/** Open an empty editor pointed at a folder. */
+function newTagGroup(folder = "") {
+    openEditor({ mode: "new", folder, name: "", tags: [] });
 }
 
-async function renameRow(row) {
-    const next = await promptForName("Rename", `New name for "${row.name}":`, row.name);
-    if (!next || next === row.name) return;
-    await postJson("/erenodes/rename_path", { path: pathWithExtension(row), newName: next });
-    await refresh();
+/** New folder: a placeholder row appears, already in edit mode. */
+function createFolder(parentPath = "") {
+    if (parentPath) {
+        state.expanded[state.tab].add(parentPath);
+        persistExpanded();
+        render();
+    }
+
+    const grid = state.host?.querySelector(".ere-sb-grid");
+    const list = state.host?.querySelector('[role="tree"]');
+    const container = grid || list;
+    if (!container) return;
+
+    let placeholder;
+    let label;
+    if (grid) {
+        placeholder = el("div", "ere-sb-tile ere-sb-folder-tile", container);
+        el("i", "icon-[lucide--folder] size-8 text-muted-foreground", placeholder);
+        label = el("div", "ere-sb-tile-name", placeholder);
+    } else {
+        placeholder = el("div", ROW_CLASS, container);
+        // Same indent maths as makeTreeRow: 8px at level 1, +24px per level.
+        const level = parentPath ? parentPath.split("/").length + 1 : 1;
+        placeholder.style.paddingLeft = `${8 + (level - 1) * 24}px`;
+        el("i", `icon-[lucide--folder] ${ROW_ICON}`, placeholder);
+        label = el("span", ROW_LABEL, placeholder);
+    }
+    label.textContent = "New folder";
+
+    inlineEdit(label, "", {
+        onCommit: async (name) => {
+            placeholder.remove();
+            const result = await postJson("/erenodes/create_folder",
+                { path: parentPath, folderName: name });
+            if (!result) return;
+            // Reveal what was just created.
+            const created = parentPath ? `${parentPath}/${name}` : name;
+            state.expanded[state.tab].add(created);
+            if (parentPath) state.expanded[state.tab].add(parentPath);
+            persistExpanded();
+            await refresh();
+        },
+        onCancel: () => placeholder.remove(),
+    });
+}
+
+function renameRow(row) {
+    const element = rowElement(row);
+    // `.ere-name` is the caption a file tile draws for itself in grid view.
+    const label = element?.querySelector("[data-ere-label]")
+        ?? element?.querySelector(".ere-name");
+    if (!label) return;
+
+    inlineEdit(label, row.name, {
+        onCommit: async (next) => {
+            await postJson("/erenodes/rename_path",
+                { path: pathWithExtension(row), newName: next });
+            await refresh();
+        },
+    });
 }
 
 async function deleteRow(row) {
@@ -1068,46 +1175,93 @@ async function postJson(url, body, { quiet = false } = {}) {
     }
 }
 
-// -------------------------------------------------------------------- chrome
+// Chrome
 
 function buildChrome(host) {
     host.textContent = "";
-    // Deliberately NOT `ere-surface`: that class carries `font: 12px monospace`
-    // for tag pills, and on the root it cascaded over the whole tab — wrong
-    // family, wrong size, nothing like the native sidebars. Only the elements
-    // that actually render tags opt into it (see the grid below).
+    // While the editor is open it takes the body, the title and the tool button.
+    // The tab strip stays: switching collections is a legitimate way out, and it discards the editor exactly as Cancel does.
+    const editing = !!state.editor;
+    // Deliberately NOT `ere-surface`: that class carries `font: 12px monospace` for tag pills, and on the root it cascaded over the whole tab — wrong family, wrong size, nothing like the native sidebars.
+    // Only the elements that actually render tags opt into it (see the grid below).
     host.className = "comfy-vue-side-bar-container group/sidebar-tab flex size-full flex-col ere-sidebar";
 
     const header = el("div", "comfy-vue-side-bar-header flex flex-col", host);
 
-    // --- toolbar: title + one icon button per mode (replaces the tab strip) ---
+    // Toolbar: title, plus one icon button.
     const toolbar = el("div",
-        "p-toolbar p-component flex items-center justify-between min-h-16 rounded-none "
-        + "border-x-0 border-t-0 bg-transparent px-3 2xl:px-4", header);
+        "p-toolbar p-component flex items-center justify-between min-h-16 rounded-none border-x-0 border-t-0 bg-transparent px-3 2xl:px-4", header);
     toolbar.setAttribute("role", "toolbar");
 
     const start = el("div", "p-toolbar-start min-w-0 flex-1 overflow-hidden", toolbar);
     const title = el("span", "truncate font-bold", start);
-    title.textContent = "EreNodes";
-    title.title = "EreNodes";
+    title.textContent = editing ? state.editor.title : "EreNodes";
+    title.title = title.textContent;
 
     el("div", "p-toolbar-center", toolbar);
     const end = el("div", "p-toolbar-end", toolbar);
-    // Matches Model Library's reveal-on-hover tool button area.
-    const tools = el("div",
-        "flex flex-row overflow-hidden transition-all duration-200 "
-        + "motion-safe:w-0 motion-safe:opacity-0 "
-        + "motion-safe:group-focus-within/sidebar-tab:w-auto motion-safe:group-focus-within/sidebar-tab:opacity-100 "
-        + "motion-safe:group-hover/sidebar-tab:w-auto motion-safe:group-hover/sidebar-tab:opacity-100 "
-        + "touch:w-auto touch:opacity-100", end);
-    const refreshBtn = el("button", BUTTON_CLASS, tools);
-    refreshBtn.type = "button";
-    refreshBtn.title = "Refresh";
-    refreshBtn.setAttribute("aria-label", "Refresh");
-    el("i", "icon-[lucide--refresh-cw] size-4", refreshBtn);
-    refreshBtn.addEventListener("click", () => refresh());
 
-    // --- search row (SidebarTopArea + SearchInput, class-for-class) ---
+    if (editing) {
+        // Always visible, unlike the refresh button below: closing is the way out of the panel and must not be hidden behind a hover.
+        const close = el("button", BUTTON_CLASS, end);
+        close.type = "button";
+        close.title = "Close without saving";
+        close.setAttribute("aria-label", "Close without saving");
+        el("i", "icon-[lucide--x] size-4", close);
+        close.addEventListener("click", () => closeEditor());
+    } else {
+        // Matches Model Library's reveal-on-hover tool button area.
+        const tools = el("div",
+            "flex flex-row overflow-hidden transition-all duration-200 motion-safe:w-0 motion-safe:opacity-0 motion-safe:group-focus-within/sidebar-tab:w-auto motion-safe:group-focus-within/sidebar-tab:opacity-100 motion-safe:group-hover/sidebar-tab:w-auto motion-safe:group-hover/sidebar-tab:opacity-100 touch:w-auto touch:opacity-100", end);
+        const refreshBtn = el("button", BUTTON_CLASS, tools);
+        refreshBtn.type = "button";
+        refreshBtn.title = "Refresh";
+        refreshBtn.setAttribute("aria-label", "Refresh");
+        el("i", "icon-[lucide--refresh-cw] size-4", refreshBtn);
+        refreshBtn.addEventListener("click", () => refresh());
+    }
+
+    // First row: search, or the editor's name field The editor's name input is the search box's markup minus the magnifier, and it goes in the same slot, so the two line up when the panel opens.
+    if (editing) header.appendChild(state.editor.nameRow);
+    else buildSearchRow(header);
+
+    // Dashed rule under the search row — a plain bordered div, exactly as the Nodes tab does it (PrimeVue's Divider is lazily injected).
+    el("div", "border-t border-dashed border-comfy-input", header);
+
+    /**
+     * Second row: the collection tabs, or the editor's cover.
+     * Both sit between the same two separators, so the cover reads as its own band.
+     * Tabs are hidden while editing — a stray click must not discard the panel.
+     */
+    if (editing) {
+        header.appendChild(state.editor.coverRow);
+        const body = el("div", "comfy-vue-side-bar-body flex h-0 grow flex-col", host);
+        body.appendChild(state.editor.body);
+        state.editor.focus?.();
+        return;
+    }
+
+    // Text tabs, not icon buttons: three abstract glyphs were unreadable.
+    const tabsRow = el("div", "border-b border-comfy-input p-2 2xl:px-4", header);
+    const tablist = el("div", "flex w-full items-center gap-2", tabsRow);
+    tablist.setAttribute("role", "tablist");
+    for (const tab of TABS) {
+        const active = tab.id === state.tab;
+        const button = el("button", `${TAB_CLASS} ${active ? TAB_ACTIVE : TAB_INACTIVE}`, tablist);
+        button.id = `ere-tab-${tab.id}`;
+        button.type = "button";
+        button.setAttribute("role", "tab");
+        button.setAttribute("aria-selected", String(active));
+        button.setAttribute("data-state", active ? "active" : "inactive");
+        button.tabIndex = active ? 0 : -1;
+        button.textContent = tab.label;
+        button.addEventListener("click", () => selectTab(tab.id));
+    }
+
+    buildTreeBody(host);
+}
+
+function buildSearchRow(header) {
     const top = el("div", "flex items-center gap-2 p-2 2xl:px-4", header);
     const searchOuter = el("div", "min-w-0 flex-1", top);
     const searchBox = el("div",
@@ -1140,34 +1294,10 @@ function buildChrome(host) {
         el("i", `${icon} size-4`, button);
         button.addEventListener("click", () => setView(view));
     }
+}
 
-    // Dashed rule under the search row — a plain bordered div, exactly as the
-    // Nodes tab does it (PrimeVue's Divider is lazily injected).
-    el("div", "border-t border-dashed border-comfy-input", header);
-
-    // --- mode tabs -----------------------------------------------------
-    // Text tabs, not icon buttons: three abstract glyphs were unreadable. This
-    // is the frontend's own tablist markup (Assets sidebar), which also brings
-    // its own bottom border — hence no separate divider below it.
-    const tabsRow = el("div", "border-b border-comfy-input p-2 2xl:px-4", header);
-    const tablist = el("div", "flex w-full items-center gap-2", tabsRow);
-    tablist.setAttribute("role", "tablist");
-    for (const tab of TABS) {
-        const active = tab.id === state.tab;
-        const button = el("button", `${TAB_CLASS} ${active ? TAB_ACTIVE : TAB_INACTIVE}`, tablist);
-        button.id = `ere-tab-${tab.id}`;
-        button.type = "button";
-        button.setAttribute("role", "tab");
-        button.setAttribute("aria-selected", String(active));
-        button.setAttribute("data-state", active ? "active" : "inactive");
-        button.tabIndex = active ? 0 : -1;
-        button.textContent = tab.label;
-        button.addEventListener("click", () => selectTab(tab.id));
-    }
-
-    // --- body ---
-    // `min-h-0 flex-1 overflow-y-auto` does the scrolling (as in the Nodes tab),
-    // so nothing here depends on PrimeVue's ScrollPanel CSS being loaded.
+function buildTreeBody(host) {
+    // `min-h-0 flex-1 overflow-y-auto` does the scrolling, as in the Nodes tab, so nothing here waits on PrimeVue's ScrollPanel CSS.
     const scroll = el("div", "comfy-vue-side-bar-body flex h-0 grow flex-col", host);
     const container = el("div", "flex h-full flex-col", scroll);
     const content = el("div", "min-h-0 flex-1 overflow-y-auto py-2 ere-sb-body-inner", container);
@@ -1175,23 +1305,80 @@ function buildChrome(host) {
 
     // Dropping on empty space targets the root of the current folder view.
     markDropFolder(content, "");
-    // Press on background starts a rubber band (rows stop propagation, so this
-    // only ever sees empty space) — same gesture as inside a node.
+    // Dropping an *image file* anywhere in the tree is a different gesture entirely — see attachImageDrop.
+    attachImageDrop(content);
+    // Press on background starts a rubber band (rows stop propagation, so this only ever sees empty space) — same gesture as inside a node.
     content.addEventListener("pointerdown", (e) => {
         if (e.button !== 0) return;
         if (e.target !== content && e.target !== container && e.target !== scroll) return;
         beginMarquee(e, content);
     });
-    // Right-click on background (not on a row) offers folder management. Rows
-    // stop propagation in their own handler, so this only sees empty space.
+    // Right-click on background (not on a row) offers folder management.
+    // Rows stop propagation in their own handler, so this only sees empty space.
     content.addEventListener("contextmenu", openBackgroundMenu);
     scroll.addEventListener("contextmenu", (e) => {
         if (e.target === scroll || e.target === container) openBackgroundMenu(e);
     });
 }
 
+// Editor Panel
+//
+// Takes over the sidebar while open (see buildChrome): its name field in the search row's slot, its cover where the tab strip would be, pills in the body.
+
+/** Open the editor, replacing the tree. */
+function openEditor(opts) {
+    closeEditor({ rebuild: false });
+    hidePreviewPanel(true);
+    clearSelection();
+    state.editor = createTagEditor({
+        ...opts,
+        onCancel: () => closeEditor(),
+        onSaved: async () => {
+            state.editor?.destroy?.();
+            state.editor = null;
+            buildChrome(state.host);
+            await refresh();
+        },
+    });
+    buildChrome(state.host);
+}
+
+/** Discard the editor. Unsaved changes are gone — that is what Cancel means. */
+function closeEditor({ rebuild = true } = {}) {
+    if (!state.editor) return false;
+    state.editor.destroy?.();
+    state.editor = null;
+    if (rebuild && state.host) {
+        buildChrome(state.host);
+        render();
+    }
+    return true;
+}
+
+/** Open the editor on an existing tag group. */
+async function editTagGroup(row) {
+    const tags = await loadGroupTags(row.path, row.extension);
+    if (!tags) {
+        app.extensionManager?.toast?.add({
+            severity: "error", summary: "Could not open",
+            detail: `"${row.name}" could not be read.`, life: 5000,
+        });
+        return;
+    }
+    openEditor({
+        mode: "edit",
+        folder: folderOf(row),
+        name: row.name,
+        tags: JSON.parse(JSON.stringify(tags)),
+        // The group may have no cover at all; the <img> error handler hides it.
+        coverUrl: previewUrl("group", row.path),
+    });
+}
+
 async function selectTab(id) {
     if (state.tab === id) return;
+    // Unreachable while the editor is open (the tab strip is hidden), but a stale panel pointing into a hidden tree is worth guarding against.
+    closeEditor({ rebuild: false });
     state.tab = id;
     state.query = "";
     state.contentHits = null;
@@ -1228,18 +1415,22 @@ async function loadLocation() {
     } catch { /* purely informational */ }
 }
 
-/** Re-read the active tab from disk (after a save, rename, delete or migration). */
+/** Re-read from disk after an external change (save, rename, delete, migration). */
 export async function refresh() {
+    state.trees = {};
+    // A group may have just been created, renamed or deleted, and nodes on the canvas are showing pills that point at it.
+    // Re-render them so the verdict is re-fetched now rather than whenever they next happen to redraw.
+    clearMissingCache();
+    for (const node of app.graph?._nodes ?? []) node._ereDom?.render?.();
     if (!state.host) return;
     await ensureTree({ force: true });
 }
 
-// --------------------------------------------------------------------- mount
+// Mount
 
 export function mountSidebar(hostEl) {
     injectTagStyles();
-    // The marquee and drop-target rules live with the drag layer; the sidebar
-    // can be opened before any node has mounted and injected them.
+    // The marquee and drop-target rules live with the drag layer; the sidebar can be opened before any node has mounted and injected them.
     injectDragStyles();
     injectSidebarStyles();
     if (!Object.keys(state.view).length) restorePrefs();
@@ -1249,79 +1440,15 @@ export function mountSidebar(hostEl) {
 
     state.host = hostEl;
     buildChrome(hostEl);
-    ensureTree();
+    // Always refetch on mount. state.trees is a module singleton that survives unmount, so a cached tree can only ever be stale by the time the tab is reopened — that is what hid folders created from a node's menu.
+    ensureTree({ force: true });
 }
 
 export function unmountSidebar() {
     hidePreviewPanel(true);
+    // Closing the tab discards the editor, exactly as switching tabs does: its DOM is about to be thrown away, and a panel that silently came back with stale tags on reopen would be worse than losing them.
+    closeEditor({ rebuild: false });
     state.host = null;
 }
 
-function injectSidebarStyles() {
-    if (document.getElementById("erenodes-sidebar-style")) return;
-    const style = document.createElement("style");
-    style.id = "erenodes-sidebar-style";
-    // Only what ComfyUI's own classes do not already provide. Colours come from
-    // the frontend's CSS variables so themes carry through.
-    style.textContent = `
-/* Only what ComfyUI does not already provide.
- *
- * Everything structural — row height, padding, hover, indentation, the search
- * box, the tablist, the buttons — comes from the frontend's own Tailwind
- * utilities, because the markup here reproduces the Nodes sidebar's exactly.
- * What is left is drag/selection affordances and the grid view, neither of
- * which has an upstream equivalent.
- */
-
-/* Drag, selection and grid view — no upstream equivalent. */
-.ere-sidebar .ere-sb-body { overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
-.ere-sidebar .ere-sb-selected,
-.ere-sidebar .ere-sb-tile.ere-sb-selected {
-    background: rgba(var(--ere-drag-accent-rgb, 74, 158, 255), .18);
-    outline: 1px solid var(--ere-drag-accent, var(--p-primary-color, #4a9eff));
-    outline-offset: -1px; border-radius: var(--p-border-radius-sm, 4px);
-}
-.ere-sb-drop-target {
-    outline: 2px dashed var(--ere-drag-accent, var(--p-primary-color, #4a9eff)) !important;
-    outline-offset: -2px;
-    background: rgba(var(--ere-drag-accent-rgb, 74, 158, 255), .12) !important;
-    border-radius: var(--p-border-radius-sm, 4px);
-}
-/* CSS grid, not flex-wrap: folder tiles and file tiles are different elements
-   with different intrinsic widths, so a flex row packed them into different
-   column counts and drifted further out of alignment the wider the panel got. */
-.ere-sidebar .ere-sb-grid {
-    display: grid; gap: .5rem; padding: .5rem;
-    grid-template-columns: repeat(auto-fill, var(--ere-tile-size, 96px));
-    justify-content: start; align-items: start;
-}
-.ere-sidebar .ere-sb-tile {
-    position: relative; cursor: pointer; user-select: none;
-    width: var(--ere-tile-size, 96px); height: var(--ere-tile-size, 96px);
-    border-radius: var(--p-border-radius-md, 6px);
-}
-.ere-sidebar .ere-sb-tile > .ere-tile { width: 100% !important; height: 100% !important; }
-.ere-sidebar .ere-sb-folder-tile {
-    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .25rem;
-    border: 1px solid var(--p-content-border-color, var(--border-color, #444));
-    background: var(--p-content-background, var(--comfy-input-bg, #222));
-}
-.ere-sidebar .ere-sb-tile-name {
-    max-width: 100%; padding: 0 .25rem; overflow: hidden;
-    text-overflow: ellipsis; white-space: nowrap; font-size: 11px;
-}
-.ere-sidebar .ere-sb-tile-badge { position: absolute; top: 4px; right: 4px; }
-.ere-sidebar .ere-sb-crumbs {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 2px;
-    padding: .25rem .5rem; opacity: .85; font-size: .75rem;
-}
-.ere-sidebar .ere-sb-crumb {
-    border: 0; background: transparent; color: inherit; cursor: pointer;
-    font: inherit; padding: 2px 4px; border-radius: 4px;
-}
-.ere-sidebar .ere-sb-crumb:hover { background: var(--p-content-hover-background, rgba(255, 255, 255, .08)); }
-.ere-sidebar .ere-sb-empty { padding: 1rem; text-align: center; opacity: .55; font-size: .75rem; }
-.ere-sidebar .ere-sb-where { margin-top: .4rem; font-size: 10px; opacity: .8; word-break: break-all; }
-`;
-    document.head.appendChild(style);
-}
+function injectSidebarStyles() { loadStyle("sidebar"); }

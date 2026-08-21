@@ -1,4 +1,4 @@
-import { app } from "../../../../scripts/app.js";
+import { app } from "../../../scripts/app.js";
 
 // Fetch CSV options before registration so the combo can be populated.
 // (Top-level await is fine here: extension files are loaded as ES modules.)
@@ -15,13 +15,8 @@ try {
 }
 
 /**
- * Push the tag-group location to the server and, when the user moved it, offer
- * to bring existing groups along.
- *
- * The server is the source of truth for this one (the ComfyUI settings store is
- * frontend-only, and Python needs to know where to read and write), so the
- * combo only ever *requests* a location — the response says what actually
- * happened.
+ * Push the tag-group location to the server and offer to migrate existing groups.
+ * The server is the source of truth here, so the combo only *requests* a location — the response says what actually happened.
  */
 async function applyTagGroupsLocation(location, previousValue) {
     if (!location) return;
@@ -99,9 +94,6 @@ async function applyTagGroupsLocation(location, previousValue) {
 app.registerExtension({
     name: "EreNodes.Settings",
     // Declarative settings registration (current ComfyUI standard).
-    // The ComfyUI settings store is the single source of truth for UI
-    // preferences; only the active CSV is mirrored to the server, because
-    // /erenodes/search_tags needs it.
     settings: [
         {
             id: "EreNodes.Autocomplete.Global",
@@ -117,6 +109,21 @@ app.registerExtension({
             defaultValue: true,
         },
         {
+            id: "EreNodes.Autocomplete.Limit",
+            name: "Autocomplete suggestions shown",
+            tooltip: "How many tag suggestions the autocomplete menu offers. The server clamps this to 1-100.",
+            type: "number",
+            defaultValue: 20,
+            attrs: { min: 1, max: 100, step: 1 },
+        },
+        {
+            id: "EreNodes.Autocomplete.Exclude",
+            name: "Autocomplete: skip these textareas",
+            tooltip: "Comma-separated CSS selectors. Any textarea matching one (or sitting inside one) is left alone by the global autocomplete. Use this when another custom node brings its own autocomplete and you get two menus at once. Default covers ComfyUI-Easy-Use's Anima prompt.",
+            type: "text",
+            defaultValue: ".easyuse-anima-highlight-input, .autocomplete-text-widget",
+        },
+        {
             id: "EreNodes.Autocomplete.CSV",
             name: "Autocomplete CSV File",
             type: "combo",
@@ -124,8 +131,7 @@ app.registerExtension({
             options: csvOptions,
             onChange: (newVal) => {
                 if (!newVal) return;
-                // Also fires once on page load, which keeps the server's
-                // settings.json in sync with the settings store.
+                // Also fires once on page load, which keeps the server's settings.json in sync with the settings store.
                 fetch("/erenodes/set_setting", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -136,9 +142,7 @@ app.registerExtension({
         {
             id: "EreNodes.TagGroups.Location",
             name: "Tag Groups Folder",
-            tooltip: "Where tag groups are stored. The node folder is wiped by a "
-                   + "reinstall or a ComfyUI Manager update; the models folder survives both. "
-                   + "To put them elsewhere, add 'tag_groups:' to extra_model_paths.yaml.",
+            tooltip: "Where tag groups are stored. The node folder is wiped by a reinstall or a ComfyUI Manager update; the models folder survives both. To put them elsewhere, add 'tag_groups:' to extra_model_paths.yaml.",
             type: "combo",
             defaultValue: "node",
             options: [
@@ -146,8 +150,7 @@ app.registerExtension({
                 { text: "ComfyUI models/tag_groups", value: "models" },
             ],
             onChange: (newVal, oldVal) => {
-                // Fires once on page load with oldVal undefined, which keeps the
-                // server's settings.json in sync with the settings store.
+                // Fires once on page load with oldVal undefined, which keeps the server's settings.json in sync with the settings store.
                 applyTagGroupsLocation(newVal, oldVal);
             },
         },
