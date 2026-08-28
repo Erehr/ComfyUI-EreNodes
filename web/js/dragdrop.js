@@ -635,8 +635,9 @@ function updateDrag(x, y) {
     const under = document.elementFromPoint(x, y);
 
     // The sidebar is a second kind of drop target.
+    // A zone can refuse this particular drag — moving an entry into the folder it already sits in is not a move — and refusing means the whole drop is invalid, not that some outer zone takes over.
     const zone = under?.closest?.("[data-ere-sidebar-drop]");
-    if (zone) {
+    if (zone && zone._ereSidebarAccepts?.(d.origin) !== false) {
         if (d.placeholder.parentNode) d.placeholder.remove();
         d.ghost.classList.remove("ere-no-drop");
         highlightTarget(null);

@@ -55,10 +55,12 @@ ComfyUI-EreNodes provides an intuitive and feature-rich solution for handling pr
 - **Quick Application**: Easy loading of saved tag groups as convenient pills or their content
 - **Import/Export**: Seamless sharing and backup of your tag collections
 - **Choose Where They Live**: Keep tag groups in the node folder or in `ComfyUI/models/tag_groups` so they survive reinstalls and Manager updates
+- **Bulk Import Script**: `scripts/animadex_to_tag_groups.py` builds tag groups (with covers) from the animadex.net character catalogue — a standalone command-line tool for anyone who wants a large character library in one go; see `scripts/README.md`
 
 ### 🗂️ EreNodes Sidebar
 - **Native Sidebar Tab**: Browse tag groups, LoRAs and embeddings in a proper ComfyUI sidebar tab
-- **Search That Reads Inside**: Filter tag groups by filename *and* by the tags they actually contain
+- **Two-Mode Search**: Filter by file and folder name or the tags *inside* every group
+- **Autocomplete in Tag Search**: the search box completes tags as you type, offering only tags your groups actually contain (with counts)
 - **Hover Previews**: Hover any entry to see its thumbnail and its tags, drawn with the exact same pills the nodes use
 - **Drag Both Ways**: Drag an entry onto an existing node to add it — or drag a node's tag pills onto a sidebar folder to open the editor and save them as a new tag group
 - **Group or Contents, Your Choice**: A dragged tag group lands as one pill by default; hold **Alt** to drop its tags instead. The ghost tells you which
@@ -161,14 +163,18 @@ EreNodes provides flexible LoRA loading options to fit different workflow prefer
 
 ## 📋 Changelog
 
-### Version 3.3 - Latest
+### Version 3.4 - Latest
+- **Sidebar Tag search**: now as alternative mode, automatically indexing cache database in background
+- **Autocomplete on the sidebar search box** (tag mode only): only from actual tags in tag groups (cached)
+
+### Version 3.3
 - **Tag group editor** in sidebar.
 - **Drop an image on the sidebar**: extracts its prompt *and* keeps the image as the group's cover
 - **Prompt Extractor node** - image drop area prompt extraction
 - **Missing file warnings** - red border on lora / embedding / tag group pills whose file isn't on disk
 
 ### Version 3.2
-- **EreNodes sidebar**: anative sidebar for managing tag groups / LoRAs / embeddings
+- **EreNodes sidebar**: native sidebar for managing tag groups / LoRAs / embeddings
 - **Search inside tag groups**: sidebar filter matching file names *and* the tags a group contains
 - **Configurable tag group folder**: node folder (default, unchanged) or in `ComfyUI/models/tag_groups`
 - **Type-coloured drag feedback**: ghost and target highlight during tag drag

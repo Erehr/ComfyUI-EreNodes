@@ -168,7 +168,12 @@ function getElementOrCursorCoords(element, position) {
     };
 }
 
-class GlobalAutocomplete {
+/**
+ * Autocomplete over a textarea or a single-line input.
+ *
+ * Exported because it is not only global any more: the sidebar's tag-search box wants the same behaviour (menu under the caret, Tab/Enter to accept, automatic `, ` after a pick) against a different source of suggestions. `attach` takes the menu class rather than the suggestions themselves, so the caller supplies the question and this class keeps owning the typing.
+ */
+export class GlobalAutocomplete {
     constructor() {
         this.menu = null;
         this.attachedElement = null;
@@ -182,9 +187,20 @@ class GlobalAutocomplete {
         this.onClick = this.onClick.bind(this);
     }
     
-    attach(inputElement) {
-        if (this.attachedElement === inputElement) return;
+    /**
+     * @param {HTMLElement} inputElement       textarea or input to drive
+     * @param {object}      [options]
+     * @param {Function}    [options.menuClass]     TagContextMenu subclass; decides where suggestions come from
+     * @param {boolean}     [options.escapeParens]  false in a search field, where `\(` would be matched literally
+     */
+    attach(inputElement, options = {}) {
+        if (this.attachedElement === inputElement) {
+            // Same field, possibly different terms — a re-attach must not silently keep the old ones.
+            this.attachOptions = options;
+            return;
+        }
         this.detach();
+        this.attachOptions = options;
         this.attachedElement = inputElement;
         this.helper = new TextAreaCaretHelper(inputElement);
         this.attachedElement.addEventListener("keydown", this.onKeyDown, true);
@@ -202,6 +218,7 @@ class GlobalAutocomplete {
             this.attachedElement.removeEventListener("click", this.onClick);
             this.attachedElement = null;
             this.helper = null;
+            this.attachOptions = null;
         }
         // A pending update would fire against the element we just let go of.
         if (this.debounce) {
@@ -400,14 +417,20 @@ class GlobalAutocomplete {
         const existingTags = allText.split(',').map(t => getBaseTagName(t)).filter(Boolean);
 
         this.currentWord = currentWord;
-        
+
+        // Terms already committed before the word being typed. A menu that can use them (the tag index one) narrows its suggestions to what those still reach; the CSV menu ignores the field.
+        // Recomputed per search rather than fixed at construction: the menu outlives several insertions, and after the first one the list it was built with is stale.
+        const before = this.helper.getBeforeCursor() ?? "";
+        const committed = before.split(",").slice(0, -1).map(t => t.trim()).filter(Boolean);
+
         // Create the menu if it doesn't exist
         if (!this.menu) {
+            const MenuClass = this.attachOptions?.menuClass ?? TagContextMenu;
             const onSelect = (selectedValue) => {
                 this.insertTag(selectedValue);
             };
 
-            this.menu = new TagContextMenu(this.attachedElement, onSelect, existingTags);
+            this.menu = new MenuClass(this.attachedElement, onSelect, existingTags);
             
             // Override the menu's positioning and event handling
             this.menu.setupEventListeners = () => {
@@ -444,7 +467,10 @@ class GlobalAutocomplete {
 
             this.menu.show();
         }
-        
+
+        this.menu.existingTags = existingTags;
+        this.menu.contextTerms = committed;
+
         // Position the menu correctly
         this.positionMenu();
         
@@ -496,8 +522,11 @@ class GlobalAutocomplete {
             wordLengthToReplace = currentWordInfo ? currentWordInfo.length : 0;
         }
 
-        // Escape parentheses in the tag
-        const escapedTag = tagName.replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+        // Escape parentheses in the tag — they are prompt weighting syntax, so a literal one has to be escaped.
+        // Not in a search field: there the term is matched literally and a backslash would be part of what is looked up.
+        const escapedTag = this.attachOptions?.escapeParens === false
+            ? tagName
+            : tagName.replace(/\(/g, '\\(').replace(/\)/g, '\\)');
         
         // Check if we need to add a separator after
         const afterCursor = this.helper.getAfterCursor();

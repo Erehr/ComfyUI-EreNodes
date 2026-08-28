@@ -106,13 +106,15 @@ body.ere-dragging-active * {
     cursor: grabbing !important;
 }
 
-/* Ctrl+drag rubber band */
+/* Ctrl+drag rubber band.
+   Faint on purpose: a dashed border and a heavier fill read as a solid blue block once the band is small, which is most of the time.
+   Defined here rather than per-caller so every band looks the same wherever it is drawn. */
 .ere-marquee {
     position: fixed;
     z-index: 10000;
     pointer-events: none;
-    border: 1px dashed var(--p-primary-color, #4a9eff);
-    background: rgba(74, 158, 255, .12);
+    border: 1px solid rgba(74, 158, 255, .5);
+    background: rgba(74, 158, 255, .08);
     border-radius: 2px;
 }
 body.ere-marquee-active,

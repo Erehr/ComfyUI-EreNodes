@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -11,6 +12,7 @@ from .prompt_csv import CSV_FILES_PATH, TAG_DATA_CACHE
 from .settings import get_erenodes_settings, save_erenodes_settings
 from . import paths
 from . import images
+from . import tag_index
 from .paths import (
     IMAGE_EXTENSIONS,
     LOCATION_NODE,
@@ -220,22 +222,6 @@ async def save_tag_group_handler(request):
 # Tag Group Location
 
 # Current location plus both resolved paths, so the settings UI can show where things actually are without guessing at the install layout.
-@server.PromptServer.instance.routes.get("/erenodes/tag_groups_location")
-async def get_tag_groups_location_handler(request):
-    location = paths.get_location()
-    node_dir = paths.node_prompts_dir()
-    models_dir = paths.models_prompts_dir()
-    return web.json_response({
-        "location": location,
-        "resolved": paths.dir_for_location(location),
-        "paths": {LOCATION_NODE: node_dir, LOCATION_MODELS: models_dir},
-        "counts": {
-            LOCATION_NODE: paths.count_tag_groups(node_dir),
-            LOCATION_MODELS: paths.count_tag_groups(models_dir),
-        },
-    })
-
-
 # Switch between the two allowed roots.
 #
 # Keywords only: no way to name an arbitrary directory over HTTP.
@@ -704,10 +690,8 @@ async def delete_file_image_handler(request):
 
 # Sidebar API Endpoints
 #
-# Whole-tree data (one request instead of one per folder) and content-aware search, which cannot be done client-side without downloading everything.
-
-# path -> (mtime, [tag names]) so repeated searches only re-read changed files.
-_TAG_INDEX = {}
+# Whole-tree data, one request instead of one per folder.
+# The sidebar filters that tree itself: searching the tags inside each group meant reading every file on every keystroke, and matched so broadly that a character name was buried under every group mentioning it in passing.
 
 
 def _tree_excluded(name):
@@ -717,27 +701,37 @@ def _tree_excluded(name):
 # Nested {folders, files} for one collection root.
 #
 # Paths in the result are relative to the root and always forward-slashed, so the client can use them directly in URLs regardless of host OS.
-def _build_tree(root, extensions, rel=""):
+# scandir, not listdir: the directory entry already says whether it is a directory, so this avoids a stat per file.
+# Over 36k tag groups that is the difference between a fraction of a second and a few seconds, and the gap is widest on Windows, where each stat is a full file open.
+#
+# depth 0 means the whole tree; depth 1 stops at this level, listing each folder with empty contents.
+def _build_tree(root, extensions, rel="", depth=0):
     abs_dir = os.path.join(root, rel) if rel else root
     folders, files = [], []
     try:
-        entries = sorted(os.listdir(abs_dir), key=str.lower)
+        with os.scandir(abs_dir) as scan:
+            entries = sorted(scan, key=lambda e: e.name.lower())
     except OSError:
         return {"folders": folders, "files": files}
 
     for entry in entries:
-        full = os.path.join(abs_dir, entry)
-        child_rel = f"{rel}/{entry}" if rel else entry
-        if os.path.isdir(full):
-            if _tree_excluded(entry):
+        name = entry.name
+        child_rel = f"{rel}/{name}" if rel else name
+        try:
+            is_dir = entry.is_dir()
+        except OSError:
+            continue
+        if is_dir:
+            if _tree_excluded(name):
                 continue
-            sub = _build_tree(root, extensions, child_rel)
+            sub = ({"folders": [], "files": []} if depth == 1
+                   else _build_tree(root, extensions, child_rel, max(depth - 1, 0)))
             folders.append({
-                "name": entry, "path": child_rel.replace(os.sep, '/'),
+                "name": name, "path": child_rel.replace(os.sep, '/'),
                 "type": "folder", **sub,
             })
-        elif entry.lower().endswith(extensions):
-            stem, ext = os.path.splitext(entry)
+        elif name.lower().endswith(extensions):
+            stem, ext = os.path.splitext(name)
             files.append({
                 "name": stem,
                 "path": os.path.splitext(child_rel)[0].replace(os.sep, '/'),
@@ -747,6 +741,35 @@ def _build_tree(root, extensions, rel=""):
     return {"folders": folders, "files": files}
 
 
+# One built tree per file type, kept until something on disk actually changes.
+_TREE_CACHE = {}
+
+
+# A fingerprint of every directory under the roots.
+#
+# A directory's mtime changes whenever an entry inside it is added, removed or renamed, which is exactly what the tree reflects — file *contents* do not appear in it.
+# So a few hundred directory stats stand in for tens of thousands of files, and reopening the sidebar costs that instead of a full walk.
+def _tree_signature(roots):
+    parts = []
+    stack = [os.path.abspath(r) for r in roots if os.path.isdir(r)]
+    while stack:
+        path = stack.pop()
+        try:
+            parts.append(f"{path}:{os.stat(path).st_mtime_ns}")
+            with os.scandir(path) as scan:
+                for entry in scan:
+                    if entry.is_dir() and not _tree_excluded(entry.name):
+                        stack.append(entry.path)
+        except OSError:
+            continue
+    parts.sort()
+    return hashlib.sha1("\n".join(parts).encode("utf-8")).hexdigest()
+
+
+# Query parameters:
+#   depth=1  only the root level, for a first paint while the full walk runs
+#   known=   the version the client already holds; answered with {"unchanged": true} when it is still current
+#   force=1  rebuild regardless (the Refresh action)
 @server.PromptServer.instance.routes.get("/erenodes/tree")
 async def tree_handler(request):
     file_type = request.query.get("type")
@@ -754,92 +777,115 @@ async def tree_handler(request):
     if not config:
         return web.json_response({"error": f"Invalid file type: {file_type}"}, status=400)
 
+    depth = request.query.get("depth", "")
+    depth = int(depth) if depth.isdigit() else 0
+    known = request.query.get("known", "")
+    force = request.query.get("force") == "1"
+
     # Walking several model roots can be slow on a network share - keep the event loop free.
-    def build():
+    def build(levels):
         merged = {"folders": [], "files": []}
         for root in config['roots']:
             if not os.path.isdir(root):
                 continue
-            part = _build_tree(os.path.abspath(root), config['extensions'])
+            part = _build_tree(os.path.abspath(root), config['extensions'], depth=levels)
             merged["folders"].extend(part["folders"])
             merged["files"].extend(part["files"])
         return merged
 
     try:
-        tree = await asyncio.to_thread(build)
+        if depth:
+            # No version: a partial tree must never be mistaken for the real one.
+            return web.json_response({"partial": True, **await asyncio.to_thread(build, depth)})
+
+        signature = await asyncio.to_thread(_tree_signature, config['roots'])
+        if known and known == signature and not force:
+            return web.json_response({"version": signature, "unchanged": True})
+
+        cached = _TREE_CACHE.get(file_type)
+        if cached and cached[0] == signature and not force:
+            tree = cached[1]
+        else:
+            tree = await asyncio.to_thread(build, 0)
+            _TREE_CACHE[file_type] = (signature, tree)
     except Exception as e:
         print(f"[EreNodes] tree({file_type}) failed: {e}")
         return web.json_response({"folders": [], "files": [], "error": str(e)}, status=500)
-    return web.json_response(tree)
+    return web.json_response({"version": signature, **tree})
 
 
-# Tag names inside a group file, cached on mtime.
-def _tag_names_for(json_path):
+# Tag Index API Endpoints
+#
+# The second half of the sidebar's dual-mode search. The default mode filters the
+# tree the client already holds; this one answers "which groups contain this tag",
+# which no amount of client-side work can do without the file contents.
+#
+# Three routes, deliberately split:
+#   status  cheap enough to call on every mode switch - a directory walk, no reads
+#   sync    starts a background build and returns immediately; a first pass over
+#           36k files is far longer than any sensible HTTP timeout, so the client
+#           polls status rather than holding a request open
+#   search  the query itself, milliseconds once the index exists
+#
+# See py/tag_index.py for the schema and why the database sits beside the groups.
+
+
+@server.PromptServer.instance.routes.get("/erenodes/tag_index/status")
+async def tag_index_status_handler(request):
     try:
-        mtime = os.path.getmtime(json_path)
-    except OSError:
-        _TAG_INDEX.pop(json_path, None)
-        return []
-
-    cached = _TAG_INDEX.get(json_path)
-    if cached and cached[0] == mtime:
-        return cached[1]
-
-    names = []
-    try:
-        with open(json_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        if isinstance(data, list):
-            names = [str(t.get("name", "")).lower() for t in data if isinstance(t, dict)]
-    except Exception:
-        names = []
-
-    _TAG_INDEX[json_path] = (mtime, names)
-    return names
-
-
-# Search tag groups by filename AND by the tags they contain.
-@server.PromptServer.instance.routes.get("/erenodes/search_tag_groups")
-async def search_tag_groups_handler(request):
-    query = request.query.get("query", "").strip().lower()
-    if not query:
-        return web.json_response({"items": []})
-
-    root = os.path.abspath(get_prompts_dir())
-
-    def search():
-        items = []
-        for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [d for d in dirnames if not _tree_excluded(d)]
-            for filename in filenames:
-                if not filename.lower().endswith(".json"):
-                    continue
-                full = os.path.join(dirpath, filename)
-                rel = os.path.relpath(full, root)
-                stem = os.path.splitext(rel)[0].replace(os.sep, '/')
-
-                name_hit = query in stem.lower()
-                matched = [n for n in _tag_names_for(full) if query in n]
-                if not name_hit and not matched:
-                    continue
-                items.append({
-                    "name": os.path.splitext(filename)[0],
-                    "path": stem,
-                    "extension": os.path.splitext(filename)[1],
-                    "type": "group",
-                    "matchedName": name_hit,
-                    # Enough to show "why" a result matched without shipping the whole group; the hover preview fetches the full list.
-                    "matchedTags": matched[:8],
-                })
-        items.sort(key=lambda x: (not x["matchedName"], x["path"].lower()))
-        return items
-
-    try:
-        items = await asyncio.to_thread(search)
+        data = await asyncio.to_thread(tag_index.status)
     except Exception as e:
-        print(f"[EreNodes] search_tag_groups failed: {e}")
-        return web.json_response({"items": [], "error": str(e)}, status=500)
-    return web.json_response({"items": items})
+        print(f"[EreNodes] tag index status failed: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+    return web.json_response(data)
+
+
+@server.PromptServer.instance.routes.post("/erenodes/tag_index/sync")
+async def tag_index_sync_handler(request):
+    rebuild = False
+    if request.can_read_body:
+        try:
+            rebuild = bool((await request.json()).get("rebuild"))
+        except Exception:
+            rebuild = False
+    started = tag_index.start_sync(rebuild=rebuild)
+    # `started: false` is not an error - it means a build was already under way,
+    # which is exactly what the caller wanted to happen.
+    return web.json_response({"started": started, **tag_index.progress()})
+
+
+# Autocomplete for the sidebar's tag-search box. Deliberately not `search_tags`:
+# that one completes from the CSV, which knows every danbooru tag whether or not
+# a single group of yours contains it. In a *search* field a completion that
+# returns nothing is worse than no completion at all, so this one completes from
+# what is actually indexed, and carries the group count for each.
+@server.PromptServer.instance.routes.get("/erenodes/tag_index/suggest")
+async def tag_index_suggest_handler(request):
+    query = request.query.get("query", "")
+    # Terms already committed in the box, so completions can be narrowed to the
+    # groups those still reach. Same comma syntax as the search field itself.
+    context = request.query.get("context", "")
+    limit = request.query.get("limit", "")
+    limit = int(limit) if limit.isdigit() else tag_index.SUGGEST_LIMIT
+    try:
+        data = await asyncio.to_thread(tag_index.suggest, query, context, limit)
+    except Exception as e:
+        print(f"[EreNodes] tag index suggest failed: {e}")
+        return web.json_response([])
+    return web.json_response(data)
+
+
+@server.PromptServer.instance.routes.get("/erenodes/tag_index/search")
+async def tag_index_search_handler(request):
+    query = request.query.get("query", "")
+    limit = request.query.get("limit", "")
+    limit = int(limit) if limit.isdigit() else tag_index.DEFAULT_LIMIT
+    try:
+        data = await asyncio.to_thread(tag_index.search, query, limit)
+    except Exception as e:
+        print(f"[EreNodes] tag index search failed: {e}")
+        return web.json_response({"error": str(e)}, status=500)
+    return web.json_response(data)
 
 
 # Map a client-supplied relative path to an absolute one inside the root.
@@ -939,7 +985,6 @@ async def move_path_handler(request):
         shutil.move(source, target)
         for image in images:
             shutil.move(image, os.path.join(dest_dir, os.path.basename(image)))
-        _TAG_INDEX.pop(source, None)
     except Exception as e:
         print(f"[EreNodes] move failed: {e}")
         return web.json_response({"error": f"Move failed: {e}"}, status=500)
@@ -969,7 +1014,6 @@ async def delete_path_handler(request):
             for image in paths.sibling_images(target):
                 os.remove(image)
             os.remove(target)
-            _TAG_INDEX.pop(target, None)
     except Exception as e:
         print(f"[EreNodes] delete failed: {e}")
         return web.json_response({"error": f"Delete failed: {e}"}, status=500)

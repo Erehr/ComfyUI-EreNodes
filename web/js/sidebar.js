@@ -3,7 +3,8 @@ import { getCache, clearCachePrefix, isNotFound, loadStyle, clearMissingCache, i
 import { SURFACE_CLASS, injectTagStyles, renderTagTile, previewUrl } from "./tagview.js";
 import { showPreviewFor, hidePreviewPanel, setPreviewHandlers } from "./preview.js";
 import { startExternalDrag, isDragActive, injectDragStyles } from "./dragdrop.js";
-import { TagSelectionContextMenu } from "./contextmenu.js";
+import { TagSelectionContextMenu, TagIndexContextMenu } from "./contextmenu.js";
+import { GlobalAutocomplete } from "../prompt_autocomplete.js";
 import { createTagEditor } from "./tageditor.js";
 import { dedupeTags } from "./parser.js";
 
@@ -23,7 +24,7 @@ const TAB_INACTIVE = "bg-transparent text-text-secondary hover:bg-button-hover-s
 const ROW_CLASS = "group/tree-node flex w-full min-w-0 cursor-pointer select-none items-center gap-3 overflow-hidden py-2 outline-none hover:bg-comfy-input rounded";
 const ROW_ICON = "size-4 shrink-0 text-muted-foreground";
 const ROW_LABEL = "text-foreground min-w-0 flex-1 truncate text-sm";
-const TREE_CLASS = "m-0 min-w-0 p-0 px-2 pb-2";
+const TREE_CLASS = "m-0 min-w-0 p-2";
 // The Nodes tree has no counts; this is the same token vocabulary as its buttons, so it themes with everything else.
 // (PrimeVue's p-badge is lazily injected and cannot be relied on.)
 const COUNT_CLASS = "shrink-0 rounded bg-secondary-background px-1.5 py-0.5 text-xs text-muted-foreground";
@@ -35,34 +36,67 @@ const TABS = [
 ];
 
 // Only lucide icons the frontend already compiles can be used — an uncompiled `icon-[lucide--x]` renders as nothing.
-const VIEWS = [
-    ["list", "icon-[lucide--list]",        "List view"],
-    ["grid", "icon-[lucide--layout-grid]", "Grid view"],
-];
+// Shows the view it switches to, not the one you are in.
+const VIEW_TOGGLE = {
+    list: { next: "grid", icon: "icon-[lucide--layout-grid]", label: "Switch to grid view" },
+    grid: { next: "list", icon: "icon-[lucide--list]",        label: "Switch to list view" },
+};
 
 const LS_VIEW = "EreNodes.Sidebar.view";
+const LS_TILE = "EreNodes.Sidebar.tileSize";
+const LS_RATIO = "EreNodes.Sidebar.tileRatio";
 const LS_EXPANDED = "EreNodes.Sidebar.expanded";
 const LS_TAB = "EreNodes.Sidebar.tab";
+const LS_TAGSEARCH = "EreNodes.Sidebar.tagSearch";
 
 const HOLD_MS = 200;
 const MOVE_THRESHOLD = 5;
+// Long enough that typing a word filters once at the end of it rather than once per letter.
+const SEARCH_DEBOUNCE_MS = 250;
+// While the tag index builds, the sidebar polls for progress. Slow enough not to hammer the server, fast enough that a 36k first build visibly moves.
+const INDEX_POLL_MS = 600;
+// Folder tiles stay at the small size whatever the groups do - a folder icon gains nothing from being bigger.
 const TILE_SIZE = 96;
+
+// Grid gap, in px, shared with the stylesheet so the two cannot drift.
+// A large tile spans two small ones *plus the gap between them*, which is what lines the two grids up: 4 x 96 + 3 gaps == 2 x 200 + 1 gap.
+const TILE_GAP = 8;
+
+const TILE_SIZES = [
+    { id: "small", width: TILE_SIZE, icon: "icon-[lucide--minimize-2]", label: "Small previews" },
+    { id: "large", width: TILE_SIZE * 2 + TILE_GAP, icon: "icon-[lucide--maximize-2]", label: "Large previews" },
+];
+
+// Portrait only - landscape tiles read badly in a narrow sidebar.
+// ComfyUI compiles a subset of lucide, and the rectangle icons are not in it, so all three reuse the square and stretch it: at 16px the scaling reads as the shape.
+const TILE_RATIOS = [
+    { id: "1-1",  ratio: 1,      label: "Aspect 1:1" },
+    { id: "3-4",  ratio: 3 / 4,  label: "Aspect 3:4" },
+    { id: "9-16", ratio: 9 / 16, label: "Aspect 9:16" },
+];
+const RATIO_ICON = "icon-[lucide--square]";
 
 const state = {
     host: null,
     tab: TABS[0].id,
     query: "",
+    tagSearch: false,   // deep mode: match tags inside the groups, not their names
+    tagResults: null,   // { query, paths: Set<string>, truncated } for the query on screen
+    tagSeq: 0,          // discards answers to queries the user has already moved past
+    indexStatus: null,  // last /tag_index/status payload
+    indexBusy: false,   // a build is running and this tab is watching it
     trees: {},
+    treeVersions: {},   // tab id -> the server's signature for the tree we hold
     loading: false,
     expanded: {},
     view: {},
+    tileSize: {},       // tab id -> "small" | "large"
+    tileRatio: {},      // tab id -> a TILE_RATIOS id
     crumb: {}, 
     selection: new Set(),
     anchor: null,
     rows: [],
-    location: null,
     press: null,
-    contentHits: null,
     editor: null,
 };
 
@@ -82,10 +116,17 @@ function saveJSON(key, value) {
 function restorePrefs() {
     const views = loadJSON(LS_VIEW, {});
     for (const tab of TABS) state.view[tab.id] = views[tab.id] || tab.defaultView;
+    const sizes = loadJSON(LS_TILE, {});
+    const ratios = loadJSON(LS_RATIO, {});
+    for (const tab of TABS) {
+        state.tileSize[tab.id] = sizes[tab.id] || "small";
+        state.tileRatio[tab.id] = ratios[tab.id] || "1-1";
+    }
     const expanded = loadJSON(LS_EXPANDED, {});
     for (const tab of TABS) state.expanded[tab.id] = new Set(expanded[tab.id] || []);
     state.tab = loadJSON(LS_TAB, TABS[0].id);
     if (!TABS.some(t => t.id === state.tab)) state.tab = TABS[0].id;
+    state.tagSearch = loadJSON(LS_TAGSEARCH, false) === true;
 }
 
 function persistExpanded() {
@@ -98,17 +139,41 @@ const activeTab = () => TABS.find(t => t.id === state.tab);
 
 // Data
 
+async function requestTree(tab, params) {
+    const query = new URLSearchParams({ type: tab, ...params });
+    const response = await fetch(`/erenodes/tree?${query}`);
+    return response.json();
+}
+
+/**
+ * The whole tree.
+ * The server answers `{unchanged: true}` when the copy we already hold is still current, which is what makes reopening the tab free.
+ */
 async function fetchTree(tab, { force = false } = {}) {
-    if (state.trees[tab] && !force) return state.trees[tab];
+    const known = force ? "" : (state.treeVersions[tab] || "");
     try {
-        const response = await fetch(`/erenodes/tree?type=${encodeURIComponent(tab)}`);
-        const data = await response.json();
+        const data = await requestTree(tab, force ? { force: "1" } : (known ? { known } : {}));
+        if (data.unchanged && state.trees[tab]) return state.trees[tab];
         state.trees[tab] = { folders: data.folders || [], files: data.files || [] };
+        state.treeVersions[tab] = data.version || "";
     } catch (e) {
         console.error("[EreNodes] Sidebar tree fetch failed.", e);
         state.trees[tab] = { folders: [], files: [] };
+        state.treeVersions[tab] = "";
     }
     return state.trees[tab];
+}
+
+/**
+ * The root level only — one directory read, so it lands immediately.
+ * Folders arrive empty, which shows as no count badge; the full tree replaces it a moment later.
+ */
+async function fetchRootLevel(tab) {
+    try {
+        const data = await requestTree(tab, { depth: "1" });
+        if (!data.partial) return;
+        state.trees[tab] = { folders: data.folders || [], files: data.files || [] };
+    } catch { /* the full fetch right behind it will report any real problem */ }
 }
 
 async function loadGroupTags(path, extension = ".json") {
@@ -156,31 +221,211 @@ async function tagsForFile(row, { unpack = false } = {}) {
 
 // Filtering
 
-const matches = (text, query) => text.toLowerCase().includes(query);
+/**
+ * A query becomes one term per whitespace-separated word, and every term has to match.
+ * A single contiguous substring only ever found "blue archive" typed in that order; terms mean "archive aris" and "aris blue" reach the same file, which is how people actually type once a folder name is three words long.
+ */
+function tokenize(query) {
+    return query.toLowerCase().split(/\s+/).filter(Boolean);
+}
 
-/** Filter a tree to entries matching the query. */
-function filterTree(node, query, contentHits) {
+/**
+ * The entry's lowercased path, cached on the entry.
+ * A 36k-file tree is re-filtered on every (debounced) keystroke, and lowercasing the same strings again on each pass is the one part of that loop worth not repeating. Safe to store: the tree objects belong to the client and the server sends a fresh copy whenever anything on disk changes.
+ */
+function lowerPath(entry) {
+    if (entry._lc === undefined) entry._lc = (entry.path || entry.name || "").toLowerCase();
+    return entry._lc;
+}
+
+const matchesAll = (entry, terms) => {
+    const text = lowerPath(entry);
+    return terms.every(term => text.includes(term));
+};
+
+/**
+ * Filter a tree to entries whose *path* matches every term.
+ *
+ * Paths are full and relative ("Characters/Blue Archive/Aris"), so a folder name is part of every path below it and searching a series returns its characters.
+ * A folder that matches on its own keeps its **whole** subtree rather than a filtered one: once the folder is named, everything inside it is a result, including entries whose own names share none of the terms.
+ *
+ * Tags *inside* the groups are not searched here. That needs the file contents, which the tree does not carry — it is the index mode below.
+ */
+function filterTree(node, terms) {
     const folders = [];
     for (const folder of node.folders || []) {
-        const sub = filterTree(folder, query, contentHits);
-        if (matches(folder.name, query) || sub.folders.length || sub.files.length) {
-            folders.push({ ...folder, ...sub });
+        if (matchesAll(folder, terms)) {
+            folders.push(folder);
+            continue;
         }
+        const sub = filterTree(folder, terms);
+        if (sub.folders.length || sub.files.length) folders.push({ ...folder, ...sub });
     }
-    const files = (node.files || []).filter(
-        f => matches(f.name, query) || matches(f.path, query) || contentHits?.has(f.path)
-    );
+    const files = (node.files || []).filter(f => matchesAll(f, terms));
     return { folders, files };
 }
 
-/** Group files whose *contents* match — tag groups only. */
-async function contentMatches(query) {
-    if (state.tab !== "group" || query.length < 2) return null;
+/** Filter a tree down to an exact set of file paths — the tag index's answer, drawn in the tree it belongs to. */
+function filterTreeByPaths(node, paths) {
+    const folders = [];
+    for (const folder of node.folders || []) {
+        const sub = filterTreeByPaths(folder, paths);
+        if (sub.folders.length || sub.files.length) folders.push({ ...folder, ...sub });
+    }
+    const files = (node.files || []).filter(f => paths.has(f.path));
+    return { folders, files };
+}
+
+
+// Tag Index (deep search)
+//
+// Mode one filters the tree the browser already holds. Mode two answers "which groups contain this tag", which cannot be done from the tree at all — the tags live in 36k separate files. A SQLite index (py/tag_index.py) is built once and synced incrementally, and the sidebar never blocks on it: switching the mode on reports what the index holds, a build runs in the background with a progress line where the list would be, and the query goes out once it is current.
+
+async function fetchIndexStatus() {
     try {
-        const response = await fetch(`/erenodes/search_tag_groups?query=${encodeURIComponent(query)}`);
-        const data = await response.json();
-        return new Set((data.items || []).map(i => i.path));
-    } catch { return null; }
+        const response = await fetch("/erenodes/tag_index/status");
+        return await response.json();
+    } catch (e) {
+        console.error("[EreNodes] Tag index status failed.", e);
+        return null;
+    }
+}
+
+async function startIndexSync({ rebuild = false } = {}) {
+    try {
+        await fetch("/erenodes/tag_index/sync", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ rebuild }),
+        });
+        return true;
+    } catch (e) {
+        console.error("[EreNodes] Tag index sync could not be started.", e);
+        return false;
+    }
+}
+
+/**
+ * Bring the index up to date, drawing progress while it runs.
+ * Resolves to the final status, or null if the server could not be reached or the user left the mode while it was building.
+ */
+async function ensureIndex({ rebuild = false } = {}) {
+    // Two rounds, because the build we join may not be ours: if one was already
+    // running when we arrived, it can have started before the files we care about
+    // landed, and `stale` is not reported while a build is in flight. The second
+    // round is the one that can see whether anything is still missing.
+    for (let round = 0; round < 2; round++) {
+        state.indexStatus = await fetchIndexStatus();
+        if (!state.indexStatus) { render(); return null; }
+        if (!rebuild && !state.indexStatus.stale && !state.indexStatus.running) break;
+
+        if (!state.indexStatus.running) await startIndexSync({ rebuild });
+        rebuild = false;    // a rebuild is a one-off; any follow-up round is an ordinary sync
+        state.indexBusy = true;
+        render();
+
+        // Polled, not streamed: a build runs for seconds to minutes, and one small request every INDEX_POLL_MS costs less than holding a connection open for it.
+        for (;;) {
+            await new Promise(resolve => setTimeout(resolve, INDEX_POLL_MS));
+            // Tab closed or mode switched off. The build carries on server-side, which is what we want — it just has nobody left to report to.
+            if (!state.host || !state.tagSearch) { state.indexBusy = false; return null; }
+            const status = await fetchIndexStatus();
+            if (!status) { state.indexBusy = false; state.indexStatus = null; render(); return null; }
+            state.indexStatus = status;
+            if (!status.running) break;
+            // In place: re-rendering the whole tree every 600ms to move two numbers would rebuild thousands of rows and lose the scroll position.
+            refreshIndexProgress();
+        }
+        state.indexBusy = false;
+        render();
+    }
+    return state.indexStatus;
+}
+
+/**
+ * Run the query on screen against the index.
+ * Sequenced, because a slow answer to an abandoned query must never replace the results of the one the user is actually reading.
+ */
+async function runTagSearch() {
+    const query = state.query.trim();
+    const seq = ++state.tagSeq;
+    state.tagResults = null;
+    if (!query) { render(); return; }
+
+    render();   // draws "Searching tags…" while the request is out
+
+    let data = null;
+    try {
+        const response = await fetch(
+            `/erenodes/tag_index/search?query=${encodeURIComponent(query)}`);
+        data = await response.json();
+    } catch (e) {
+        console.error("[EreNodes] Tag search failed.", e);
+    }
+    if (seq !== state.tagSeq || !state.host) return;
+    state.tagResults = data && !data.error
+        ? { query, paths: new Set(data.paths || []), truncated: !!data.truncated }
+        : { query, paths: new Set(), failed: true };
+    render();
+}
+
+async function setTagSearch(on) {
+    if (state.tagSearch === on) return;
+    state.tagSearch = on;
+    saveJSON(LS_TAGSEARCH, on);
+    state.tagResults = null;
+    buildChrome(state.host);
+    if (!on) { render(); return; }
+    await ensureIndex();
+    // ensureIndex can take a while; the user may have switched back out of the mode in the meantime.
+    if (state.tagSearch) runTagSearch();
+}
+
+/** True when the query on screen should be answered by the index rather than by the tree. */
+const deepSearchActive = () => state.tab === "group" && state.tagSearch;
+
+
+// Autocomplete on the search box
+//
+// Only in tag mode, where the box takes comma-separated tags and completing them is the same job the node autocomplete already does — menu under the caret, Tab or Enter to accept, `, ` inserted after a pick so the next term can be typed straight away. In name mode the box takes free text and there is nothing to complete against.
+//
+// Suggestions come from the index rather than the CSV (see TagIndexContextMenu), so the box never offers a tag your collection does not contain.
+
+/**
+ * Our own instance, not `app.globalAutocompleteInstance`.
+ * That one is a singleton bound to whichever node textarea has focus, and borrowing it would detach it from the user's prompt mid-edit — and it completes from the CSV, which is the wrong source here.
+ */
+let searchAutocomplete = null;
+
+/**
+ * The sidebar search box is one of our own inputs, so the EreNodes-specific autocomplete setting keeps it working even for someone who turned the global textarea hook off to stay out of other packs' way.
+ */
+function autocompleteEnabled() {
+    const settings = app.ui?.settings;
+    const global = settings?.getSettingValue?.("EreNodes.Autocomplete.Global", true) ?? true;
+    const nodes = settings?.getSettingValue?.("EreNodes.Autocomplete.Nodes", true) ?? true;
+    return global || nodes;
+}
+
+/**
+ * Attached on focus rather than up front: the menu positions itself against the field it is driving, and there is no reason to hold listeners on a box nobody is typing in.
+ * Re-checked at focus time too, because both the mode and the setting can change while the row stands.
+ */
+function attachSearchAutocomplete(input) {
+    input.addEventListener("focus", () => {
+        if (!deepSearchActive() || !autocompleteEnabled()) return;
+        searchAutocomplete ??= new GlobalAutocomplete();
+        searchAutocomplete.attach(input, {
+            menuClass: TagIndexContextMenu,
+            // A search term is matched literally, so `\(` would be looked up with the backslash in it.
+            escapeParens: false,
+        });
+    });
+}
+
+/** The attached input is about to be discarded (chrome rebuild, tab switch, unmount). */
+function detachSearchAutocomplete() {
+    searchAutocomplete?.detach();
 }
 
 function nodeAtPath(tree, path) {
@@ -519,19 +764,19 @@ async function moveRowsInto(rows, folderPath, tab) {
     if (tab !== "group") return;   // model files are ComfyUI's to organise
     let moved = 0;
     for (const row of rows) {
-        if (row.path === folderPath) continue;
+        if (!isRealMove(row, folderPath)) continue;
         const result = await postJson("/erenodes/move_path", {
             path: pathWithExtension(row),
             toFolder: folderPath,
         }, { quiet: true });
         if (result?.ok && !result.unchanged) moved++;
     }
-    if (moved) {
-        app.extensionManager?.toast?.add({
-            severity: "success", summary: "Moved",
-            detail: `${moved} item(s) moved to ${folderPath || "the root folder"}.`, life: 3500,
-        });
-    }
+    // A drop that moved nothing leaves the tree exactly as it was, and re-reading it would only make the list flicker.
+    if (!moved) return;
+    app.extensionManager?.toast?.add({
+        severity: "success", summary: "Moved",
+        detail: `${moved} item(s) moved to ${folderPath || "the root folder"}.`, life: 3500,
+    });
     clearSelection();
     await refresh();
 }
@@ -662,11 +907,40 @@ function attachImageDrop(content) {
     });
 }
 
-/** Register an element as a drop destination for the drag layer. */
-function markDropFolder(el, path) {
+/**
+ * Register an element as a drop destination for the drag layer.
+ * @param {boolean} [moves] whether entries dragged within the sidebar may be moved here.
+ *   False for the background, which is a destination for tags dragged out of a node but must not silently swallow a move into the root folder.
+ */
+function markDropFolder(el, path, { moves = true } = {}) {
     el.dataset.ereSidebarDrop = "1";
     el.dataset.erePath = path;
     el._ereSidebarDrop = onSidebarDrop;
+    el._ereSidebarAccepts = (origin) =>
+        origin?.kind !== "sidebar" || (moves && canMoveInto(origin.rows, path, origin.tab));
+}
+
+/** Folder an entry currently lives in. */
+function parentFolderOf(path) {
+    const cut = String(path || "").lastIndexOf("/");
+    return cut === -1 ? "" : path.slice(0, cut);
+}
+
+/** True when at least one row would actually go somewhere. */
+function canMoveInto(rows, folderPath, tab) {
+    if (tab !== "group") return false;   // model files are ComfyUI's to organise
+    return (rows || []).some(row => isRealMove(row, folderPath));
+}
+
+/**
+ * A move is real only if it changes where the entry lives.
+ * Ordering is always alphabetical, so a drop inside the folder the entry already sits in has nothing to do — and a folder cannot be moved into itself or its own subtree.
+ */
+function isRealMove(row, folderPath) {
+    if (row.path === folderPath) return false;
+    if (parentFolderOf(row.path) === folderPath) return false;
+    if (row.type === "folder" && `${folderPath}/`.startsWith(`${row.path}/`)) return false;
+    return true;
 }
 
 // Rendering
@@ -754,7 +1028,14 @@ function collectRows(node, out, container, searching, level = 1) {
     }
 }
 
-function makeTile(row) {
+/** The pixel box for an item tile, from the size and ratio toggles. */
+function tileBox() {
+    const size = TILE_SIZES.find(o => o.id === state.tileSize[state.tab]) ?? TILE_SIZES[0];
+    const ratio = TILE_RATIOS.find(o => o.id === state.tileRatio[state.tab]) ?? TILE_RATIOS[0];
+    return { width: size.width, height: Math.round(size.width / ratio.ratio) };
+}
+
+function makeTile(row, box = null) {
     const wrap = el("div", "ere-sb-tile");
     wrap.dataset.ereKey = rowKey(row);
     wrap.title = row.path;
@@ -773,9 +1054,10 @@ function makeTile(row) {
         markDropFolder(wrap, row.path);
     } else {
         // Same tile the Gallery node draws, so grid view matches the canvas.
+        const { width, height } = box ?? tileBox();
         wrap.appendChild(renderTagTile(
             { name: row.path, type: row.tab, active: true, extension: row.extension },
-            { width: TILE_SIZE, height: TILE_SIZE, stripFolders: true }
+            { width, height, stripFolders: true }
         ));
     }
 
@@ -826,40 +1108,105 @@ function render() {
 
     const query = state.query.trim().toLowerCase();
     const view = state.view[state.tab];
-    const filtered = query ? filterTree(tree, query, state.contentHits) : tree;
+    const deep = !!query && deepSearchActive();
+
+    // A build with a query waiting on it. The list cannot be drawn at all yet, so the whole panel becomes the progress report — an empty list here would read as "no matches", which is a different and wrong answer.
+    if (deep && state.indexBusy) {
+        body.appendChild(indexingMessage());
+        return;
+    }
+
+    // A build with nothing waiting on it, which is the usual case: the mode is normally switched on with an empty search box, and that is precisely when a first build starts. A strip above the tree rather than a takeover — there is no reason to stop browsing while it runs, and a minute of silence looks like nothing happened.
+    if (deepSearchActive() && state.indexBusy) body.appendChild(indexingBanner());
+
+    // The answer on hand belongs to a query the user has already typed past.
+    if (deep && state.tagResults?.query !== state.query.trim()) {
+        body.appendChild(
+            statusMessage("pi-search", "Searching tags…", `Looking for "${query}" in the tag index.`).wrap);
+        return;
+    }
+
+    // The index answered with an error (or could not be reached). Offering a rebuild here is the one action that fixes most of the reasons for it.
+    if (deep && state.tagResults.failed) {
+        const { wrap, inner } = statusMessage("pi-exclamation-triangle", "Tag search unavailable",
+            "The tag index could not be queried. Check the ComfyUI console for the reason.");
+        inner.appendChild(rebuildIndexButton());
+        body.appendChild(wrap);
+        return;
+    }
+
+    // A term like "1girl" legitimately matches most of a character library; the server caps what it sends rather than shipping the whole collection back to filter a tree the client already holds.
+    if (deep && state.tagResults.truncated) {
+        const note = el("div", "px-3 pt-2 text-xs text-muted-foreground", body);
+        note.textContent = `Showing the first ${state.tagResults.paths.size.toLocaleString()} matches — narrow the query with another term.`;
+    }
+
+    let filtered;
+    if (!query) filtered = tree;
+    else if (deep) filtered = filterTreeByPaths(tree, state.tagResults.paths);
+    else filtered = filterTree(tree, tokenize(query));
 
     if (view === "grid") {
         // Search flattens: browsing by folder while filtering makes no sense.
         const path = query ? "" : (state.crumb[state.tab] || "");
-        if (!query) renderBreadcrumb(body, path);
+        // Only below the root: at the root the bar is one dead crumb naming the tab you are already looking at.
+        if (path) renderBreadcrumb(body, path);
 
         const level = query ? flatten(filtered) : nodeAtPath(filtered, path);
-        // `ere-surface` here (not on the root): the tiles are drawn by the same code the Gallery node uses and need its styling.
-        const grid = el("div", `ere-sb-grid ${SURFACE_CLASS}`, body);
-        grid.style.setProperty("--ere-tile-size", `${TILE_SIZE}px`);
-        for (const folder of level.folders || []) {
-            const row = {
-                type: "folder", name: folder.name, path: folder.path,
-                tab: state.tab, count: countLeaves(folder),
-            };
-            state.rows.push(row);
-            grid.appendChild(makeTile(row));
+        const { width, height } = tileBox();
+
+        // Two grids, so folders keep their own row instead of being packed in beside items twice their size.
+        // `ere-surface` on each (not on the root): the tiles are drawn by the same code the Gallery node uses and need its styling.
+        let tiles = 0;
+        if (level.folders?.length) {
+            const folders = el("div", `ere-sb-grid ${SURFACE_CLASS}`, body);
+            folders.style.setProperty("--ere-tile-gap", `${TILE_GAP}px`);
+            folders.style.setProperty("--ere-tile-w", `${TILE_SIZE}px`);
+            folders.style.setProperty("--ere-tile-h", `${TILE_SIZE}px`);
+            for (const folder of level.folders) {
+                const row = {
+                    type: "folder", name: folder.name, path: folder.path,
+                    tab: state.tab, count: countLeaves(folder),
+                };
+                state.rows.push(row);
+                folders.appendChild(makeTile(row));
+                tiles++;
+            }
         }
-        for (const file of level.files || []) {
-            const row = {
-                type: "file", name: file.name, path: file.path,
-                extension: file.extension, tab: state.tab,
-            };
-            state.rows.push(row);
-            grid.appendChild(makeTile(row));
+        if (level.files?.length) {
+            const files = el("div", `ere-sb-grid ${SURFACE_CLASS}`, body);
+            files.style.setProperty("--ere-tile-gap", `${TILE_GAP}px`);
+            files.style.setProperty("--ere-tile-w", `${width}px`);
+            files.style.setProperty("--ere-tile-h", `${height}px`);
+            for (const file of level.files) {
+                const row = {
+                    type: "file", name: file.name, path: file.path,
+                    extension: file.extension, tab: state.tab,
+                };
+                state.rows.push(row);
+                files.appendChild(makeTile(row, { width, height }));
+                tiles++;
+            }
         }
-        if (!grid.children.length) body.appendChild(emptyMessage(query));
+        if (!tiles) body.appendChild(emptyMessage(query, deep));
     } else {
         const list = el("ul", TREE_CLASS, body);
         list.setAttribute("role", "tree");
         list.setAttribute("aria-label", activeTab().label);
-        collectRows(filtered, state.rows, list, !!query);
-        if (!state.rows.length) body.appendChild(emptyMessage(query));
+        if (query) {
+            // Matches only, no folder rows: the path to a hit is noise when you are searching for the hit.
+            for (const file of flatten(filtered).files) {
+                const row = {
+                    type: "file", name: file.name, path: file.path,
+                    extension: file.extension, tab: state.tab, level: 1,
+                };
+                state.rows.push(row);
+                list.appendChild(makeTreeRow(row));
+            }
+        } else {
+            collectRows(filtered, state.rows, list, false);
+        }
+        if (!state.rows.length) body.appendChild(emptyMessage(query, deep));
     }
 
     syncSelectionClasses();
@@ -872,16 +1219,122 @@ function flatten(node, out = { folders: [], files: [] }) {
     return out;
 }
 
-function emptyMessage(query) {
-    const msg = el("div", "ere-sb-empty");
-    msg.textContent = query ? `No matches for "${query}"` : "Nothing here yet";
-    /** "Nothing here" is confusing when the folder is configurable, so say which one is actually being read. */
-    if (!query && state.tab === "group" && state.location?.resolved) {
-        const where = el("div", "ere-sb-where", msg);
-        where.textContent = state.location.resolved;
-        where.title = "Change this in Settings → EreNodes → Tag Groups Folder";
+/**
+ * The frontend's own empty state, class for class (see the Workflows tab), so an empty folder here reads like an empty anything else.
+ * Also the shell for the index's own progress and error states, which occupy the same slot and should look like they belong to the same tab.
+ */
+function statusMessage(iconName, heading, body) {
+    const wrap = el("div", "no-results-placeholder h-full p-8");
+    const card = el("div", "p-card p-component", wrap);
+    const content = el("div", "p-card-content", el("div", "p-card-body", card));
+    const inner = el("div", "flex flex-col items-center", content);
+
+    const icon = el("i", `pi ${iconName}`, inner);
+    icon.style.fontSize = "3rem";
+    icon.style.marginBottom = "1rem";
+
+    el("h3", "", inner).textContent = heading;
+
+    const text = el("p", "text-center whitespace-pre-line", inner);
+    text.textContent = body;
+    return { wrap, inner };
+}
+
+function emptyMessage(query, deep = false) {
+    const heading = query ? "No matches" : "Empty";
+    let detail;
+    if (!query) detail = `No ${activeTab().label.toLowerCase()} here yet.`;
+    // In tag mode the interesting question is usually "is the index actually covering my collection", so the answer says how much it holds.
+    else if (deep) {
+        const indexed = state.indexStatus?.indexed ?? 0;
+        detail = `No tag group contains "${query}".\n${indexed.toLocaleString()} groups indexed.`;
+    } else detail = `Nothing matches "${query}".`;
+
+    const { wrap, inner } = statusMessage(query ? "pi-search" : "pi-folder", heading, detail);
+    if (deep) inner.appendChild(rebuildIndexButton());
+    return wrap;
+}
+
+/**
+ * Build progress, in two shapes.
+ *
+ * `total` is the number of files that actually need re-reading, not the size of the collection, so the fraction means "how much of the work is left" rather than "how big is my library". Before the scan has produced one there is nothing to divide, and the bar sweeps instead of sitting at 0%.
+ *
+ * Both shapes carry `data-ere-index-progress`, which is what lets the poll loop update them in place. A full render every 600ms would rebuild thousands of rows and throw away the scroll position for the sake of two numbers.
+ */
+function progressParts(parent) {
+    const label = el("span", "min-w-0 flex-1 truncate", parent);
+    label.dataset.ereIndexLabel = "";
+    const track = el("div", "ere-sb-progress", parent);
+    el("div", "ere-sb-progress-fill", track);
+    return parent;
+}
+
+function fillIndexProgress(root, status) {
+    const total = status.total || 0;
+    const done = Math.min(status.done || 0, total);
+    const scanning = !total || status.phase === "scanning";
+
+    const label = root.querySelector("[data-ere-index-label]");
+    if (label) {
+        label.textContent = scanning
+            ? "Building tag index — looking for what changed…"
+            : `Building tag index — ${done.toLocaleString()} of ${total.toLocaleString()}`;
     }
-    return msg;
+    const fill = root.querySelector(".ere-sb-progress-fill");
+    if (!fill) return;
+    fill.classList.toggle("ere-sb-progress-idle", scanning);
+    fill.style.width = scanning ? "" : `${Math.round((done / total) * 100)}%`;
+}
+
+/** The strip above the tree, for a build nothing is waiting on. */
+function indexingBanner() {
+    const wrap = el("div", "ere-sb-index-banner");
+    wrap.dataset.ereIndexProgress = "";
+    const line = el("div", "flex items-center gap-2 text-muted-foreground", wrap);
+    el("i", "pi pi-spin pi-spinner", line).style.fontSize = ".75rem";
+    progressParts(line);
+    // The bar belongs under the whole line, not squeezed into it beside the text.
+    wrap.appendChild(line.querySelector(".ere-sb-progress"));
+    fillIndexProgress(wrap, state.indexStatus || {});
+    return wrap;
+}
+
+/** The full-panel version, for a build a query is waiting on. */
+function indexingMessage() {
+    const { wrap, inner } = statusMessage("pi-spin pi-spinner", "Building tag index",
+        "The first build reads every group once; later ones only re-read what changed.");
+    const strip = el("div", "mt-4 flex w-full max-w-64 flex-col items-center gap-2 text-xs text-muted-foreground", inner);
+    strip.dataset.ereIndexProgress = "";
+    progressParts(strip);
+    fillIndexProgress(strip, state.indexStatus || {});
+    // The card is the thing that gets appended; the poller finds the strip inside it.
+    wrap.dataset.ereIndexHost = "";
+    return wrap;
+}
+
+/**
+ * Update whichever progress shape is on screen, in place.
+ * If neither is (another tab, or the mode was switched off) there is nothing to do — the next full render draws whatever is true then.
+ */
+function refreshIndexProgress() {
+    const host = state.host?.querySelector("[data-ere-index-progress]");
+    if (host) fillIndexProgress(host, state.indexStatus || {});
+}
+
+/** Offered wherever the index might be the reason a search came back empty. */
+function rebuildIndexButton() {
+    const button = el("button",
+        "mt-4 cursor-pointer rounded-md border-none bg-secondary-background px-3 py-2 "
+        + "text-sm font-medium text-base-foreground hover:bg-secondary-background-hover");
+    button.type = "button";
+    button.textContent = "Rebuild index";
+    button.title = "Re-read every tag group from disk";
+    button.addEventListener("click", async () => {
+        await ensureIndex({ rebuild: true });
+        if (state.tagSearch) runTagSearch();
+    });
+    return button;
 }
 
 // Row Context Menu
@@ -1179,6 +1632,9 @@ function buildChrome(host) {
     // Only the elements that actually render tags opt into it (see the grid below).
     host.className = "comfy-vue-side-bar-container group/sidebar-tab flex size-full flex-col ere-sidebar";
 
+    // Every rebuild throws away the search input, and with it the element the autocomplete is driving. One place, so no path can leave it holding a detached field.
+    detachSearchAutocomplete();
+
     const header = el("div", "comfy-vue-side-bar-header flex flex-col", host);
 
     // Toolbar: title, plus one icon button.
@@ -1261,43 +1717,126 @@ function buildSearchRow(header) {
         "relative flex w-full cursor-text items-center rounded-lg bg-secondary-background text-base-foreground h-8 px-2 py-1.5",
         searchOuter);
     el("i", "pointer-events-none absolute left-2.5 size-4 icon-[lucide--search]", searchBox);
-    const search = el("input", "size-full border-none bg-transparent outline-none pl-8 text-xs", searchBox);
+    // pr-6 keeps the text clear of the reset button on the right.
+    const search = el("input", "size-full border-none bg-transparent outline-none pl-8 pr-6 text-xs", searchBox);
     search.type = "text";
-    search.placeholder = state.tab === "group" ? "Search names and tags..." : "Search...";
+    // The placeholder is the mode indicator that costs nothing: in tag mode the box takes comma-separated tags, not a name.
+    search.placeholder = deepSearchActive() ? "Search tags (comma separated)..." : "Search...";
     search.value = state.query;
     searchBox.addEventListener("click", () => search.focus());
+    if (deepSearchActive()) attachSearchAutocomplete(search);
+
+    // Mirrors the search icon on the left. Inline display rather than [hidden], which a display utility on the same element would win against.
+    const clear = el("button",
+        "absolute right-2 flex size-4 cursor-pointer items-center justify-center rounded border-none bg-transparent p-0 text-muted-foreground hover:text-base-foreground",
+        searchBox);
+    clear.type = "button";
+    clear.title = "Clear search";
+    clear.setAttribute("aria-label", "Clear search");
+    el("i", "icon-[lucide--x] size-3.5", clear);
+    const showClear = () => { clear.style.display = search.value ? "flex" : "none"; };
+    showClear();
+
+    const applyQuery = () => {
+        state.query = search.value;
+        // Tag mode answers from the server, so it renders twice: once for the pending state, once for the result.
+        if (deepSearchActive()) runTagSearch();
+        else render();
+        // The results are a different list, so the old scroll offset means nothing — and halfway down a list of thousands it looks like nothing was found.
+        const body = state.host?.querySelector(".ere-sb-body-inner");
+        if (body) body.scrollTop = 0;
+    };
+
     let debounce = 0;
     search.addEventListener("input", () => {
+        showClear();
         clearTimeout(debounce);
-        debounce = setTimeout(async () => {
-            state.query = search.value;
-            state.contentHits = await contentMatches(state.query.trim().toLowerCase());
-            render();
-        }, 150);
+        debounce = setTimeout(applyQuery, SEARCH_DEBOUNCE_MS);
+    });
+    clear.addEventListener("click", () => {
+        clearTimeout(debounce);
+        search.value = "";
+        showClear();
+        applyQuery();
+        search.focus();
     });
 
     // `h-8` matches the search box height so the row reads as one control strip.
     const actions = el("div", "flex shrink-0 items-center gap-1", top);
-    for (const [view, icon, label] of VIEWS) {
-        const button = el("button", `${BUTTON_CLASS}${state.view[state.tab] === view ? " " + BUTTON_ACTIVE : ""}`, actions);
-        button.type = "button";
-        button.title = label;
-        button.setAttribute("aria-label", label);
-        button.setAttribute("aria-pressed", String(state.view[state.tab] === view));
-        el("i", `${icon} size-4`, button);
-        button.addEventListener("click", () => setView(view));
+    const view = state.view[state.tab];
+
+    // Deep search is a tag-group concept: there is nothing to look inside a .safetensors for.
+    // A toggle rather than a prefix syntax, because the mode is sticky and a mode you cannot see is a mode you forget you are in.
+    if (state.tab === "group") {
+        const on = state.tagSearch;
+        const tagBtn = el("button", `${BUTTON_CLASS} ${on ? BUTTON_ACTIVE : ""}`, actions);
+        tagBtn.type = "button";
+        tagBtn.title = on
+            ? "Searching tags inside groups — click to search names again"
+            : "Search tags inside groups (uses the tag index)";
+        tagBtn.setAttribute("aria-label", tagBtn.title);
+        tagBtn.setAttribute("aria-pressed", String(on));
+        // `tag` is one of the lucide icons the frontend compiles; `hash`, the obvious alternative, is not.
+        el("i", "icon-[lucide--tag] size-4", tagBtn);
+        tagBtn.addEventListener("click", () => setTagSearch(!on));
     }
+
+    // Grid-only controls, to the left of the view toggle.
+    if (view === "grid") {
+        addToggle(actions, TILE_SIZES, state.tileSize[state.tab], size => {
+            state.tileSize[state.tab] = size;
+            saveJSON(LS_TILE, Object.fromEntries(TABS.map(t => [t.id, state.tileSize[t.id]])));
+            buildChrome(state.host);
+            render();
+        });
+        addToggle(actions, TILE_RATIOS, state.tileRatio[state.tab], ratio => {
+            state.tileRatio[state.tab] = ratio;
+            saveJSON(LS_RATIO, Object.fromEntries(TABS.map(t => [t.id, state.tileRatio[t.id]])));
+            buildChrome(state.host);
+            render();
+        }, { showCurrent: true });
+    }
+
+    const toggle = VIEW_TOGGLE[view] ?? VIEW_TOGGLE.list;
+    const button = el("button", BUTTON_CLASS, actions);
+    button.type = "button";
+    button.title = toggle.label;
+    button.setAttribute("aria-label", toggle.label);
+    el("i", `${toggle.icon} size-4`, button);
+    button.addEventListener("click", () => setView(toggle.next));
+}
+
+/**
+ * One button that steps through a list of options.
+ * The icon shows the option it will pick, which reads as "press for this"; `showCurrent` flips it for the aspect toggle, where the shape you are looking at is the useful thing to see.
+ * The tooltip always names the next option.
+ */
+function addToggle(parent, options, current, onPick, { showCurrent = false } = {}) {
+    const index = Math.max(0, options.findIndex(o => o.id === current));
+    const here = options[index];
+    const next = options[(index + 1) % options.length];
+    const shown = showCurrent ? here : next;
+    const button = el("button", BUTTON_CLASS, parent);
+    button.type = "button";
+    button.title = next.label;
+    button.setAttribute("aria-label", next.label);
+    const icon = el("i", `${shown.icon ?? RATIO_ICON} size-4`, button);
+    if (shown.ratio !== undefined && shown.ratio !== 1) icon.classList.add(`ere-ratio-${shown.id}`);
+    button.addEventListener("click", () => onPick(next.id));
+    return button;
 }
 
 function buildTreeBody(host) {
     // `min-h-0 flex-1 overflow-y-auto` does the scrolling, as in the Nodes tab, so nothing here waits on PrimeVue's ScrollPanel CSS.
     const scroll = el("div", "comfy-vue-side-bar-body flex h-0 grow flex-col", host);
     const container = el("div", "flex h-full flex-col", scroll);
-    const content = el("div", "min-h-0 flex-1 overflow-y-auto py-2 ere-sb-body-inner", container);
+    // No padding on the scroller itself: a sticky breadcrumb can only travel to the top of its parent's content box, so padding here would leave a strip of tiles scrolling above it.
+    // The lists inside carry the spacing instead.
+    const content = el("div", "min-h-0 flex-1 overflow-y-auto ere-sb-body-inner", container);
 
-
-    // Dropping on empty space targets the root of the current folder view.
-    markDropFolder(content, "");
+    // Tags dragged out of a node land in the root folder when dropped on empty space.
+    // Entries dragged within the sidebar do not: the background is everywhere, so it used to catch drags released over a search result or over the row they started on and quietly move them to the root.
+    markDropFolder(content, "", { moves: false });
     // Dropping an *image file* anywhere in the tree is a different gesture entirely — see attachImageDrop.
     attachImageDrop(content);
     // Press on background starts a rubber band (rows stop propagation, so this only ever sees empty space) — same gesture as inside a node.
@@ -1374,7 +1913,7 @@ async function selectTab(id) {
     closeEditor({ rebuild: false });
     state.tab = id;
     state.query = "";
-    state.contentHits = null;
+    state.tagResults = null;
     clearSelection();
     saveJSON(LS_TAB, id);
     buildChrome(state.host);
@@ -1390,33 +1929,47 @@ function setView(view) {
 }
 
 async function ensureTree({ force = false } = {}) {
-    state.loading = true;
-    render();
-    await Promise.all([
-        fetchTree(state.tab, { force }),
-        state.location && !force ? Promise.resolve() : loadLocation(),
-    ]);
-    state.loading = false;
-    render();
-}
+    const tab = state.tab;
+    // Anything that arrives after the user has moved on belongs to a list nobody is looking at.
+    const current = () => state.host && state.tab === tab;
+    const held = state.trees[tab];
+    const before = state.treeVersions[tab];
 
-/** Which folder the tag groups tab is reading (for the empty state). */
-async function loadLocation() {
-    try {
-        const response = await fetch("/erenodes/tag_groups_location");
-        if (response.ok) state.location = await response.json();
-    } catch { /* purely informational */ }
+    if (held && !force) {
+        // Draw what we already hold before asking the server anything.
+        // The answer is almost always "unchanged", and waiting for it is the entire delay on reopening the tab — a round trip the user has no reason to sit through to see a list that has not moved.
+        state.loading = false;
+        render();
+    } else if (!held) {
+        state.loading = true;
+        render();
+        await fetchRootLevel(tab);
+        state.loading = false;
+        if (current()) render();
+    }
+
+    await fetchTree(tab, { force });
+    state.loading = false;
+    // Nothing to redraw when the tree came back unchanged and it was already on screen.
+    if (!current() || (held && !force && state.treeVersions[tab] === before)) return;
+    render();
 }
 
 /** Re-read from disk after an external change (save, rename, delete, migration). */
 export async function refresh() {
     state.trees = {};
+    state.treeVersions = {};
     // A group may have just been created, renamed or deleted, and nodes on the canvas are showing pills that point at it.
     // Re-render them so the verdict is re-fetched now rather than whenever they next happen to redraw.
     clearMissingCache();
     for (const node of app.graph?._nodes ?? []) node._ereDom?.render?.();
     if (!state.host) return;
     await ensureTree({ force: true });
+    // "Re-read from disk" has to include what the index believes about those files, or refreshing after an import leaves tag search answering from the old contents.
+    if (deepSearchActive()) {
+        await ensureIndex();
+        if (state.tagSearch) runTagSearch();
+    }
 }
 
 // Mount
@@ -1433,12 +1986,14 @@ export function mountSidebar(hostEl) {
 
     state.host = hostEl;
     buildChrome(hostEl);
-    // Always refetch on mount. state.trees is a module singleton that survives unmount, so a cached tree can only ever be stale by the time the tab is reopened — that is what hid folders created from a node's menu.
-    ensureTree({ force: true });
+    // Not a forced refetch: state.trees survives unmount, and the server now decides whether that copy is still good by comparing signatures.
+    // A stale tree used to hide folders created from a node's menu; an unchanged answer costs one directory stat per folder and no transfer at all.
+    ensureTree();
 }
 
 export function unmountSidebar() {
     hidePreviewPanel(true);
+    detachSearchAutocomplete();
     // Closing the tab discards the editor, exactly as switching tabs does: its DOM is about to be thrown away, and a panel that silently came back with stale tags on reopen would be worse than losing them.
     closeEditor({ rebuild: false });
     state.host = null;

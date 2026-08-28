@@ -13,6 +13,10 @@ const MENU_MAX_WIDTH = 320;
 // A context menu can open before any node has mounted its widget, so the shared tag stylesheet must be guaranteed here too (idempotent).
 injectTagStyles();
 
+/** Somewhere the browser is already routing typing to; the menu must not take it. */
+const isEditableTarget = (el) =>
+    !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+
 // Base class for dynamic context menus
 export class DynamicContextMenu { // Added export
     /** Keep a menu opened near an edge fully on screen. */
@@ -35,6 +39,17 @@ export class DynamicContextMenu { // Added export
         this.highlighted = -1;
         this.renderedOptionElements = [];
         this.abortController = null;
+    }
+
+    /**
+     * Put a rebuilt item where it belongs around the one element that survived.
+     * The survivor stays exactly where it is — moving it would detach it, and detaching it is the blur we are avoiding.
+     */
+    placeItem(element, index, kept) {
+        if (element === kept) return;
+        const keptIndex = kept ? this.options.findIndex(o => o.type === 'filter') : -1;
+        if (kept && index < keptIndex) this.root.insertBefore(element, kept);
+        else this.root.appendChild(element);
     }
 
     onItemSelected(option, event = null, index = -1) {
@@ -139,30 +154,45 @@ export class DynamicContextMenu { // Added export
         return this.escapeHtml(text);
     }
 
+    /**
+     * The filter input is carried over, never rebuilt.
+     * Every keystroke re-renders this menu, and throwing the input away drops focus to <body> until the setTimeout below hands it back.
+     * A key pressed inside that gap reaches ComfyUI's global keybindings instead of the field, which is how typing a tag name could switch sidebar tabs mid-word.
+     * Everything else is rebuilt around it - see placeItem.
+     */
     renderItems() {
-        this.root.innerHTML = '';
+        const keptFilter = this.filterBox?.parentNode === this.root ? this.filterBox : null;
+        for (const child of [...this.root.childNodes]) {
+            if (child !== keptFilter) child.remove();
+        }
         this.renderedOptionElements = [];
 
         this.options.forEach((option, i) => {
             let element;
             if (option.type === 'filter') {
                 // Create the input element directly, not inside a div
-                element = document.createElement("input");
-                element.className = "comfy-context-menu-filter";
-                element.placeholder = option.placeholder || "";
-                element.value = this.currentWord || "";
-                if (option.onInput) {
-                    element.addEventListener("input", () => option.onInput(element.value));
+                element = keptFilter ?? document.createElement("input");
+                if (element !== keptFilter) {
+                    element.className = "comfy-context-menu-filter";
+                    element.value = this.currentWord || "";
+                    // Reads the handler off the options as they stand, so one listener serves every re-render.
+                    element.addEventListener("input", () => {
+                        this.options.find(o => o.type === 'filter')?.onInput?.(element.value);
+                    });
+                } else if (document.activeElement !== element && element.value !== (this.currentWord || "")) {
+                    // Navigating into a folder resets the query; while the user is typing, what they typed wins.
+                    element.value = this.currentWord || "";
                 }
+                element.placeholder = option.placeholder || "";
                 this.filterBox = element;
             } else {
                 // For all other types, create the standard div wrapper
                 element = document.createElement("div");
                 this.renderSingleItem(element, option, i);
             }
-            
+
             element.dataset.optionIndex = i;
-            this.root.appendChild(element);
+            this.placeItem(element, i, keptFilter);
             this.renderedOptionElements.push(element);
         });
 
@@ -249,6 +279,17 @@ export class DynamicContextMenu { // Added export
         const { signal } = this.abortController;
 
         const keyboardHandler = (e) => {
+            // A character typed while this menu owns a text field belongs to that field, wherever focus has drifted to.
+            // ComfyUI's global keybindings only stand down for INPUT/TEXTAREA targets, so a bare letter arriving with focus on <body> runs a command instead — switching sidebar tabs mid-word.
+            // This listener is capture-phase on document; theirs is on window, so stopping here is enough.
+            if (this.filterBox && e.target !== this.filterBox
+                && !e.ctrlKey && !e.metaKey && !e.altKey
+                && (e.key.length === 1 || e.key === "Backspace")
+                && !isEditableTarget(e.target)) {
+                this.filterBox.focus();
+                e.stopPropagation();
+                return;
+            }
             if (this.filterBox && e.target === this.filterBox) {
                 const isNavKey = ['ArrowUp', 'ArrowDown', 'Enter', 'Escape', 'Tab'].includes(e.key);
                 const isOverridden = this.filterBoxOverrides && this.filterBoxOverrides.includes(e.key);
@@ -816,6 +857,38 @@ export class TagContextMenu extends DynamicContextMenu {
 }
 
 // For the + button to switch between csv and file tags
+/**
+ * Completions for the sidebar's tag-search box, sourced from the tag index instead of the CSV.
+ *
+ * Same menu, different question. The CSV knows every danbooru tag whether or not a single group of yours contains it; in a *search* field that means offering completions that lead nowhere. The index knows exactly which tags your collection carries and in how many groups, and `contextTerms` (set by GlobalAutocomplete before each search) narrows that to the groups the terms already typed still reach — so a suggestion cannot produce an empty result in combination with them.
+ *
+ * `{name, count}` is the shape `renderSingleItem` already draws rich, so nothing about the rendering changes.
+ */
+export class TagIndexContextMenu extends TagContextMenu {
+    constructor(event, onSelectCallback, existingTags = []) {
+        super(event, onSelectCallback, existingTags);
+        this.contextTerms = [];
+    }
+
+    async searchTags(query) {
+        this.currentWord = query;
+        let suggestions = [];
+        try {
+            const limit = app.ui?.settings?.getSettingValue?.("EreNodes.Autocomplete.Limit", 20) ?? 20;
+            const params = new URLSearchParams({ query, limit: String(limit) });
+            if (this.contextTerms?.length) params.set("context", this.contextTerms.join(","));
+            const response = await fetch(`/erenodes/tag_index/suggest?${params}`);
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            const tags = await response.json();
+            if (Array.isArray(tags)) suggestions = tags;
+        } catch (error) {
+            console.error("[EreNodes] Error suggesting tags:", error);
+        }
+        this.updateOptions(suggestions);
+    }
+}
+
+
 export class TagContextMenuInsert extends TagContextMenu {
     constructor(event, onSelectCallback, existingTags = []) {
         super(event, onSelectCallback, existingTags);
@@ -1035,50 +1108,55 @@ export class TagEditContextMenu extends DynamicContextMenu {
 
     }
     
+    /** Carries the name field over between renders, for the reason given on DynamicContextMenu.renderItems. */
     renderItems() {
-        this.root.innerHTML = '';
+        const keptFilter = this.filterBox?.parentNode === this.root ? this.filterBox : null;
+        for (const child of [...this.root.childNodes]) {
+            if (child !== keptFilter) child.remove();
+        }
         this.renderedOptionElements = [];
 
         this.options.forEach((option, i) => {
             let element;
             if (option.type === 'filter') {
-                element = document.createElement("textarea");
-                element.className = "comfy-context-menu-filter";
-                element.value = this.tag.name;
-                element.style.background = "#222";
-                element.style.minWidth = "100%";
-                element.style.margin = "0";
-                element.style.width = "fit-content";
-                element.style.fieldSizing = "content";
-                element.placeholder = "Close to remove tag."; // remove when empty
+                element = keptFilter ?? document.createElement("textarea");
+                if (element !== keptFilter) {
+                    element.className = "comfy-context-menu-filter";
+                    element.value = this.tag.name;
+                    element.style.background = "#222";
+                    element.style.minWidth = "100%";
+                    element.style.margin = "0";
+                    element.style.width = "fit-content";
+                    element.style.fieldSizing = "content";
+                    element.placeholder = "Close to remove tag."; // remove when empty
 
+                    element.addEventListener("input", () => {
+                        this.tag.name = element.value;
+                        if (element.value.trim()) {
+                            this.onSelect(this.updateTag());
+                        }
+                    });
 
-                element.addEventListener("input", () => {
-                    this.tag.name = element.value;
-                    if (element.value.trim()) {
-                        this.onSelect(this.updateTag());
-                    }
-                });
+                    element.addEventListener("click", () => {
+                        this.setHighlight(-1);
+                    });
 
-                element.addEventListener("click", () => {
-                    this.setHighlight(-1);
-                });
-                
+                    // Attach global autocomplete to this input.
+                    // Once, with the element: re-attaching on every render would stack listeners on the same field.
+                    setTimeout(() => {
+                        app.globalAutocompleteInstance.attach(element);
+                        element.focus();
+                    }, 0);
+                }
                 this.filterBox = element;
-
-                // Attach global autocomplete to this input
-                setTimeout(() => {
-                    app.globalAutocompleteInstance.attach(element);
-                    element.focus();
-                }, 0);
             } else {
                 // For all other types, create the standard div wrapper
                 element = document.createElement("div");
                 this.renderSingleItem(element, option, i);
             }
-            
+
             element.dataset.optionIndex = i;
-            this.root.appendChild(element);
+            this.placeItem(element, i, keptFilter);
             this.renderedOptionElements.push(element);
         });
 
