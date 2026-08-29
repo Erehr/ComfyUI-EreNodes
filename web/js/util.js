@@ -1,5 +1,5 @@
 import { app } from "../../../scripts/app.js";
-import { parseTextToTagData } from "./parser.js";
+import { parseTextToTagData, dedupeTags } from "./parser.js";
 
 // Fetch Cache
 
@@ -33,14 +33,6 @@ export function getCache(url, type = "json") {
                 if (type === "json") {
                     const text = await response.text();
                     data = text ? JSON.parse(text) : null;
-                } else if (type === "src") {
-                    const blob = await response.blob();
-                    if (!blob?.size) {
-                        cache.set(cacheKey, notFound);
-                        resolve(notFound);
-                        return;
-                    }
-                    data = URL.createObjectURL(blob);
                 } else {
                     throw new Error(`Unsupported cache type: ${type}`);
                 }
@@ -80,13 +72,6 @@ function drop(key) {
 export function clearCache(url) {
     for (const key of [...cache.keys()]) {
         if (key.endsWith(`:${url}`)) drop(key);
-    }
-}
-
-/** Forget every URL starting with a prefix — query strings included. */
-export function clearCachePrefix(urlPrefix) {
-    for (const key of [...cache.keys()]) {
-        if (key.slice(key.indexOf(":") + 1).startsWith(urlPrefix)) drop(key);
     }
 }
 
@@ -167,15 +152,7 @@ export function tagsFromResult(result, existing = []) {
         }
     }
 
-    // First occurrence wins: an upstream node set the tag, a later one merely repeated it, and the upstream entry carries the state we recovered.
-    const seen = new Set();
-    const tags = [];
-    for (const tag of collected) {
-        if (!tag?.name || seen.has(tag.name)) continue;
-        seen.add(tag.name);
-        tags.push(tag);
-    }
-    return tags;
+    return dedupeTags(collected);
 }
 
 /** How many nodes the prompt was spread across (for user-facing messages). */
@@ -292,6 +269,16 @@ async function request(items, era) {
         // It will be retried after a refresh.
         if (stale()) return;
         for (const item of items) verdicts.set(`${item.type}:${item.name}`, true);
+    }
+}
+
+/**
+ * Forget the verdicts for just these tags, so the next render re-checks them.
+ * Used after an extraction: the pills are new to this session, and a verdict cached for the same name may predate the file being installed or removed.
+ */
+export function forgetVerdicts(tags) {
+    for (const tag of tags || []) {
+        if (isCheckable(tag)) verdicts.delete(keyFor(tag));
     }
 }
 

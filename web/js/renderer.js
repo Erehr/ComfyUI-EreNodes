@@ -2,7 +2,7 @@ import { app } from "../../../scripts/app.js";
 import { api } from "../../../scripts/api.js";
 import { attachPillDrag, markDropZone, injectDragStyles, installDragGlobals, pruneSelection,handlePillSelectClick,handlePillContextMenu,consumeDragClick } from "./dragdrop.js";
 import { SURFACE_CLASS, injectTagStyles, fallbackColors, renderTagPill, renderToggleRowEl, renderTagTile } from "./tagview.js";
-import { parseTags } from "./parser.js";
+import { parseTags, byTagName } from "./parser.js";
 import { isKnownMissing, ensureChecked } from "./util.js";
 
 // Re-render tag UIs after undo/redo: the change tracker restores graph state and fires "graphChanged", but Vue keeps the existing DOM widget instances.
@@ -154,7 +154,8 @@ function attachPillEvents(node, el, tag, index, mode) {
 
 function openInactiveDropdown(node, e) {
     const tagData = parseTags(node.properties?._tagDataJSON || "[]");
-    const inactive = tagData.filter(t => !t.active && t.name);
+    // Alphabetical, not pill order. The pill order here is whatever the last shuffle left behind, which is no order at all to a reader looking for one tag in a list of forty.
+    const inactive = tagData.filter(t => !t.active && t.name).sort(byTagName);
     const dropdownOptions = inactive.map(tag => ({
         content: tag.name,
         callback: () => {
@@ -222,13 +223,28 @@ function renderExtractImage(node) {
     return pane;
 }
 
+/** Modes that draw only their active tags, and so have something for the eye to reveal. */
+const HIDES_INACTIVE = new Set(["multiselect", "randomizer"]);
+
+/**
+ * Toolbar, left to right: ≡, the eye, mode extras, then + on the right of every node.
+ * The dice used to sit right of +; it moved so that "add" is in the same place whichever prompt node you are looking at.
+ */
 function renderButtons(node, container, mode) {
     container.appendChild(makeButton(node, "button_menu", "≡", "Menu"));
-    if (mode !== "multiline") {
-        container.appendChild(makeButton(node, "button_add_tag", "+", "Add tag"));
+    if (HIDES_INACTIVE.has(mode)) {
+        const shown = !!node._showInactive;
+        // One glyph, state carried by the pressed style: there is no eye-with-a-slash that renders reliably at 20px across platforms, and two near-identical glyphs read worse than one that is visibly on or off.
+        const eye = makeButton(node, "button_show_inactive", "👁︎",
+            shown ? "Hide disabled tags" : "Show disabled tags");
+        if (shown) eye.classList.add("ere-btn-on");
+        container.appendChild(eye);
     }
     if (mode === "randomizer") {
         container.appendChild(makeButton(node, "button_randomize", "🎲︎", "Randomize"));
+    }
+    if (mode !== "multiline") {
+        container.appendChild(makeButton(node, "button_add_tag", "+", "Add tag"));
     }
 }
 
@@ -378,11 +394,14 @@ export function attachTagDomWidget(node, mode) {
             panel.addEventListener("click", (e) => {
                 // Not after a ctrl-drag selection, and not on a ctrl+click (that one belongs to the pill selection logic).
                 if (e.ctrlKey || e.metaKey || consumeDragClick()) return;
+                // With the eye on, every disabled tag is already a pill on the panel; a menu listing them again would be a second way to do what a click now does directly.
+                if (node._showInactive) return;
                 if (e.target === panel) openInactiveDropdown(node, e);
             });
             markDropZone(panel, "flow");
             for (let i = 0; i < tagData.length; i++) {
-                if (!tagData[i].active) continue;
+                // The eye reveals disabled tags *in place* — dimmed, still disabled, but now draggable, selectable and quick-editable like any other pill. Without it they exist only in the dropdown, which can do none of that.
+                if (!tagData[i].active && !node._showInactive) continue;
                 panel.appendChild(renderCloudPill(node, tagData[i], i, colors, mode));
             }
             content.appendChild(panel);

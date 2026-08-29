@@ -71,10 +71,39 @@ export function fallbackColors() {
 }
 
 /** Encode a tag/file name for the /erenodes/view/{type}/{path} route. */
-export function previewUrl(type, name, w, h) {
+// Preview bookkeeping.
+//
+// Thumbnails are DOM `<img>` elements, so the browser already owns loading, decoding, disk caching and lazy-loading. A JS-side image cache would only duplicate all of that in memory and cut the disk cache out of the loop — `getCache(url, "src")` existed for exactly that job until 3.3, when tags were drawn on a canvas and the pixels genuinely had to live in JS. It has had no callers since the move to DOM widgets, and has been removed.
+//
+// Two things the browser cannot do for us, and these are what the maps below are:
+//  - *Remember that a cover does not exist.* "No preview" answers 204, which is not heuristically cacheable, so every re-render asked again — once per coverless tile, on every tile-size toggle, tab switch and search keystroke.
+//  - *Notice that a cover was replaced* behind an unchanged URL. Nothing in the URL moves when the file does, so a cached thumbnail can outlive the image it stands for.
+const missingPreviews = new Set();
+const previewVersions = new Map();
+
+/** A cover's identity, independent of the tile size it happens to be drawn at. */
+export function previewKey(type, name) {
     const encoded = String(name).replace(/\\/g, "/").split('/').map(encodeURIComponent).join('/');
-    const size = (w && h) ? `?w=${w}&h=${h}&fit=cover` : "";
-    return `/erenodes/view/${type}/${encoded}${size}`;
+    return `/erenodes/view/${type}/${encoded}`;
+}
+
+export function previewUrl(type, name, w, h) {
+    const key = previewKey(type, name);
+    const params = (w && h) ? [`w=${w}`, `h=${h}`, "fit=cover"] : [];
+    // Only present once a cover has actually been replaced, so ordinary URLs stay stable and stay cached.
+    const version = previewVersions.get(key);
+    if (version) params.push(`v=${version}`);
+    return params.length ? `${key}?${params.join("&")}` : key;
+}
+
+/**
+ * A cover was written or deleted.
+ * Forget that it was missing, and move the URL so the browser fetches the new bytes instead of showing the ones it already has.
+ */
+export function bumpPreview(type, name) {
+    const key = previewKey(type, name);
+    missingPreviews.delete(key);
+    previewVersions.set(key, (previewVersions.get(key) || 0) + 1);
 }
 
 // Elements
@@ -164,12 +193,19 @@ export function renderTagTile(tag, opts = {}) {
     tile.style.height = `${h}px`;
 
     if (tag.type === 'lora' || tag.type === 'group' || tag.type === 'embedding') {
-        const img = document.createElement("img");
-        img.loading = "lazy";
-        img.draggable = false;
-        img.src = previewUrl(tag.type, tag.name, w, h);
-        img.addEventListener("error", () => { img.style.display = "none"; });
-        tile.appendChild(img);
+        const key = previewKey(tag.type, tag.name);
+        // Nothing was behind this URL last time we looked. Skip the element rather than firing a request whose answer the browser will not keep — the image is absolutely positioned, so an absent one lays out exactly like the hidden one this used to leave behind.
+        if (!missingPreviews.has(key)) {
+            const img = document.createElement("img");
+            img.loading = "lazy";
+            img.draggable = false;
+            img.src = previewUrl(tag.type, tag.name, w, h);
+            img.addEventListener("error", () => {
+                missingPreviews.add(key);
+                img.style.display = "none";
+            });
+            tile.appendChild(img);
+        }
     }
 
     const nameBar = document.createElement("div");

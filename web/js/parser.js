@@ -56,6 +56,29 @@ export function formatTag(tag) {
 
 const withExtension = tag => (tag.extension ? `${tag.name}${tag.extension}` : tag.name);
 
+// A tag with no explicit `active` renders as active, so it counts as one here too.
+const isActive = tag => tag.active !== false;
+
+/**
+ * Dedupe by name, keeping the first position but letting an active entry win.
+ * A node further down the chain can switch a tag back on, and that is the state that ran, so the later active copy replaces the earlier inactive one rather than being discarded.
+ */
+export function dedupeTags(tags) {
+    const at = new Map();
+    const out = [];
+    for (const tag of tags || []) {
+        if (!tag?.name) continue;
+        const seen = at.get(tag.name);
+        if (seen === undefined) {
+            at.set(tag.name, out.length);
+            out.push(tag);
+        } else if (isActive(tag) && !isActive(out[seen])) {
+            out[seen] = tag;
+        }
+    }
+    return out;
+}
+
 /** Split prompt text into tag objects, carrying over active states by name. */
 export function parseTextToTagData(text, oldTagData = []) {
     const oldTagsByName = new Map(oldTagData.map(t => [t.name, t]));
@@ -75,13 +98,8 @@ export function parseTextToTagData(text, oldTagData = []) {
         tagData.push(...newTags);
     }
 
-    // Deduped by name, first occurrence winning.
-    const seen = new Set();
-    return tagData.filter(tag => {
-        if (!tag.name || seen.has(tag.name)) return false;
-        seen.add(tag.name);
-        return true;
-    });
+    // Nameless entries go too: a bare "embedding:" parses to an empty name.
+    return dedupeTags(tagData);
 }
 
 /** Groups cannot nest, so drop any that made it into a list being saved. */
@@ -104,6 +122,19 @@ export function stripNestedGroups(tags, { warn = true } = {}) {
 // Only these are stripped from a display name.
 // Cutting at the last "." truncated any name that merely contained one, so a lora called "v1.5_style" showed "v1".
 const KNOWN_EXTENSIONS = /\.(json|safetensors|ckpt|lora|pt|bin|embedding)$/i;
+
+/**
+ * Order two tags by name, for anywhere tags are listed alphabetically — currently the MultiSelect / Randomizer dropdown of disabled tags.
+ *
+ * Case-insensitive first, then case-sensitive, then type: a total order, so the result is stable whatever arrangement it starts from and two tags differing only in case never swap places between renders.
+ */
+export function byTagName(a, b) {
+    const x = (a?.name || ""), y = (b?.name || "");
+    const lx = x.toLowerCase(), ly = y.toLowerCase();
+    if (lx !== ly) return lx < ly ? -1 : 1;
+    if (x !== y) return x < y ? -1 : 1;
+    return (a?.type || "").localeCompare(b?.type || "");
+}
 
 export function displayNameFor(tag, stripFolders) {
     let name = tag.name || "";

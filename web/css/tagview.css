@@ -49,7 +49,7 @@
     flex: 0 0 auto;
     padding: 0;
     border-radius: 5px;
-    border: 1px solid var(--component-node-border, #444);
+    border: 1px solid #444;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -59,6 +59,12 @@
     user-select: none;
     font: inherit;
     line-height: 18px;
+}
+/* Pressed state for a toolbar toggle (currently the eye). Reuses the hover treatment plus a brighter border, so "on" reads without inventing a colour the theme does not have. */
+.ere-surface .ere-btn.ere-btn-on {
+    background: var(--component-node-widget-background-hovered, #2a2a2a);
+    color: var(--component-node-foreground, #ddd);
+    border-color: var(--component-node-foreground-secondary, #777);
 }
 .ere-surface .ere-btn:hover {
     background: var(--component-node-widget-background-hovered, #2a2a2a);
@@ -83,7 +89,7 @@
 }
 .ere-surface .ere-pill.ere-more {
     background: transparent;
-    border-color: var(--component-node-border, #444);
+    border-color: #444;
     color: var(--component-node-foreground-secondary, #aaa);
     cursor: default;
 }
@@ -100,7 +106,7 @@
     border: 2px solid var(--ere-missing-color, #c50707);
 }
 .ere-surface .ere-panel {
-    border: 1px solid var(--component-node-border, #444);
+    border: 1px solid #444;
     border-radius: 5px;
     padding: 5px;
     background: var(--component-node-widget-background, #222);
@@ -111,7 +117,7 @@
     width: 100%;
     height: 20px;
     border-radius: 6px;
-    border: 1px solid var(--component-node-border, #444);
+    border: 1px solid #444;
     background: var(--component-node-widget-background, #222);
     cursor: pointer;
     user-select: none;
@@ -150,7 +156,7 @@
     flex: 0 0 auto;
     overflow: hidden;
     border-radius: 5px;
-    border: 1px solid var(--component-node-border, #444);
+    border: 1px solid #444;
     background: var(--component-node-widget-background, #222);
     cursor: pointer;
     user-select: none;
@@ -241,7 +247,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    border: 1px dashed var(--component-node-border, #444);
+    border: 1px dashed #444;
     border-radius: 6px;
     background: var(--component-node-widget-background, #222);
     cursor: pointer;

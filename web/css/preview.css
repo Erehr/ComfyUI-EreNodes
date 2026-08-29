@@ -4,7 +4,10 @@
     position: fixed;
     z-index: 10050;
     pointer-events: none;
-    max-width: 320px;
+    /* Fixed, not max: a group with two tags used to shrink the panel to fit them, leaving its cover image small and the panel a different width every time. */
+    width: 320px;
+    /* Shared by the tag cloud's padding and the image's margin so the two line up. */
+    --ere-preview-inset: 4px;
     max-height: 70vh;
     overflow: hidden;
     display: flex;
@@ -12,7 +15,7 @@
     gap: 6px;
     padding: 12px;
     border-radius: 8px;
-    border: 1px solid var(--component-node-border, #444);
+    border: 1px solid #444;
     background: var(--comfy-menu-bg, #202020);
     box-shadow: 0 6px 20px rgba(0, 0, 0, .55);
 }
@@ -28,13 +31,15 @@
 #erenodes-hover-preview[hidden] {
     display: none;
 }
+/* No height cap: capping one made a tall image letterbox itself and stop short of the panel edges, which is the thing the fixed panel width exists to avoid.
+   The cloud below shrinks instead when the two together do not fit. */
 #erenodes-hover-preview img.ere-preview-img {
     display: block;
-    max-width: 100%;
-    max-height: 220px;
-    object-fit: contain;
+    flex: 0 0 auto;
+    width: calc(100% - var(--ere-preview-inset) * 2);
+    margin: 0 var(--ere-preview-inset);
+    height: auto;
     border-radius: 5px;
-    align-self: center;
 }
 
 /* Must beat the rule above, which would otherwise re-show a broken image icon for every file that has no preview (a plain [hidden] attribute loses to any explicit display declaration). */
@@ -45,21 +50,21 @@
 /* Extra breathing room inside the cloud gives the rubber band somewhere to start; without it every pixel is a pill and a drag always grabs one. */
 #erenodes-hover-preview .ere-cloud {
     overflow-y: auto;
+    /* Shrinks below its max when a tall image leaves less room, so the image is never the thing that gets cropped. */
+    flex: 1 1 auto;
     max-height: 260px;
-    scrollbar-width: thin;
-    padding: 4px;
-    align-content: flex-start;
     min-height: 28px;
+    scrollbar-width: thin;
+    padding: var(--ere-preview-inset);
+    align-content: flex-start;
 }
 #erenodes-hover-preview .ere-preview-empty {
     font-size: 11px;
     opacity: .55;
 }
 
-/* The shared rubber band sits at z-index 10000 — below this panel (10050), so inside the preview it was drawn behind the panel.
-   Lift it above, and state its appearance explicitly: over a small area the 1px dashed border dominates and the default fill read as almost solid blue. */
+/* The shared rubber band sits at z-index 10000 — below this panel (10050), so inside the preview it was drawn behind it.
+   Lifting it is all this rule does; the band's appearance belongs to .ere-marquee in dragdrop.css, so the two cannot disagree. */
 .ere-marquee.ere-marquee-above {
     z-index: 10060;
-    border: 1px solid rgba(var(--ere-drag-accent-rgb, 74, 158, 255), .5);
-    background: rgba(var(--ere-drag-accent-rgb, 74, 158, 255), .08);
 }

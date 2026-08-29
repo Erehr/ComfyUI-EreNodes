@@ -44,8 +44,36 @@ class ErePromptMultiSelect(ErePrompt): pass
 class ErePromptToggle(ErePrompt): pass
 class ErePromptCloud(ErePrompt): pass
 class ErePromptMultiline(ErePrompt): pass
-class ErePromptRandomizer(ErePrompt): pass
 class ErePromptGallery(ErePrompt): pass
+
+
+# Shuffles its tags. The seed decides the arrangement; the frontend does the
+# shuffling, so `text` already carries the result by the time this runs.
+#
+# `control_after_generate: True` is what makes this a real ComfyUI seed: the
+# frontend pairs it with the standard control widget (which collapses into the
+# seed field in Nodes 2.0) and steps the value itself after every queued prompt.
+# An INT widget of our own could never do that - it just sat there.
+class ErePromptRandomizer(ErePrompt):
+    @classmethod
+    def INPUT_TYPES(cls):
+        spec = super().INPUT_TYPES()
+        # Declared last so that adding it does not shift the widgets that existing
+        # saved workflows already store values for (see realignLoadedWidgets).
+        spec["optional"]["seed"] = ("INT", {
+            "default": 0,
+            "min": 0,
+            "max": 0xFFFFFFFFFFFFFFFF,
+            "control_after_generate": True,
+            "tooltip": "Decides the tag arrangement. The same seed always produces "
+                       "the same order and the same active tags.",
+        })
+        return spec
+
+    # Accepted and ignored: the arrangement it selected is already baked into `text`.
+    def process(self, text, prefix="", separator=None, seed=0):
+        return (combine_prompt(text, prefix, separator),)
+
 
 
 # Recover a prompt from a generated image, as editable tag pills.

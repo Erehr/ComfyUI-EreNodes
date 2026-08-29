@@ -1,8 +1,8 @@
 import { app } from "../../../scripts/app.js";
 import { initializeSharedPromptFunctions, saveTagGroup } from "../prompt.js";
 import { getCache, isNotFound, loadStyle, isAcceptedImage, ACCEPTED_IMAGE_TYPES, isKnownMissing, ensureChecked } from "./util.js";
-import { SURFACE_CLASS, injectTagStyles, renderTagPill, previewUrl } from "./tagview.js";
-import { parseTags } from "./parser.js";
+import { SURFACE_CLASS, injectTagStyles, renderTagPill, previewUrl, bumpPreview } from "./tagview.js";
+import { parseTags, dedupeTags } from "./parser.js";
 import { injectDragStyles, markDropZone, attachPillDrag, pruneSelection, handlePillSelectClick, handlePillContextMenu, consumeDragClick, clearAllSelections } from "./dragdrop.js";
 import { TagSelectionContextMenu } from "./contextmenu.js";
 
@@ -61,14 +61,7 @@ async function unpackGroups(host) {
         expanded.push(...copy);
     }
 
-    const seen = new Set();
-    const deduped = [];
-    for (const tag of expanded) {
-        if (!tag?.name || seen.has(tag.name)) continue;
-        seen.add(tag.name);
-        deduped.push(tag);
-    }
-    host.properties._tagDataJSON = JSON.stringify(deduped, null, 2);
+    host.properties._tagDataJSON = JSON.stringify(dedupeTags(expanded), null, 2);
     return true;
 }
 
@@ -457,6 +450,9 @@ async function removeCover(folder, filename) {
     } catch (e) {
         console.warn("[EreNodes] Could not remove cover image.", e);
     }
+    // Whether or not the delete reached the server, this cover is no longer what the
+    // browser has cached for it.
+    bumpPreview("group", path);
 }
 
 /** The cover URL for an existing group, or "" — used to open the editor on one. */
