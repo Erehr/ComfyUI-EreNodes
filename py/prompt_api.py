@@ -536,6 +536,38 @@ async def create_folder_handler(request):
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
+# Preview images are served straight off disk, so two headers have to be set by hand.
+#
+# Content-Type: aiohttp asks Python's `mimetypes`, which resolves .webp to None on
+# most systems (it reads the OS registry, and Windows frequently has no entry) - so
+# every cover this extension writes went out as application/octet-stream. Browsers
+# sniff and render it anyway; anything that trusts the header does not.
+#
+# Cache-Control: FileResponse sends ETag and Last-Modified but no freshness, which
+# leaves the browser guessing - roughly 10% of the file's age. For a cover saved
+# minutes ago that is near zero, so a grid of tiles revalidated on nearly every
+# render: one 304 round trip per tile, on ComfyUI's single-threaded server. Five
+# minutes is short enough that a cover replaced in another tab appears promptly,
+# and the client moves the URL (`bumpPreview`) when it replaces one itself, so the
+# tab that made the change never waits.
+_PREVIEW_MIME = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+}
+PREVIEW_CACHE_SECONDS = 300
+
+
+def _preview_response(image_path):
+    ext = os.path.splitext(image_path)[1].lower()
+    headers = {"Cache-Control": f"public, max-age={PREVIEW_CACHE_SECONDS}"}
+    mime = _PREVIEW_MIME.get(ext)
+    if mime:
+        headers["Content-Type"] = mime
+    return web.FileResponse(image_path, headers=headers)
+
+
 @server.PromptServer.instance.routes.get("/erenodes/view/{type}/{path:.*}")
 async def view_file_handler(request):
     type_name = request.match_info.get("type")
@@ -583,14 +615,22 @@ async def view_file_handler(request):
                 if os.path.isfile(image_path):
                     # If sizing params provided, still return the original file.
                     # Client uses params for cache-key uniqueness; server does not resize.
-                    return web.FileResponse(image_path)
-                
+                    return _preview_response(image_path)
+
                 # Second try: filename.preview.extension (new pattern)
                 preview_image_path = prospective_path_base + '.preview' + ext
                 if os.path.isfile(preview_image_path):
-                    return web.FileResponse(preview_image_path)
+                    return _preview_response(preview_image_path)
     
-    # If we get here, no file was found in any of the directories Return 204 No Content to indicate "no preview available" without error noise.
+    # No file in any of the directories. 204 rather than 404: "no preview available"
+    # is an ordinary answer here, and a 404 per coverless tile is a screen of red in
+    # the network tab for something entirely normal.
+    #
+    # Deliberately *not* given a Cache-Control. A 204 is not heuristically cacheable
+    # and browser support for caching one explicitly is patchy, so the repeat
+    # requests are stopped on the client instead, where they can be invalidated
+    # exactly: `missingPreviews` in tagview.js records that this URL had nothing
+    # behind it and stops building an <img> for it at all.
     return web.Response(status=204)
 
 @server.PromptServer.instance.routes.post("/erenodes/save_file_image")

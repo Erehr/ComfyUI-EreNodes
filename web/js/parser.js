@@ -123,6 +123,19 @@ export function stripNestedGroups(tags, { warn = true } = {}) {
 // Cutting at the last "." truncated any name that merely contained one, so a lora called "v1.5_style" showed "v1".
 const KNOWN_EXTENSIONS = /\.(json|safetensors|ckpt|lora|pt|bin|embedding)$/i;
 
+/**
+ * Order two tags by name, for anywhere tags are listed alphabetically — currently the MultiSelect / Randomizer dropdown of disabled tags.
+ *
+ * Case-insensitive first, then case-sensitive, then type: a total order, so the result is stable whatever arrangement it starts from and two tags differing only in case never swap places between renders.
+ */
+export function byTagName(a, b) {
+    const x = (a?.name || ""), y = (b?.name || "");
+    const lx = x.toLowerCase(), ly = y.toLowerCase();
+    if (lx !== ly) return lx < ly ? -1 : 1;
+    if (x !== y) return x < y ? -1 : 1;
+    return (a?.type || "").localeCompare(b?.type || "");
+}
+
 export function displayNameFor(tag, stripFolders) {
     let name = tag.name || "";
     if (tag.type === "lora" || tag.type === "group") {

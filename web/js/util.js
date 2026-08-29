@@ -33,14 +33,6 @@ export function getCache(url, type = "json") {
                 if (type === "json") {
                     const text = await response.text();
                     data = text ? JSON.parse(text) : null;
-                } else if (type === "src") {
-                    const blob = await response.blob();
-                    if (!blob?.size) {
-                        cache.set(cacheKey, notFound);
-                        resolve(notFound);
-                        return;
-                    }
-                    data = URL.createObjectURL(blob);
                 } else {
                     throw new Error(`Unsupported cache type: ${type}`);
                 }
@@ -80,13 +72,6 @@ function drop(key) {
 export function clearCache(url) {
     for (const key of [...cache.keys()]) {
         if (key.endsWith(`:${url}`)) drop(key);
-    }
-}
-
-/** Forget every URL starting with a prefix — query strings included. */
-export function clearCachePrefix(urlPrefix) {
-    for (const key of [...cache.keys()]) {
-        if (key.slice(key.indexOf(":") + 1).startsWith(urlPrefix)) drop(key);
     }
 }
 

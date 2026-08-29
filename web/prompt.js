@@ -1,7 +1,126 @@
 import { app } from "../../scripts/app.js";
 import { TagContextMenuInsert, TagEditContextMenu, TagGroupContextMenu } from "./js/contextmenu.js";
-import { getCache, clearCache, clearCachePrefix, captureUndoState } from "./js/util.js";
+import { getCache, clearCache, captureUndoState } from "./js/util.js";
+import { bumpPreview } from "./js/tagview.js";
 import { parseTags, parseTag, formatTag, parseTextToTagData, stripNestedGroups, dedupeTags } from "./js/parser.js";
+
+// The dice button's range. ComfyUI's seed input goes to 2^64, but a JS number cannot hold that exactly and nothing here needs it to — 32 bits is already far more arrangements than any tag list has.
+const DICE_SEED_MAX = 0xFFFFFFFF;
+
+/** Any widget value as a usable seed. */
+const normalizeSeed = (value) => {
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+};
+
+/**
+ * 32 bits of shuffle key out of a seed declared over a 64-bit range.
+ * Both halves are folded in, so two seeds that differ only in their high bits still shuffle differently.
+ */
+function seedKey32(value) {
+    const n = normalizeSeed(value);
+    return ((n >>> 0) ^ Math.imul(Math.floor(n / 4294967296) >>> 0, 0x9E3779B1)) >>> 0;
+}
+
+const CONTROL_MODES = ["fixed", "increment", "decrement", "randomize"];
+
+/**
+ * Undo the positional shift a workflow suffers when it was saved by a version with fewer widgets than the node has now.
+ *
+ * LiteGraph restores widget values by position, so adding a widget in the middle silently slides every later value one slot along — a Randomizer saved before the seed existed loads its `control after generate` value *into* the seed, and loses the control. This has now happened twice (the separator did it first), so it is worth having as one function rather than a growing chain of branches inside onConfigure.
+ *
+ * Detection is by type, never by counting: a seed is a number and a control mode is a known string, so a value in the wrong slot identifies itself. `hasControl` / `hasSeed` say which widgets the node actually has — only the Randomizer has either, and a separator that happens to read "fixed" on a node with no control widget must be left alone.
+ *
+ * @returns the corrected `{separator, control, seed}`.
+ */
+export function realignLoadedWidgets({ separator, control, seed, hasControl = false, hasSeed = false }) {
+    const out = { separator, control, seed };
+
+    // Saved before the separator widget: the control's value landed in the separator.
+    if (hasControl && (control === undefined || control === null) && CONTROL_MODES.includes(separator)) {
+        out.control = separator;
+        out.separator = null;
+    } else if (separator === "fake_button") {
+        out.separator = null;
+    }
+
+    if (hasSeed) {
+        // Saved before the seed widget: the control's value landed in the seed.
+        if (CONTROL_MODES.includes(out.seed)) {
+            if (out.control === undefined || out.control === null) out.control = out.seed;
+            out.seed = 0;
+        }
+        // Anything else non-numeric here (including the two-slot shift above, which
+        // leaves nothing in this slot at all) is not a seed.
+        if (typeof out.seed !== "number" || !Number.isFinite(out.seed)) out.seed = 0;
+    }
+    return out;
+}
+
+/**
+ * mulberry32 — a small seeded PRNG.
+ *
+ * Math.random cannot be seeded, so a reproducible shuffle needs its own generator. This one is 32-bit, has no dependencies and passes gjrand; more than enough to permute a tag list, and identical in every browser, which is the property that actually matters here.
+ */
+function mulberry32(seed) {
+    let a = seed >>> 0;
+    return () => {
+        a = (a + 0x6D2B79F5) | 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+/**
+ * The arrangement a seed produces: which tags are on.
+ *
+ * **The stored order is never touched.** Randomizing a set of tags is a question of
+ * which ones are enabled, not of where they sit in the list — the order in
+ * `_tagDataJSON` is the user's, changed only by actually dragging a pill. That also
+ * keeps a Randomizer honest under conversion: turn it into a Cloud and back and the
+ * pills are where they were left.
+ *
+ * (Before 3.5 `onRandomize` swapped array elements and wrote the shuffled list back.
+ * It was invisible, because these nodes draw only their active tags, so the reorder
+ * showed up nowhere until you converted the node to one that draws all of them.)
+ *
+ * **Two** things come out of the one number, which is what lets ComfyUI's single
+ * native seed replace this node's old bespoke combo without losing either behaviour:
+ *   - which positions are on, from `seed / count`
+ *   - how far that selection is rotated, from `seed % count`
+ *
+ * So `increment` slides every enabled tag one place along, wrapping — the same sweep
+ * the old `shiftActiveTags` gave, where a batch walks the whole list instead of
+ * resampling it — while `randomize` lands on a different selection entirely. The
+ * difference is that both are now a pure function of (seed, tag list), so both are
+ * reproducible, which the old combo could not offer at all.
+ *
+ * How many tags are enabled is preserved; the seed only decides which.
+ */
+function arrangementForSeed(tags, seed) {
+    const count = tags.length;
+    const activeCount = tags.filter(t => t.active).length;
+    // Nothing to choose between: no tags, none enabled, or all of them. Each would
+    // otherwise burn a re-render per generation to produce what is already on screen.
+    if (count < 2 || activeCount === 0 || activeCount === count) return tags;
+
+    const value = normalizeSeed(seed);
+
+    // Partial Fisher-Yates over the positions: the first `activeCount` entries are a
+    // uniform sample without replacement, and it costs `activeCount` steps rather than
+    // shuffling the whole list to throw most of it away.
+    const positions = [...Array(count).keys()];
+    const random = mulberry32(seedKey32(Math.floor(value / count)));
+    for (let i = 0; i < activeCount; i++) {
+        const j = i + Math.floor(random() * (count - i));
+        [positions[i], positions[j]] = [positions[j], positions[i]];
+    }
+
+    const offset = value % count;
+    const enabled = new Set(positions.slice(0, activeCount).map(i => (i + offset) % count));
+    return tags.map((tag, i) => ({ ...tag, active: enabled.has(i) }));
+}
 
 /**
  * Write a tag group to disk — the one path for it, so the node menu and the sidebar share the overwrite confirmation, cache invalidation and toasts.
@@ -28,8 +147,8 @@ export async function saveTagGroup({ path = "", filename, tags, imageFile, overw
         }
 
         clearCache(`/erenodes/get_tag_group?filename=${encodeURIComponent(fullPath)}`);
-        // Also invalidate cached preview thumbnails for this group (src entries carry query strings, so prefix-match).
-        clearCachePrefix(`/erenodes/view/group/${fullPath.replace(/\.json$/i, "")}`);
+        // Move the cover's URL so a replaced thumbnail is actually fetched. This used to call clearCachePrefix, which cleared a map `<img>` never wrote to — the browser went on showing the old image.
+        bumpPreview("group", fullPath.replace(/\.json$/i, ""));
 
         const formData = new FormData();
         formData.append('path', path || '');
@@ -191,13 +310,20 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         if (sep) {
             // Workflows saved before the separator widget existed have one fewer widget value, so positional loading shifts the next widget's value into it.
             // Detect that and hand it back.
-            const ctrl = this.widgets?.find(w => w.name === "control after generate");
-            const controlModes = ["fixed", "increment", "decrement", "randomize"];
-            if (ctrl && (ctrl.value === undefined || ctrl.value === null) && controlModes.includes(sep.value)) {
-                ctrl.value = sep.value;
-                sep.value = null;
-            } else if (sep.value === "fake_button") {
-                sep.value = null;
+            const ctrl = this.widgets?.find(w => w.name === "control_after_generate");
+            const seedWidget = this.widgets?.find(w => w.name === "seed");
+            const fixed = realignLoadedWidgets({
+                separator: sep.value, control: ctrl?.value, seed: seedWidget?.value,
+                hasControl: !!ctrl, hasSeed: !!seedWidget,
+            });
+            sep.value = fixed.separator;
+            if (ctrl) ctrl.value = fixed.control;
+            if (seedWidget) {
+                seedWidget.value = fixed.seed;
+                // Loading must never reshuffle. The saved tags are the arrangement this
+                // workflow was saved with; re-deriving them here would change someone's
+                // prompt just by opening the file.
+                this._seedApplied = fixed.seed;
             }
 
             // Property is the source of truth for the separator
@@ -589,52 +715,44 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         input.click();
     };
 
-    node.onRandomize = (e, pos) => {
+    /**
+     * Lay the tags out for a seed: same seed, same tags, same result — which is the point of having one.
+     * How many tags are on is preserved; *which* ones and in what order is what the seed decides.
+     */
+    node.onApplySeed = async (seed) => {
         const tagData = parseTags(node.properties._tagDataJSON || "[]");
-        const activeCount = tagData.filter(t => t.active).length;
-
-        tagData.forEach(t => t.active = false);
-
-        for (let i = tagData.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [tagData[i], tagData[j]] = [tagData[j], tagData[i]];
-        }
-
-        for (let i = 0; i < activeCount; i++) {
-            if (tagData[i]) {
-                tagData[i].active = true;
-            }
-        }
-        
-        node.properties._tagDataJSON = JSON.stringify(tagData, null, 2);
-        node.onUpdateTextWidget(node);
-        app.graph.setDirtyCanvas(true);
-    };
-
-    /** Step every active tag along the list by `shift`, wrapping — the Randomizer's increment/decrement. */
-    const shiftActiveTags = async (shift) => {
-        const tagData = parseTags(node.properties._tagDataJSON || "[]");
-        const usable = tagData.filter(t => t.name);
-        if (usable.length < 2) return;
-
-        const activeIndices = [];
-        usable.forEach((tag, i) => { if (tag.active) activeIndices.push(i); });
-        // Nothing on means nothing to step; every one on means every step is a no-op.
-        // Both would otherwise burn a re-render per generation.
-        if (!activeIndices.length || activeIndices.length === usable.length) return;
-
-        usable.forEach(t => t.active = false);
-        for (const i of activeIndices) {
-            usable[(i + shift + usable.length) % usable.length].active = true;
-        }
-
-        node.properties._tagDataJSON = JSON.stringify(tagData, null, 2);
+        if (tagData.length < 2) return;
+        node._seedApplied = normalizeSeed(seed);
+        node.properties._tagDataJSON = JSON.stringify(arrangementForSeed(tagData, seed), null, 2);
         await node.onUpdateTextWidget(node);
         app.graph.setDirtyCanvas(true);
     };
 
-    node.onIncrement = () => shiftActiveTags(1);
-    node.onDecrement = () => shiftActiveTags(-1);
+    /**
+     * Re-lay the tags if the seed has moved since they were laid out.
+     *
+     * Idempotent by design, and that is what lets several triggers share it: the seed widget's callback (typed in), `control_after_generate`'s `afterQueued` (stepped per queued prompt), and the `execution_success` safety net all call this, and only the first one to see a new value does any work.
+     */
+    node.onSeedChanged = async () => {
+        const widget = node.widgets?.find(w => w.name === "seed");
+        if (!widget) return;
+        const seed = normalizeSeed(widget.value);
+        if (seed === node._seedApplied) return;
+        await node.onApplySeed(seed);
+    };
+
+    /**
+     * Roll a new seed and lay the tags out for it — the dice button.
+     *
+     * The seed is written to the widget before it is used, so the number on screen is always the one that produced what you are looking at. This is the manual form of `control_after_generate: randomize`.
+     */
+    node.onRandomize = async (e, pos) => {
+        const seed = Math.floor(Math.random() * (DICE_SEED_MAX + 1));
+        const widget = node.widgets?.find(w => w.name === "seed");
+        // Assigning .value does not fire a widget callback, so this cannot recurse.
+        if (widget) widget.value = seed;
+        await node.onApplySeed(seed);
+    };
 
     node.onAddTag = (e, pos) => {
         const addTagObject = async (tagObject) => {
@@ -674,6 +792,14 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         
         if (clickedPill.label === "button_randomize") {
             return node.onRandomize?.(e, clickedPill);
+        }
+
+        if (clickedPill.label === "button_show_inactive") {
+            // Deliberately on the node instance, not in properties: it is a way of looking at the node, not part of what the node *is*, so it stays out of saved workflows and resets on reload.
+            node._showInactive = !node._showInactive;
+            node._ereDom?.render?.();
+            app.graph.setDirtyCanvas(true);
+            return;
         }
 
         const tagData = parseTags(node.properties._tagDataJSON || "[]");

@@ -60,6 +60,12 @@
     font: inherit;
     line-height: 18px;
 }
+/* Pressed state for a toolbar toggle (currently the eye). Reuses the hover treatment plus a brighter border, so "on" reads without inventing a colour the theme does not have. */
+.ere-surface .ere-btn.ere-btn-on {
+    background: var(--component-node-widget-background-hovered, #2a2a2a);
+    color: var(--component-node-foreground, #ddd);
+    border-color: var(--component-node-foreground-secondary, #777);
+}
 .ere-surface .ere-btn:hover {
     background: var(--component-node-widget-background-hovered, #2a2a2a);
     color: var(--component-node-foreground, #ddd);

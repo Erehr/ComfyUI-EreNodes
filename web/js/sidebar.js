@@ -1,6 +1,6 @@
 import { app } from "../../../scripts/app.js";
-import { getCache, clearCachePrefix, isNotFound, loadStyle, clearMissingCache, isAcceptedImage, extractFromImage, tagsFromResult, forgetVerdicts } from "./util.js";
-import { SURFACE_CLASS, injectTagStyles, renderTagTile, previewUrl } from "./tagview.js";
+import { getCache, isNotFound, loadStyle, clearMissingCache, isAcceptedImage, extractFromImage, tagsFromResult, forgetVerdicts } from "./util.js";
+import { SURFACE_CLASS, injectTagStyles, renderTagTile, previewUrl, bumpPreview } from "./tagview.js";
 import { showPreviewFor, hidePreviewPanel, setPreviewHandlers } from "./preview.js";
 import { startExternalDrag, isDragActive, injectDragStyles } from "./dragdrop.js";
 import { TagSelectionContextMenu, TagIndexContextMenu } from "./contextmenu.js";
@@ -1584,7 +1584,7 @@ function setThumbnail(row) {
             app.extensionManager?.toast?.add({
                 severity: "success", summary: "Thumbnail set", detail: result.message, life: 4000,
             });
-            clearCachePrefix(previewUrl(row.tab, row.path).split("?")[0]);
+            bumpPreview(row.tab, row.path);
             render();
         } catch (err) {
             app.extensionManager?.toast?.add({

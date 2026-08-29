@@ -166,6 +166,7 @@ EreNodes provides flexible LoRA loading options to fit different workflow prefer
 ### Version 3.4 - Latest
 - **Sidebar Tag search**: now as alternative mode, automatically indexing cache database in background
 - **Autocomplete on the sidebar search box** (tag mode only): only from actual tags in tag groups (cached)
+- **Prompt randomizer** added missing seed control
 
 ### Version 3.3
 - **Tag group editor** in sidebar.
