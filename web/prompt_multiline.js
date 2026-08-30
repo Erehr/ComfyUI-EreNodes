@@ -14,7 +14,6 @@ app.registerExtension({
 
             const textWidget = this.widgets?.find(w => w.name === "text");
             initializeSharedPromptFunctions(this, textWidget);
-            // ≡ menu as a DOM widget (no fake placeholder button needed)
             attachTagDomWidget(this, "multiline");
             this.onUpdateTextWidget(this);
         };

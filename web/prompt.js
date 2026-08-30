@@ -1,10 +1,10 @@
 import { app } from "../../scripts/app.js";
-import { TagContextMenuInsert, TagEditContextMenu, TagGroupContextMenu } from "./js/contextmenu.js";
+import { TagContextMenuInsert, TagEditContextMenu, TagGroupContextMenu, ActionContextMenu } from "./js/contextmenu.js";
 import { getCache, clearCache, captureUndoState } from "./js/util.js";
 import { bumpPreview } from "./js/tagview.js";
 import { parseTags, parseTag, formatTag, parseTextToTagData, stripNestedGroups, dedupeTags } from "./js/parser.js";
 
-// The dice button's range. ComfyUI's seed input goes to 2^64, but a JS number cannot hold that exactly and nothing here needs it to — 32 bits is already far more arrangements than any tag list has.
+// The dice button's range. ComfyUI's seed goes to 2^64, which a JS number cannot hold exactly and nothing here needs.
 const DICE_SEED_MAX = 0xFFFFFFFF;
 
 /** Any widget value as a usable seed. */
@@ -13,10 +13,7 @@ const normalizeSeed = (value) => {
     return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 };
 
-/**
- * 32 bits of shuffle key out of a seed declared over a 64-bit range.
- * Both halves are folded in, so two seeds that differ only in their high bits still shuffle differently.
- */
+/** 32 bits of shuffle key from a 64-bit seed. Both halves fold in, so seeds differing only in their high bits still shuffle differently. */
 function seedKey32(value) {
     const n = normalizeSeed(value);
     return ((n >>> 0) ^ Math.imul(Math.floor(n / 4294967296) >>> 0, 0x9E3779B1)) >>> 0;
@@ -25,12 +22,8 @@ function seedKey32(value) {
 const CONTROL_MODES = ["fixed", "increment", "decrement", "randomize"];
 
 /**
- * Undo the positional shift a workflow suffers when it was saved by a version with fewer widgets than the node has now.
- *
- * LiteGraph restores widget values by position, so adding a widget in the middle silently slides every later value one slot along — a Randomizer saved before the seed existed loads its `control after generate` value *into* the seed, and loses the control. This has now happened twice (the separator did it first), so it is worth having as one function rather than a growing chain of branches inside onConfigure.
- *
- * Detection is by type, never by counting: a seed is a number and a control mode is a known string, so a value in the wrong slot identifies itself. `hasControl` / `hasSeed` say which widgets the node actually has — only the Randomizer has either, and a separator that happens to read "fixed" on a node with no control widget must be left alone.
- *
+ * Undo the positional shift a workflow suffers when it was saved with fewer widgets than the node has now: LiteGraph restores values by position, so a widget added in the middle slides every later value one slot along.
+ * Detection is by type, never by counting: a seed is a number and a control mode is a known string, so a value in the wrong slot identifies itself, and `hasControl` / `hasSeed` say which widgets the node actually has.
  * @returns the corrected `{separator, control, seed}`.
  */
 export function realignLoadedWidgets({ separator, control, seed, hasControl = false, hasSeed = false }) {
@@ -50,18 +43,13 @@ export function realignLoadedWidgets({ separator, control, seed, hasControl = fa
             if (out.control === undefined || out.control === null) out.control = out.seed;
             out.seed = 0;
         }
-        // Anything else non-numeric here (including the two-slot shift above, which
-        // leaves nothing in this slot at all) is not a seed.
+        // Anything else non-numeric here (including the two-slot shift above, which leaves nothing in this slot at all) is not a seed.
         if (typeof out.seed !== "number" || !Number.isFinite(out.seed)) out.seed = 0;
     }
     return out;
 }
 
-/**
- * mulberry32 — a small seeded PRNG.
- *
- * Math.random cannot be seeded, so a reproducible shuffle needs its own generator. This one is 32-bit, has no dependencies and passes gjrand; more than enough to permute a tag list, and identical in every browser, which is the property that actually matters here.
- */
+/** mulberry32: Math.random cannot be seeded, and a reproducible shuffle needs a generator that is identical in every browser. */
 function mulberry32(seed) {
     let a = seed >>> 0;
     return () => {
@@ -73,43 +61,18 @@ function mulberry32(seed) {
 }
 
 /**
- * The arrangement a seed produces: which tags are on.
- *
- * **The stored order is never touched.** Randomizing a set of tags is a question of
- * which ones are enabled, not of where they sit in the list — the order in
- * `_tagDataJSON` is the user's, changed only by actually dragging a pill. That also
- * keeps a Randomizer honest under conversion: turn it into a Cloud and back and the
- * pills are where they were left.
- *
- * (Before 3.5 `onRandomize` swapped array elements and wrote the shuffled list back.
- * It was invisible, because these nodes draw only their active tags, so the reorder
- * showed up nowhere until you converted the node to one that draws all of them.)
- *
- * **Two** things come out of the one number, which is what lets ComfyUI's single
- * native seed replace this node's old bespoke combo without losing either behaviour:
- *   - which positions are on, from `seed / count`
- *   - how far that selection is rotated, from `seed % count`
- *
- * So `increment` slides every enabled tag one place along, wrapping — the same sweep
- * the old `shiftActiveTags` gave, where a batch walks the whole list instead of
- * resampling it — while `randomize` lands on a different selection entirely. The
- * difference is that both are now a pure function of (seed, tag list), so both are
- * reproducible, which the old combo could not offer at all.
- *
- * How many tags are enabled is preserved; the seed only decides which.
+ * The arrangement a seed produces: which tags are on. The stored order is never touched — these nodes draw only their active tags, so randomizing is a question of which are enabled, and the order in `_tagDataJSON` stays the user's.
+ * Two things come out of the one number, which is what lets a single native seed cover all four control modes: `seed / count` picks the enabled positions, `seed % count` rotates that selection — so `increment` slides every enabled tag one place along and `randomize` lands on a different selection entirely. How many are enabled is preserved.
  */
 function arrangementForSeed(tags, seed) {
     const count = tags.length;
     const activeCount = tags.filter(t => t.active).length;
-    // Nothing to choose between: no tags, none enabled, or all of them. Each would
-    // otherwise burn a re-render per generation to produce what is already on screen.
+    // Nothing to choose between: no tags, none enabled, or all of them. Each would otherwise burn a re-render per generation to produce what is already on screen.
     if (count < 2 || activeCount === 0 || activeCount === count) return tags;
 
     const value = normalizeSeed(seed);
 
-    // Partial Fisher-Yates over the positions: the first `activeCount` entries are a
-    // uniform sample without replacement, and it costs `activeCount` steps rather than
-    // shuffling the whole list to throw most of it away.
+    // Partial Fisher-Yates over the positions: the first `activeCount` entries are a uniform sample without replacement, and it costs `activeCount` steps rather than shuffling the whole list to throw most of it away.
     const positions = [...Array(count).keys()];
     const random = mulberry32(seedKey32(Math.floor(value / count)));
     for (let i = 0; i < activeCount; i++) {
@@ -123,8 +86,7 @@ function arrangementForSeed(tags, seed) {
 }
 
 /**
- * Write a tag group to disk — the one path for it, so the node menu and the sidebar share the overwrite confirmation, cache invalidation and toasts.
- *
+ * Write a tag group to disk. The one path for it, so the node menu and the sidebar share the overwrite confirmation, cache invalidation and toasts.
  * @param {string} [opts.path]  folder relative to the tag-group root
  * @param {string} opts.filename  ".json" is appended if missing
  * @param {boolean} [opts.overwriteSilently]  skip the "already exists" prompt
@@ -137,7 +99,7 @@ export async function saveTagGroup({ path = "", filename, tags, imageFile, overw
         if (!overwriteSilently) {
             const checkResponse = await fetch(`/erenodes/get_tag_group?filename=${encodeURIComponent(fullPath)}`);
             if (checkResponse.ok) {
-                // app.ui.dialog.show() is not a confirm dialog (returns nothing); use the extensionManager confirm dialog with a window.confirm fallback.
+                // app.ui.dialog.show() returns nothing, so it cannot ask a question.
                 const message = `Tag group '${name}' already exists. Do you want to overwrite it?`;
                 const confirmed = app.extensionManager?.dialog?.confirm
                     ? await app.extensionManager.dialog.confirm({ title: "File Exists", message })
@@ -147,7 +109,7 @@ export async function saveTagGroup({ path = "", filename, tags, imageFile, overw
         }
 
         clearCache(`/erenodes/get_tag_group?filename=${encodeURIComponent(fullPath)}`);
-        // Move the cover's URL so a replaced thumbnail is actually fetched. This used to call clearCachePrefix, which cleared a map `<img>` never wrote to — the browser went on showing the old image.
+        // Move the cover's URL, or the browser goes on showing the thumbnail it has.
         bumpPreview("group", fullPath.replace(/\.json$/i, ""));
 
         const formData = new FormData();
@@ -203,7 +165,6 @@ const getTextInput = async (title, promptMessage, defaultValue = "") => {
 };
 
 // Global keyboard shortcuts for tag nodes (Ctrl+V paste).
-// The old processContextMenu hijack for pill right-clicks is gone: quick edit is handled by DOM contextmenu listeners on the pills (renderer.js).
 let contextMenuPatched = false;
 const ERE_TAG_NODE_TYPES = ["ErePromptCloud", "ErePromptToggle", "ErePromptMultiSelect", "ErePromptRandomizer", "ErePromptGallery"];
 
@@ -250,6 +211,29 @@ export function applyContextMenuPatch() {
     });
 }
 
+const CONVERT_TARGETS = [
+    ["Prompt Cloud", "ErePromptCloud"],
+    ["Prompt MultiSelect", "ErePromptMultiSelect"],
+    ["Prompt Toggle", "ErePromptToggle"],
+    ["Prompt Multiline", "ErePromptMultiline"],
+    ["Prompt Randomizer", "ErePromptRandomizer"],
+    ["Prompt Gallery", "ErePromptGallery"],
+    ["Prompt Composer", "ErePromptComposer"],
+];
+
+/**
+ * "Convert to" as one entry with a native flyout submenu, instead of seven rows.
+ * @param {function(string)} [convert] for a node that must do something first (the Composer flattens its categories).
+ */
+export function convertMenuItem(node, convert = (type) => node.convertTo(type)) {
+    return {
+        name: "Convert to",
+        submenu: CONVERT_TARGETS
+            .filter(([, type]) => type !== node.type)
+            .map(([title, type]) => ({ name: title, callback: () => convert(type) })),
+    };
+}
+
 export function initializeSharedPromptFunctions(node, textWidget) {
 
     node.properties = node.properties || {};
@@ -264,7 +248,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         node.properties._tagSeparator = ", "; // Default value
     }
 
-    // Separator bridge: _prefixSeparator is edited in the Properties panel, but process() only sees widget values — so this hidden widget mirrors it.
+    // _prefixSeparator is edited in the Properties panel, but process() only sees widget values, so this hidden widget mirrors it.
     const sepWidget = node.widgets?.find(w => w.name === "separator");
     if (sepWidget) {
         sepWidget.computeSize = () => [0, 0];
@@ -308,8 +292,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
 
         const sep = this.widgets?.find(w => w.name === "separator");
         if (sep) {
-            // Workflows saved before the separator widget existed have one fewer widget value, so positional loading shifts the next widget's value into it.
-            // Detect that and hand it back.
+            // A workflow saved before the separator widget existed shifts the next widget's value into it; realignLoadedWidgets hands it back.
             const ctrl = this.widgets?.find(w => w.name === "control_after_generate");
             const seedWidget = this.widgets?.find(w => w.name === "seed");
             const fixed = realignLoadedWidgets({
@@ -320,9 +303,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             if (ctrl) ctrl.value = fixed.control;
             if (seedWidget) {
                 seedWidget.value = fixed.seed;
-                // Loading must never reshuffle. The saved tags are the arrangement this
-                // workflow was saved with; re-deriving them here would change someone's
-                // prompt just by opening the file.
+                // Loading must never reshuffle. The saved tags are the arrangement this workflow was saved with; re-deriving them here would change someone's prompt just by opening the file.
                 this._seedApplied = fixed.seed;
             }
 
@@ -334,7 +315,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             }
         }
 
-        // Re-derive the text widget from tag data now that properties are loaded (onNodeCreated runs before properties are applied, so the update there ran against empty data).
+        // onNodeCreated runs before properties are applied, so its update saw empty data.
         this.onUpdateTextWidget?.(this);
     };
 
@@ -409,40 +390,32 @@ export function initializeSharedPromptFunctions(node, textWidget) {
     node.onActionMenu = (e, node) => { 
         const tagData = parseTags(node.properties._tagDataJSON || "[]");
 
-        let options = [
-            { content: "Replace Tags from Clipboard", callback: () => node.onClipboardReplace?.() },
-            { content: "Add Tags from Clipboard", callback: () => node.onClipboardAppend?.() },
+        let actions = [
+            { name: "Replace Tags from Clipboard", callback: () => node.onClipboardReplace?.() },
+            { name: "Add Tags from Clipboard", callback: () => node.onClipboardAppend?.() },
             null,
             // Only while the tag area is capped / manually sized in scroll mode
             ...(node._tagAreaCapped
-                ? [{ content: "Fit Height to Tags", callback: () => node.onFitTagArea?.() }]
+                ? [{ name: "Fit Height to Tags", callback: () => node.onFitTagArea?.() }]
                 : []),
-            { content: "Toggle All Tags", callback: () => node.onToggleTags?.() },
-            { content: "Remove All Tags", callback: () => node.onRemoveTags?.() },
-            { content: "Remove Inactive Tags", callback: () => node.onRemoveTags?.('inactive') },
-            null, 
-            { content: "Load Tag Group", callback: () => node.onLoadTagGroup?.(e) },
-            { content: "Save Tag Group", callback: () => node.onSaveTagGroup?.(e), disabled: tagData.filter(t => t.type !== 'group').length < 2 },
-            null, 
-            { content: "Export Tags (.json)", callback: () => node.onExportTags?.() },
-            { content: "Import Tags (.json)", callback: () => node.onImportTags?.() },
-            null, 
-            { content: "Convert to Prompt Cloud", callback: () => node.convertTo("ErePromptCloud") },
-            { content: "Convert to Prompt MultiSelect", callback: () => node.convertTo("ErePromptMultiSelect") },
-            { content: "Convert to Prompt Toggle", callback: () => node.convertTo("ErePromptToggle") },
-            { content: "Convert to Prompt Multiline", callback: () => node.convertTo("ErePromptMultiline") },
-            { content: "Convert to Prompt Randomizer", callback: () => node.convertTo("ErePromptRandomizer") },
-            { content: "Convert to Prompt Gallery", callback: () => node.convertTo("ErePromptGallery") },
+            { name: "Toggle All Tags", callback: () => node.onToggleTags?.() },
+            { name: "Remove All Tags", callback: () => node.onRemoveTags?.() },
+            { name: "Remove Inactive Tags", callback: () => node.onRemoveTags?.('inactive') },
+            null,
+            { name: "Load Tag Group", callback: () => node.onLoadTagGroup?.(e) },
+            { name: "Save Tag Group", callback: () => node.onSaveTagGroup?.(e), disabled: tagData.filter(t => t.type !== 'group').length < 2 },
+            null,
+            { name: "Export Tags (.json)", callback: () => node.onExportTags?.() },
+            { name: "Import Tags (.json)", callback: () => node.onImportTags?.() },
+            null,
+            convertMenuItem(node),
         ];
 
         if (node.type === "ErePromptMultiline") {
-            options = options.filter(option => !option || option.content !== "Toggle All Tags");
+            actions = actions.filter(action => !action || action.name !== "Toggle All Tags");
         }
 
-        options = options.filter(option => !option || option.content !== "Convert to " + node.title);
-
-        new LiteGraph.ContextMenu(options, { event: e, className: "dark", node }, window);
-
+        new ActionContextMenu({ clientX: e.clientX, clientY: e.clientY }, node.title, actions);
     };
 
     node.onLoadTagGroup = (e) => {
@@ -521,9 +494,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
 
     };
 
-    /**
-     * @param {?{tags, indices}} subset  a pill multi-selection: only these are saved, and "save and convert" replaces only them.
-     */
+    /**  @param {?{tags, indices}} subset  a pill multi-selection: only these are saved, and "save and convert" replaces only them. */
     node.onSaveTagGroup = (e, subset = null) => {
 
         const saveTagObject = async (tagObject) => {
@@ -715,10 +686,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         input.click();
     };
 
-    /**
-     * Lay the tags out for a seed: same seed, same tags, same result — which is the point of having one.
-     * How many tags are on is preserved; *which* ones and in what order is what the seed decides.
-     */
+    /** Lay the tags out for a seed: same seed, same tags, same result. */
     node.onApplySeed = async (seed) => {
         const tagData = parseTags(node.properties._tagDataJSON || "[]");
         if (tagData.length < 2) return;
@@ -728,11 +696,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         app.graph.setDirtyCanvas(true);
     };
 
-    /**
-     * Re-lay the tags if the seed has moved since they were laid out.
-     *
-     * Idempotent by design, and that is what lets several triggers share it: the seed widget's callback (typed in), `control_after_generate`'s `afterQueued` (stepped per queued prompt), and the `execution_success` safety net all call this, and only the first one to see a new value does any work.
-     */
+    /** Re-lay the tags if the seed has moved. Idempotent by design, which is what lets the widget callback, `afterQueued` and the `execution_success` net all call it. */
     node.onSeedChanged = async () => {
         const widget = node.widgets?.find(w => w.name === "seed");
         if (!widget) return;
@@ -741,11 +705,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         await node.onApplySeed(seed);
     };
 
-    /**
-     * Roll a new seed and lay the tags out for it — the dice button.
-     *
-     * The seed is written to the widget before it is used, so the number on screen is always the one that produced what you are looking at. This is the manual form of `control_after_generate: randomize`.
-     */
+    /** The dice button. The seed is written to the widget before it is used, so the number on screen is always the one that produced what you are looking at. */
     node.onRandomize = async (e, pos) => {
         const seed = Math.floor(Math.random() * (DICE_SEED_MAX + 1));
         const widget = node.widgets?.find(w => w.name === "seed");
@@ -795,7 +755,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         }
 
         if (clickedPill.label === "button_show_inactive") {
-            // Deliberately on the node instance, not in properties: it is a way of looking at the node, not part of what the node *is*, so it stays out of saved workflows and resets on reload.
+            // On the instance, not in properties: a way of looking at the node is not part of what it is, so it stays out of saved workflows.
             node._showInactive = !node._showInactive;
             node._ereDom?.render?.();
             app.graph.setDirtyCanvas(true);
@@ -874,13 +834,13 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             if (isSpecialType) {
                 // Start with clickedTag to preserve properties like 'active', 'extension', etc.
                 finalTag = { ...clickedTag };
-                // Overwrite with all defined properties from editedTag This includes name (if changed by file selection) and potentially strength (if not 1.0)
+                // editedTag carries the name (a file swap changes it) and any strength.
                 for (const key in editedTag) {
                     if (editedTag.hasOwnProperty(key)) {
                         finalTag[key] = editedTag[key];
                     }
                 }
-                /** If updateTag deleted strength from editedTag (because it was 1.0), ensure it's also removed/undefined in finalTag. */
+                // updateTag drops a strength of 1.0, so drop it here too.
                 if (editedTag.strength === undefined) {
                     delete finalTag.strength;
                 }
@@ -897,7 +857,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
                     deleteCallback(); // If parsing fails (e.g., empty input), delete the tag.
                     return;
                 }
-                // Combine the original tag's properties (like 'active' state) with the newly parsed data and edited properties.
+                // Keep the original's own state (active), take the rest from the edit.
                 finalTag = { ...clickedTag, ...parsed, strength: editedTag.strength, triggers: editedTag.triggers, active: clickedTag.active };
             }
 
@@ -930,7 +890,6 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         // Calculate existing tags for file filtering
         const existingTags = tagData.map(tag => ({ name: tag.name, type: tag.type }));
         
-        // The 'event' parameter (which is positionEvent from applyContextMenuPatch) now has clientX and clientY correctly set.
         new TagEditContextMenu(event, clickedTag, saveCallback, deleteCallback, imageCallback, unpackCallback, tagIndex, existingTags);
     };
     
@@ -956,7 +915,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
                 if (currentLineTags.length > 0) {
                     const line = currentLineTags.join(tagSeparator);
 
-                    // If there are already parts, and the last part is content (not a separator/newline), then we need to add a separator before adding this new line of content.
+                    // A separator is only needed when the last part is content, not another one.
                     if (parts.length > 0 && parts[parts.length - 1] !== tagSeparator && parts[parts.length - 1].trim() !== '') {
                         parts.push(tagSeparator);
                     }
@@ -1008,7 +967,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         if (currentLineTags.length > 0) {
             const line = currentLineTags.join(tagSeparator);
 
-            // If there are already parts, and the last part is content (not a separator/newline), then we need to add a separator before adding this new line of content.
+            // A separator is only needed when the last part is content, not another one.
             if (parts.length > 0 && parts[parts.length - 1] !== tagSeparator && parts[parts.length - 1].trim() !== '') {
                 parts.push(tagSeparator);
             }
@@ -1022,9 +981,9 @@ export function initializeSharedPromptFunctions(node, textWidget) {
 
         // For multiline nodes, don't modify the text widget content when updating separators
         if (node.type !== "ErePromptMultiline") {
-            // Filter out any empty strings that might result from consecutive separators or separators at the beginning/end without content.
+            // Consecutive separators, or one at either end, leave empty strings behind.
             let currentText = parts.filter(part => part.trim() !== '' || part === tagSeparator).join('');
-            // If the final result is just the separator itself (e.g. only a separator was active), make it empty.
+            // Just the separator and nothing else is nothing.
             if (currentText === tagSeparator && activeTags.filter(t => t.type !== 'group').length === 0) {
                 currentText = '';
             }
@@ -1034,7 +993,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         }
         // For multiline nodes, preserve the existing text content
 
-        // Undo checkpoint — no-op when nothing actually changed (the tracker diffs serialized state), so calls during workflow load are safe.
+        // No-op when nothing changed (the tracker diffs state), so loading is safe.
         captureUndoState();
     };
 

@@ -1,0 +1,93 @@
+/* Prompt Composer: one darker wrapper per category, each holding its own tag area.
+   The wrapper is the MultiSelect panel's treatment (.ere-panel) with a header on top. */
+
+.ere-surface .ere-composer {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    width: 100%;
+}
+.ere-surface .ere-composer-row {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 5px;
+    border: 1px solid #444;
+    border-radius: 5px;
+    background: var(--component-node-widget-background, #222);
+}
+/* Bypassed: the tags keep their own states, the whole row just stops emitting. */
+.ere-surface .ere-composer-row.inactive {
+    opacity: .55;
+}
+.ere-surface .ere-composer-head {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 20px;
+    cursor: pointer;
+    user-select: none;
+}
+.ere-surface .ere-composer-title {
+    flex: 1 1 auto;
+    margin-left: 5px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #FFF;
+}
+/* Prompt Toggle's knob, mirrored to the right-hand side of the row. */
+.ere-surface .ere-composer-switch {
+    flex: 0 0 auto;
+    margin: 0 5px 0 12px;
+}
+/* The toolbar and the tags are one column here, unlike MultiSelect where the panel
+   draws its own box — the rule is what keeps the header from reading as part of them. */
+.ere-surface .ere-composer-body {
+    min-width: 0;
+    padding-top: 5px;
+    border-top: 1px dashed #4c4c4c;
+}
+.ere-surface .ere-composer-row.collapsed .ere-composer-body {
+    display: none;
+}
+/* Empty is a drop area one pill row tall, not a sentence a drop placeholder has to
+   appear after. */
+.ere-surface .ere-composer-tags {
+    min-height: 20px;
+    align-content: flex-start;
+}
+/* Folded-row counts: the drag ghost's badges, muted the way a disabled pill is, so they
+   read as a summary rather than as another row of pills. */
+.ere-surface .ere-composer-head .ere-drag-count {
+    border: 1px solid #444;
+    opacity: .75;
+}
+
+/* .ere-btn is a 20px square; this one carries a label. */
+.ere-surface .ere-btn.ere-composer-add {
+    width: auto;
+    padding: 0 8px;
+}
+
+/* A drop lands where the placeholder is; the shared outline is drawn behind the row and
+   reads as nothing, so tint the row's own border instead. */
+.ere-surface .ere-composer-row.ere-drop-target {
+    outline: none;
+    border-color: var(--ere-drag-accent, var(--p-primary-color, #4a9eff));
+}
+/* Same treatment as a sidebar folder, restated because sidebar.css only loads with the
+   sidebar and this button is on the node. */
+.ere-surface .ere-composer-add.ere-sb-drop-target {
+    outline: 2px dashed var(--ere-drag-accent, var(--p-primary-color, #4a9eff));
+    outline-offset: -2px;
+    background: rgba(var(--ere-drag-accent-rgb, 74, 158, 255), .12);
+}
+
+/* Row drag reuses dragdrop.css wholesale: .ere-drag-source hides the original,
+   .ere-drag-copy brings it back dimmed under Alt, and the ghost carries its own box
+   because its face is a real .ere-composer-row. */
+.ere-surface .ere-composer-placeholder {
+    width: 100%;
+}

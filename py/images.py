@@ -1,10 +1,9 @@
 import os
 
-# Every image format this pack handles — covers it stores, and uploads it reads metadata from.
-# Order matters: view_file_handler probes these in sequence.
+# Every image format this pack handles: covers it stores, and uploads it reads metadata from.
+# Order matters — view_file_handler probes these in sequence.
 IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp')
 
-# Matches what ComfyUI-Lora-Manager stores, and is comfortably above any size the UI displays (the sidebar's grid tiles are 96px; the hover preview caps at 320px wide).
 PREVIEW_WIDTH = 480
 PREVIEW_QUALITY = 85
 PREVIEW_EXT = ".webp"
@@ -16,7 +15,6 @@ class PreviewError(Exception):
 
 
 # Write `fileobj` as `<basename>.webp` in `dest_dir`, returning the name.
-#
 # Raises PreviewError rather than falling back to storing the original.
 def save_preview_image(fileobj, dest_dir, basename):
     try:

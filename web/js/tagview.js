@@ -19,10 +19,7 @@ export const TOGGLE_KNOB = {
 };
 export const TOGGLE_KNOB_DEFAULT = "#8899bb";
 
-/**
- * Accent for drag affordances.
- * Separate from TYPE_FILL, which is near-black so pill text stays readable and is therefore useless for a thin outline.
- */
+/** Accent for drag affordances. TYPE_FILL is near-black so pill text stays readable, which makes it useless for a thin outline. */
 export const TYPE_ACCENT = {
     tag: "#4a9eff",        // blue
     lora: "#5fbf6a",       // green
@@ -32,10 +29,7 @@ export const TYPE_ACCENT = {
 };
 export const DEFAULT_ACCENT = TYPE_ACCENT.tag;
 
-/**
- * Accent for a set of tags: the shared type's colour, or `mixed` when the set spans several.
- * Empty/unknown sets fall back to the plain-tag accent.
- */
+/** The shared type's accent, or `mixed` when the set spans several. */
 export function accentForTags(tags) {
     if (!Array.isArray(tags) || tags.length === 0) return DEFAULT_ACCENT;
     let seen = null;
@@ -72,12 +66,8 @@ export function fallbackColors() {
 
 /** Encode a tag/file name for the /erenodes/view/{type}/{path} route. */
 // Preview bookkeeping.
-//
-// Thumbnails are DOM `<img>` elements, so the browser already owns loading, decoding, disk caching and lazy-loading. A JS-side image cache would only duplicate all of that in memory and cut the disk cache out of the loop — `getCache(url, "src")` existed for exactly that job until 3.3, when tags were drawn on a canvas and the pixels genuinely had to live in JS. It has had no callers since the move to DOM widgets, and has been removed.
-//
-// Two things the browser cannot do for us, and these are what the maps below are:
-//  - *Remember that a cover does not exist.* "No preview" answers 204, which is not heuristically cacheable, so every re-render asked again — once per coverless tile, on every tile-size toggle, tab switch and search keystroke.
-//  - *Notice that a cover was replaced* behind an unchanged URL. Nothing in the URL moves when the file does, so a cached thumbnail can outlive the image it stands for.
+// Thumbnails are DOM `<img>`, so the browser owns loading, decoding and caching.
+// These maps hold the two things it cannot: that a cover does not exist (204 is not heuristically cacheable) and that one was replaced behind an unchanged URL.
 const missingPreviews = new Set();
 const previewVersions = new Map();
 
@@ -90,16 +80,13 @@ export function previewKey(type, name) {
 export function previewUrl(type, name, w, h) {
     const key = previewKey(type, name);
     const params = (w && h) ? [`w=${w}`, `h=${h}`, "fit=cover"] : [];
-    // Only present once a cover has actually been replaced, so ordinary URLs stay stable and stay cached.
+    // Only once a cover has been replaced, so ordinary URLs stay stable and stay cached.
     const version = previewVersions.get(key);
     if (version) params.push(`v=${version}`);
     return params.length ? `${key}?${params.join("&")}` : key;
 }
 
-/**
- * A cover was written or deleted.
- * Forget that it was missing, and move the URL so the browser fetches the new bytes instead of showing the ones it already has.
- */
+/** A cover was written or deleted: forget it was missing, and move the URL so the browser fetches the new bytes. */
 export function bumpPreview(type, name) {
     const key = previewKey(type, name);
     missingPreviews.delete(key);
@@ -144,6 +131,23 @@ export function renderTagPill(tag, opts = {}) {
     return pill;
 }
 
+/** The on/off knob: a Prompt Toggle row, and a Prompt Composer category header. */
+export function renderSwitchEl(active, type) {
+    const sw = document.createElement("div");
+    sw.className = "ere-switch";
+    const knob = document.createElement("div");
+    knob.className = "ere-knob";
+    if (active) {
+        knob.style.background = TOGGLE_KNOB[type] || TOGGLE_KNOB_DEFAULT;
+        knob.style.right = "-2px";
+    } else {
+        knob.style.background = "#888";
+        knob.style.left = "-2px";
+    }
+    sw.appendChild(knob);
+    return sw;
+}
+
 /** A full-width toggle row (Prompt Toggle node). */
 export function renderToggleRowEl(tag, opts = {}) {
     const colors = opts.colors ?? fallbackColors();
@@ -151,19 +155,7 @@ export function renderToggleRowEl(tag, opts = {}) {
     row.className = "ere-toggle-row" + (tag.active ? "" : " inactive");
     if (!tag.active) row.style.color = colors.widgetText;
 
-    const sw = document.createElement("div");
-    sw.className = "ere-switch";
-    const knob = document.createElement("div");
-    knob.className = "ere-knob";
-    if (tag.active) {
-        knob.style.background = TOGGLE_KNOB[tag.type] || TOGGLE_KNOB_DEFAULT;
-        knob.style.right = "-2px";
-    } else {
-        knob.style.background = "#888";
-        knob.style.left = "-2px";
-    }
-    sw.appendChild(knob);
-    row.appendChild(sw);
+    row.appendChild(renderSwitchEl(tag.active, tag.type));
 
     const label = document.createElement("span");
     label.className = "ere-label";
@@ -194,7 +186,7 @@ export function renderTagTile(tag, opts = {}) {
 
     if (tag.type === 'lora' || tag.type === 'group' || tag.type === 'embedding') {
         const key = previewKey(tag.type, tag.name);
-        // Nothing was behind this URL last time we looked. Skip the element rather than firing a request whose answer the browser will not keep — the image is absolutely positioned, so an absent one lays out exactly like the hidden one this used to leave behind.
+        // Nothing behind this URL last time: skip the element rather than fire a request whose answer the browser will not keep. It is absolutely positioned, so an absent one lays out like a hidden one.
         if (!missingPreviews.has(key)) {
             const img = document.createElement("img");
             img.loading = "lazy";

@@ -1,7 +1,8 @@
 import { app } from "../../scripts/app.js";
-import { initializeSharedPromptFunctions, applyContextMenuPatch } from "./prompt.js";
+import { initializeSharedPromptFunctions, applyContextMenuPatch, convertMenuItem } from "./prompt.js";
 import { attachTagDomWidget } from "./js/renderer.js";
 import { parseTags } from "./js/parser.js";
+import { ActionContextMenu } from "./js/contextmenu.js";
 import { ACCEPTED_IMAGE_TYPES, isAcceptedImage, tagsFromResult, segmentCount, extractFromImage, reExtractByFilename, forgetVerdicts } from "./js/util.js";
 
 const NODE_TYPE = "ErePromptExtractor";
@@ -25,7 +26,7 @@ function applyResult(node, result) {
     const tags = tagsFromResult(result, existing);
 
     if (!tags.length) {
-        // Clear rather than leave the previous extraction in place: the node now shows *this* image, and keeping the old pills beside it would claim they came from it.
+        // The node now shows this image; keeping the old pills would claim they came from it.
         const hadTags = existing.length > 0;
         node.properties._tagDataJSON = "[]";
         node._extractSnapshot = "[]";
@@ -37,7 +38,7 @@ function applyResult(node, result) {
     }
 
     node.properties._tagDataJSON = JSON.stringify(tags, null, 2);
-    // These pills are new to this session, so re-check them against disk rather than trusting a verdict cached for the same name earlier.
+    // New pills, so re-check against disk rather than trust a verdict cached for the name.
     forgetVerdicts(tags);
     // Set before the update, so the change watcher does not fire on this one.
     node._extractSnapshot = node.properties._tagDataJSON;
@@ -117,7 +118,7 @@ function checkExtractDirty(node) {
 }
 
 function attachExtractorBehaviour(node) {
-    // A node restored from a workflow saved its image and its tags together, so they match by definition — re-baseline the snapshot here or the first edit after a reload would not clear the preview.
+    // A restored node saved its image and tags together, so they match: re-baseline here or the first edit after a reload would not clear the preview.
     const origConfigure = node.onConfigure;
     node.onConfigure = function (info) {
         const result = origConfigure?.apply(this, arguments);
@@ -129,7 +130,7 @@ function attachExtractorBehaviour(node) {
         return result;
     };
 
-    // Wrapped here, before attachTagDomWidget wraps them again, so the renderer re- renders *after* the image has been cleared.
+    // Wrapped before attachTagDomWidget wraps them, so the renderer repaints after the image is cleared.
     const origUpdate = node.onUpdateTextWidget;
     node.onUpdateTextWidget = async function (...args) {
         const result = origUpdate?.apply(this, args);
@@ -137,7 +138,7 @@ function attachExtractorBehaviour(node) {
         checkExtractDirty(node);
         return result;
     };
-    // onRemoveTags mutates the tag data without going through onUpdateTextWidget, so it needs its own hook.
+    // onRemoveTags mutates tags without going through onUpdateTextWidget.
     const origRemove = node.onRemoveTags;
     node.onRemoveTags = function (...args) {
         const result = origRemove?.apply(this, args);
@@ -183,28 +184,22 @@ function attachExtractorBehaviour(node) {
     /** A reduced action menu: no clipboard/import/convert-from-text entries, because */
     node.onActionMenu = (e) => {
         const tagData = parseTags(node.properties?._tagDataJSON || "[]");
-        const options = [
-            // Cleared as soon as the tags are edited — by then the image no longer describes them, so re-extracting would be misleading.
-            { content: "Extract Again", callback: () => reExtract(node),
+        new ActionContextMenu({ clientX: e.clientX, clientY: e.clientY }, node.title, [
+            // Cleared once the tags are edited: the image no longer describes them.
+            { name: "Extract Again", callback: () => reExtract(node),
               disabled: !node.properties?._extractImage },
-            { content: "Choose Image…", callback: () => node.onExtractPick?.() },
+            { name: "Choose Image…", callback: () => node.onExtractPick?.() },
             null,
-            { content: "Toggle All Tags", callback: () => node.onToggleTags?.() },
-            { content: "Remove All Tags", callback: () => node.onRemoveTags?.() },
-            { content: "Remove Inactive Tags", callback: () => node.onRemoveTags?.('inactive') },
+            { name: "Toggle All Tags", callback: () => node.onToggleTags?.() },
+            { name: "Remove All Tags", callback: () => node.onRemoveTags?.() },
+            { name: "Remove Inactive Tags", callback: () => node.onRemoveTags?.('inactive') },
             null,
-            { content: "Save Tag Group", callback: () => node.onSaveTagGroup?.(e),
+            { name: "Save Tag Group", callback: () => node.onSaveTagGroup?.(e),
               disabled: tagData.filter(t => t.type !== 'group').length < 2 },
-            { content: "Export Tags (.json)", callback: () => node.onExportTags?.() },
+            { name: "Export Tags (.json)", callback: () => node.onExportTags?.() },
             null,
-            { content: "Convert to Prompt Cloud", callback: () => node.convertTo("ErePromptCloud") },
-            { content: "Convert to Prompt MultiSelect", callback: () => node.convertTo("ErePromptMultiSelect") },
-            { content: "Convert to Prompt Toggle", callback: () => node.convertTo("ErePromptToggle") },
-            { content: "Convert to Prompt Multiline", callback: () => node.convertTo("ErePromptMultiline") },
-            { content: "Convert to Prompt Randomizer", callback: () => node.convertTo("ErePromptRandomizer") },
-            { content: "Convert to Prompt Gallery", callback: () => node.convertTo("ErePromptGallery") },
-        ];
-        new LiteGraph.ContextMenu(options, { event: e, className: "dark", node }, window);
+            convertMenuItem(node),
+        ]);
     };
 }
 
@@ -227,7 +222,7 @@ app.registerExtension({
             attachExtractorBehaviour(this);
             attachTagDomWidget(this, "extract");
 
-            // A workflow-loaded node re-syncs its image in onConfigure, which runs after properties are restored.
+            // A loaded node re-syncs its image in onConfigure, once properties are restored.
             this.onUpdateTextWidget(this);
         };
     },

@@ -10,7 +10,7 @@ const PREVIEW_CLASS = "ere-menu-preview";
 const MENU_MIN_WIDTH = 160;
 const MENU_MAX_WIDTH = 320;
 
-// A context menu can open before any node has mounted its widget, so the shared tag stylesheet must be guaranteed here too (idempotent).
+// A menu can open before any node has mounted a widget, so the tag styles are ensured here too.
 injectTagStyles();
 
 /** Somewhere the browser is already routing typing to; the menu must not take it. */
@@ -39,12 +39,54 @@ export class DynamicContextMenu { // Added export
         this.highlighted = -1;
         this.renderedOptionElements = [];
         this.abortController = null;
+        // Flyout submenus, litegraph's model: the child sits at the parent's right edge and the parent stays open until something in the chain is chosen.
+        this.parentMenu = null;
+        this.currentSubmenu = null;
+    }
+
+    /** Is `node` inside this menu or any submenu of it? (ContextMenu.containsNode) */
+    containsNode(node) {
+        return !!this.root?.contains(node) || !!this.currentSubmenu?.containsNode(node);
     }
 
     /**
-     * Put a rebuilt item where it belongs around the one element that survived.
-     * The survivor stays exactly where it is — moving it would detach it, and detaching it is the blur we are avoiding.
+     * Open `option.submenu` — an array of options like this menu's own — beside the item.
+     * @param {number} index position of the item in `this.options`
+     * @param {boolean} fromKeyboard  arm the first entry; a flyout opened by hover or a click must not, or Enter would fire an option the pointer never chose.
      */
+    openSubmenu(option, index, fromKeyboard = false) {
+        if (this.currentSubmenu?.forOption === option) return;
+        this.closeSubmenu();
+
+        const item = this.renderedOptionElements[index];
+        const parentRect = this.root.getBoundingClientRect();
+        const itemRect = item?.getBoundingClientRect() ?? parentRect;
+
+        const child = new DynamicContextMenu(
+            { clientX: parentRect.right, clientY: itemRect.top }, null);
+        child.options = option.submenu;
+        child.autoHighlight = fromKeyboard;
+        child.parentMenu = this;
+        // Nothing in a flyout has to close by hand; picking one closes the chain.
+        child.closeOnSelect = true;
+        child.forOption = option;
+        child.forIndex = index;
+        child.show();
+
+        item?.setAttribute("aria-expanded", "true");
+        this.currentSubmenu = child;
+    }
+
+    closeSubmenu() {
+        const child = this.currentSubmenu;
+        this.currentSubmenu = null;
+        child?.close(null, true);
+        for (const el of this.root?.querySelectorAll(".has_submenu") ?? []) {
+            el.setAttribute("aria-expanded", "false");
+        }
+    }
+
+    /** Place a rebuilt item around the survivor, which never moves — moving it would detach it, and that is the blur being avoided. */
     placeItem(element, index, kept) {
         if (element === kept) return;
         const keptIndex = kept ? this.options.findIndex(o => o.type === 'filter') : -1;
@@ -52,15 +94,54 @@ export class DynamicContextMenu { // Added export
         else this.root.appendChild(element);
     }
 
+    /**
+     * Open the menu at the anchor event.
+     * Subclasses that need more chrome (a search box, a preview) override this.
+     */
+    show() {
+        this.close();
+        this.root = document.createElement("div");
+        this.root.className = "litegraph litecontextmenu litemenubar-panel dark";
+        this.root.close = this.close.bind(this);
+        Object.assign(this.root.style, {
+            left: `${this.event?.clientX ?? 0}px`,
+            top: `${this.event?.clientY ?? 0}px`,
+            width: 'auto',
+            minWidth: `${MENU_MIN_WIDTH}px`,
+        });
+
+        document.body.appendChild(this.root);
+        this.renderItems();
+        this.setupEventListeners();
+        this.clampToViewport();
+    }
+
     onItemSelected(option, event = null, index = -1) {
+        // Picking anything replaces the open flyout (ContextMenu.inner_onclick does this first).
+        this.closeSubmenu();
+        if (option?.submenu && !option.disabled) {
+            this.openSubmenu(option, index, event?.type === "keydown");
+            return;
+        }
         if (option && !option.disabled && option.callback) {
             // Pass the index to the callback
             option.callback(event, index);
+            // A flyout closes the whole chain on a pick, as litegraph's does. Menus opened by that callback are untouched: close() only releases the slot it holds.
+            if (this.closeOnSelect) this.close();
         }
     }
 
-    close() {
-        
+    /**
+     * @param {?Event} e  the event that closed it; a chosen item passes none, and that is what takes the parent chain down with it (ContextMenu.close).
+     * @param {boolean} ignoreParent  closing from the parent, so do not close it back.
+     */
+    close(e = null, ignoreParent = false) {
+        // A menu that was never shown must not take its parent with it: show() closes first.
+        const wasOpen = !!this.root;
+
+        this.currentSubmenu?.close(e, true);
+        this.currentSubmenu = null;
+
         if (this.root) {
             this.root.remove();
             this.root = null;
@@ -70,13 +151,18 @@ export class DynamicContextMenu { // Added export
             this.abortController = null;
         }
         if (LiteGraph.currentMenu === this) {
-            LiteGraph.currentMenu = null;
+            LiteGraph.currentMenu = this.parentMenu ?? null;
         }
-        
+
         // Hide preview when closing if hidePreview method exists
         this.hidePreview();
-        // The rich panel lives on <body>, not inside the menu, so removing the menu root does not take it with it.
+        // The panel lives on <body>, so removing the menu root does not take it with it.
         hidePreviewPanel(true);
+
+        if (wasOpen && this.parentMenu && !ignoreParent) {
+            this.parentMenu.currentSubmenu = null;
+            if (!e) this.parentMenu.close();
+        }
     }
 
     handleKeyboard(e) {
@@ -111,6 +197,21 @@ export class DynamicContextMenu { // Added export
                 }
                 handled = true;
                 break;
+            case "ArrowRight": {
+                const option = this.options[this.highlighted];
+                if (option?.submenu && !option.disabled) {
+                    this.openSubmenu(option, this.highlighted, true);
+                    handled = true;
+                }
+                break;
+            }
+            case "ArrowLeft":
+                // Back to the item the flyout hangs off, which is still highlighted there.
+                if (this.parentMenu) {
+                    this.parentMenu.closeSubmenu();
+                    handled = true;
+                }
+                break;
             case "Escape":
                 this.close();
                 handled = true;
@@ -142,7 +243,7 @@ export class DynamicContextMenu { // Added export
     }
 
     highlight(text, query) {
-        // Escape first: names/aliases come from user CSVs and filenames, and the result is inserted via innerHTML.
+        // Escape first: names come from user CSVs and filenames, and this goes in via innerHTML.
         if (!query || !text) return this.escapeHtml(text);
         const index = text.toLowerCase().indexOf(query.toLowerCase());
         if (index !== -1) {
@@ -154,13 +255,9 @@ export class DynamicContextMenu { // Added export
         return this.escapeHtml(text);
     }
 
-    /**
-     * The filter input is carried over, never rebuilt.
-     * Every keystroke re-renders this menu, and throwing the input away drops focus to <body> until the setTimeout below hands it back.
-     * A key pressed inside that gap reaches ComfyUI's global keybindings instead of the field, which is how typing a tag name could switch sidebar tabs mid-word.
-     * Everything else is rebuilt around it - see placeItem.
-     */
+    /** The filter input is carried over, never rebuilt. Every keystroke re-renders the menu, and throwing the input away drops focus to <body> for a tick — long enough for the next key to reach ComfyUI's global keybindings instead of the field. */
     renderItems() {
+        this.closeSubmenu();
         const keptFilter = this.filterBox?.parentNode === this.root ? this.filterBox : null;
         for (const child of [...this.root.childNodes]) {
             if (child !== keptFilter) child.remove();
@@ -263,6 +360,12 @@ export class DynamicContextMenu { // Added export
                     this.onItemSelected(option, e, index);
                 });
 
+                if (option.submenu) {
+                    item.classList.add("has_submenu");
+                    item.setAttribute("aria-haspopup", "true");
+                    item.setAttribute("aria-expanded", "false");
+                }
+
                 item.addEventListener("mouseenter", () => {
                     if (!option.disabled) this.setHighlight(index);
                 });
@@ -279,9 +382,9 @@ export class DynamicContextMenu { // Added export
         const { signal } = this.abortController;
 
         const keyboardHandler = (e) => {
-            // A character typed while this menu owns a text field belongs to that field, wherever focus has drifted to.
-            // ComfyUI's global keybindings only stand down for INPUT/TEXTAREA targets, so a bare letter arriving with focus on <body> runs a command instead — switching sidebar tabs mid-word.
-            // This listener is capture-phase on document; theirs is on window, so stopping here is enough.
+            // The open flyout owns the keyboard while it is up.
+            if (this.currentSubmenu) return;
+            // A character typed while this menu owns a field belongs to that field, wherever focus drifted. ComfyUI's keybindings only stand down for INPUT/TEXTAREA targets, so a bare letter with focus on <body> runs a command instead.
             if (this.filterBox && e.target !== this.filterBox
                 && !e.ctrlKey && !e.metaKey && !e.altKey
                 && (e.key.length === 1 || e.key === "Backspace")
@@ -317,9 +420,8 @@ export class DynamicContextMenu { // Added export
                 this.close();
                 return;
             }
-            // The rich preview panel lives on <body>, not inside the menu, so a plain containment test treats every click in it as "outside" and closes the menu.
-            // Same shape as the .litecontextmenu guard in dragdrop.js.
-            if (!this.root.contains(e.target)
+            // The preview panel lives on <body>, so a plain containment test reads every click in it as "outside". Same shape as the .litecontextmenu guard in dragdrop.js.
+            if (!this.containsNode(e.target)
                 && !e.target?.closest?.("#erenodes-hover-preview")) {
                 this.close();
             }
@@ -328,7 +430,8 @@ export class DynamicContextMenu { // Added export
 
         this.root.addEventListener("pointerdown", (e) => e.stopPropagation(), { signal });
 
-        if (LiteGraph.currentMenu) {
+        // Our own parent is not "some other menu that should go away".
+        if (LiteGraph.currentMenu && LiteGraph.currentMenu !== this.parentMenu) {
             LiteGraph.currentMenu.close();
         }
         LiteGraph.currentMenu = this;
@@ -346,7 +449,7 @@ export class DynamicContextMenu { // Added export
         }
 
         this.highlighted = index;
-        
+
         if (index > -1) {
             const newItem = this.root.querySelector(`[data-option-index="${index}"]`);
             if (newItem && this.options[index] && !this.options[index].disabled) {
@@ -365,7 +468,7 @@ export class DynamicContextMenu { // Added export
                         extension: option.extension,
                         // Same picking/dragging the sidebar offers.
                         interactive: option.type === 'group',
-                        // Anchor to the menu, not the row: the panel sits beside the whole list so it never covers the next item.
+                        // Anchored to the menu, not the row, so it never covers the next item.
                         anchor: this.root.getBoundingClientRect(),
                     });
                 } else if (this.showPreview) {
@@ -383,7 +486,12 @@ export class DynamicContextMenu { // Added export
         }
     }
 
+    /** Nothing is highlighted unless the menu asks for it (`autoHighlight`). Only a search arms its first row — there the top suggestion is the answer, and Enter should take it. In a list of commands the same behaviour fires whatever happens to be first. */
     setInitialHighlight() {
+        if (this.autoHighlight !== true) {
+            this.setHighlight(-1);
+            return;
+        }
         // First, try to find a "real" suggestion that isn't an action.
         let firstHighlight = this.options.findIndex(o => !o.disabled && !o.skipNav && o.type !== 'filter' && o.type !== 'separator' && o.type !== 'title' && o.type !== 'action');
 
@@ -407,7 +515,7 @@ export class DynamicContextMenu { // Added export
         const imageUrl = url;
         const processImage = (url) => {
             if (!this.root || !this.root.isConnected) return;
-            // getCache resolves to a sentinel for 204/404 rather than rejecting (so a missing preview doesn't spam the console).
+            // getCache answers 204/404 with a sentinel rather than rejecting.
             // Assigning that Symbol to img.src throws, so bail out here instead.
             if (isNotFound(url) || typeof url !== 'string') return;
 
@@ -460,7 +568,7 @@ export class DynamicContextMenu { // Added export
                 processImage(url);
             })
             .catch((error) => {
-                // This will now catch the 'Image not found' rejection from the cache and prevent further requests for the same URL.
+                // Catches the cache's "not found" and stops further requests for this URL.
                 this.hidePreview();
             });
         }
@@ -512,7 +620,7 @@ export class DynamicContextMenu { // Added export
                         formData.append('image_file', file, file.name);
                     } else {
                          // For TagGroupContextMenu - store the image for later use and show preview.
-                         // NOTE: must not use this.previewImage here, showPreview() reassigns that to the <img> element and would clobber the File.
+                         // Not this.previewImage: showPreview() reassigns that to the <img>.
                          this.saveImageFile = file;
 
                          // Create a data URL to show the preview immediately
@@ -577,7 +685,7 @@ export class DynamicContextMenu { // Added export
             });
 
             // Picker dismissed without choosing a file: 'change' never fires, so settle on 'cancel' instead.
-            // (The old 'focus' handler could fire from the programmatic .click() itself and resolve null while the user still had the dialog open.)
+            // A 'focus' handler could fire from the .click() itself, while the dialog is open.
             input.addEventListener('cancel', () => finish(null));
 
             input.click();
@@ -655,7 +763,7 @@ export class FileContextMenu extends DynamicContextMenu {
 
         if (this.currentPath) {
             this.options.push({
-                name: "⬆️ Up",
+                name: "Up",
                 type: 'action',
                 callback: () => {
                     this.updateOptions(parentPath !== undefined ? parentPath : "", "");
@@ -668,7 +776,7 @@ export class FileContextMenu extends DynamicContextMenu {
         const addableFiles = files.filter(f => !this.existingTags.some(tag => tag.name === f.path && tag.type === this.type));
         if (addableFiles.length > 0) {
             this.options.push({
-                name: "➕ Load all from folder",
+                name: "Load all from folder",
                 type: 'action',
                 callback: () => {
                     if (this.onSelect) {
@@ -712,10 +820,7 @@ export class FileContextMenu extends DynamicContextMenu {
                             // After updating the options, we want to control the highlight
                             this.updateOptions(this.currentPath, this.currentWord).then(() => {
                                 let newHighlight = index;
-                                /**
-                                 * If the removed item was the last one, the index will be out of bounds.
-                                 * In that case, we want to highlight the new last item.
-                                 */
+                                // Removing the last item leaves the index out of bounds.
                                 if (newHighlight >= this.options.length) {
                                     newHighlight = this.options.length - 1;
                                 }
@@ -737,6 +842,8 @@ export class FileContextMenu extends DynamicContextMenu {
 export class TagContextMenu extends DynamicContextMenu {
     constructor(event, onSelectCallback, existingTags = []) {
         super(event, onSelectCallback);
+        // A search: the best match is armed, so Enter takes it.
+        this.autoHighlight = true;
         // Handle both string arrays (from autocomplete) and object arrays (from other contexts)
         this.existingTags = existingTags;
         this.currentWord = ""; 
@@ -754,7 +861,7 @@ export class TagContextMenu extends DynamicContextMenu {
         this.currentWord = query;
         let suggestions = [];
         try {
-            // Read per-search rather than caching on the instance: the menu outlives a settings change, and a stale limit is confusing.
+            // Per search, not cached: the menu outlives a settings change.
             const limit = app.ui?.settings?.getSettingValue?.("EreNodes.Autocomplete.Limit", 20) ?? 20;
             const response = await fetch(
                 `/erenodes/search_tags?query=${encodeURIComponent(query)}&limit=${limit}`);
@@ -857,13 +964,7 @@ export class TagContextMenu extends DynamicContextMenu {
 }
 
 // For the + button to switch between csv and file tags
-/**
- * Completions for the sidebar's tag-search box, sourced from the tag index instead of the CSV.
- *
- * Same menu, different question. The CSV knows every danbooru tag whether or not a single group of yours contains it; in a *search* field that means offering completions that lead nowhere. The index knows exactly which tags your collection carries and in how many groups, and `contextTerms` (set by GlobalAutocomplete before each search) narrows that to the groups the terms already typed still reach — so a suggestion cannot produce an empty result in combination with them.
- *
- * `{name, count}` is the shape `renderSingleItem` already draws rich, so nothing about the rendering changes.
- */
+/** Completions for the sidebar's tag-search box, from the tag index rather than the CSV: in a search field, a completion the collection does not contain leads nowhere. `contextTerms` narrows them to the groups the terms already typed still reach, so no suggestion can produce an empty result in combination with them. */
 export class TagIndexContextMenu extends TagContextMenu {
     constructor(event, onSelectCallback, existingTags = []) {
         super(event, onSelectCallback, existingTags);
@@ -892,6 +993,8 @@ export class TagIndexContextMenu extends TagContextMenu {
 export class TagContextMenuInsert extends TagContextMenu {
     constructor(event, onSelectCallback, existingTags = []) {
         super(event, onSelectCallback, existingTags);
+        // Not a search: it opens on "Add Lora" and friends, which must not be armed.
+        this.autoHighlight = false;
         this.show();
     }
 
@@ -909,10 +1012,10 @@ export class TagContextMenuInsert extends TagContextMenu {
         const tagOptions = [];
         const exactMatch = tagSuggestions.some(s => s.name.toLowerCase() === query.toLowerCase());
         
-        // Add the "Add tag: ..." option only if there's a query that isn't an exact match OR if there are multiple suggestions (even with an exact match)
+        // Offered unless the query is the only, exact match.
         if (query && (!exactMatch || tagSuggestions.length > 1)) {
             tagOptions.push({
-                name: `➕ Add tag: "${query}"`,
+                name: `Add tag: "${query}"`,
                 type: 'action',
                 callback: (e, index) => {
                     const newTag = { name: query, type: 'tag' };
@@ -1028,7 +1131,7 @@ export class TagEditContextMenu extends DynamicContextMenu {
         // Name Control (conditional)
         if (this.isSpecialType) {
             this.options.push({
-                name: `🔁 ${this.tag.name}`,
+                name: this.tag.name,
                 callback: () => this.switchToFileMenu(this.tag.type)
             });
         } else {
@@ -1055,14 +1158,14 @@ export class TagEditContextMenu extends DynamicContextMenu {
 
         if (this.isSpecialType) {
             this.options.push({
-                name: "🖼️ Set Image",
+                name: "Set Image",
                 callback: () => this.setPreview()
             });
         }
         
         if (this.tag.type === 'group') {
             this.options.push({
-                name: "📦 Unpack",
+                name: "Unpack",
                 callback: () => {
                     if (this.unpackCallback) this.unpackCallback();
                     this.close();
@@ -1074,7 +1177,7 @@ export class TagEditContextMenu extends DynamicContextMenu {
         // Action Buttons
         const createCallback = (cb) => () => { cb(); this.close(); };
         this.options.push(
-            { name: "🗑️ Remove", callback: createCallback(() => this.deleteCallback()) }
+            { name: "Remove", callback: createCallback(() => this.deleteCallback()) }
         );
         
         this.show();
@@ -1196,7 +1299,7 @@ export class TagEditContextMenu extends DynamicContextMenu {
                 });
 
                 // Add drag functionality.
-                // The whole drag is one undo transaction — without it every 5px tick lands in undo history as its own step.
+                // One undo transaction, or every 5px tick becomes its own step.
                 item.addEventListener('mousedown', (e) => {
                     if (e.button !== 0 || e.target.nodeName === "BUTTON") return;
                     e.preventDefault(); e.stopPropagation();
@@ -1216,7 +1319,7 @@ export class TagEditContextMenu extends DynamicContextMenu {
                 break;
             
             case 'info_panel':
-                // ere-surface so the pills built by createPill pick up the same rules the nodes use (tagview.js scopes everything to it).
+                // ere-surface so createPill's pills pick up the rules the nodes use.
                 item.className = `litemenu-entry submenu disabled ${SURFACE_CLASS}`;
                 item.style.cssText = "max-width: 100%; display: flex; flex-wrap: wrap; gap: 5px; opacity: 1;";
                 // Apply half opacity only for non-interactive group previews
@@ -1243,17 +1346,20 @@ export class TagEditContextMenu extends DynamicContextMenu {
             }
         }
 
-        // Handle "Save on Enter" for the name input ONLY if autocomplete did not handle it.
+        // The name field always has focus (it is the one thing the keyboard cannot walk onto), so Enter is both its and the highlighted entry's: commit, then run the entry — or close, which is what the field's own Enter does.
         if (e.key === 'Enter' && this.filterBox && document.activeElement === this.filterBox) {
-            // If the input is empty, delete the tag
-            if (!this.filterBox.value.trim()) {
-                this.deleteCallback();
-            } else {
-                this.onSelect(this.updateTag());
-            }
-            this.close();
             e.preventDefault();
             e.stopPropagation();
+            // An empty name deletes, and that is the whole of it: letting a highlighted Remove run as well would delete twice.
+            if (!this.filterBox.value.trim()) {
+                this.deleteCallback();
+                this.close();
+                return true;
+            }
+            this.onSelect(this.updateTag());
+            const option = this.highlighted === -1 ? null : this.options[this.highlighted];
+            if (option?.callback && !option.disabled) this.onItemSelected(option, e, this.highlighted);
+            else this.close();
             return true;
         }
 
@@ -1366,7 +1472,7 @@ export class TagEditContextMenu extends DynamicContextMenu {
             const at = this.tag.triggers.indexOf(tagOrTrigger);
             if (at > -1) this.tag.triggers.splice(at, 1);
             else this.tag.triggers.push(tagOrTrigger);
-            // Re-render rather than repaint: active and inactive now differ by more than two colours, and renderTagPill owns both.
+            // Re-render rather than repaint: renderTagPill owns both states.
             const next = build();
             pill.replaceWith(next);
             pill = next;
@@ -1400,8 +1506,7 @@ export class TagEditContextMenu extends DynamicContextMenu {
 
     updateTag() {
         const tagCopy = JSON.parse(JSON.stringify(this.tag));
-        // If strength is effectively 1.0 (or very close due to float precision), delete it from the copy to ensure it's not saved in the JSON.
-        // This applies to all tag types.
+        // A strength of 1.0 (float slop included) is the default, so it is not stored.
         if (tagCopy.strength !== undefined && Math.abs(tagCopy.strength - 1.0) < 0.0001) {
             delete tagCopy.strength;
         }
@@ -1443,18 +1548,18 @@ export class TagGroupContextMenu extends FileContextMenu {
                         onFile: (file) => this.acceptImageFile(file),
                      },
                      {
-                        name: "🖼️ Set Image",
+                        name: "Set Image",
                         callback: async () => {
                             await super.setPreview();
                         }
                     },
                      {
-                         name: "💾 Save",
+                         name: "Save",
                          type: 'save',
                          callback: () => this.executeSave()
                      },
                      {
-                         name: "⬅️ Back",
+                         name: "Back",
                          type: 'back',
                          callback: () => {
                              this.saveMode = "browse";
@@ -1482,14 +1587,14 @@ export class TagGroupContextMenu extends FileContextMenu {
             const filterIndex = this.options.findIndex(option => option.type === 'filter');
             const saveOptions = [
                 {
-                    name: "💾 Save Here",
+                    name: "Save Here",
                     callback: () => {
                         this.saveMode = "options";
                         this.updateOptions(this.currentPath, "");
                     }
                 },
                 {
-                    name: "📁 Create New Folder",
+                    name: "Create New Folder",
                     type: 'create_folder',
                     callback: () => this.createNewFolder()
                 },
@@ -1498,7 +1603,6 @@ export class TagGroupContextMenu extends FileContextMenu {
             
             // Override file callbacks so clicking an existing file saves over it.
             // File entries are created by FileContextMenu with type === this.type ('group'), not 'file'.
-            // The overwrite confirmation itself is handled by the save callback, which re-checks existence, so we don't prompt twice here.
             this.options = this.options.map(option => {
                 if (option.type === this.type) {
                     return {
@@ -1588,7 +1692,7 @@ export class TagGroupContextMenu extends FileContextMenu {
             });
             if (response.ok) {
                 this.updateOptions(this.currentPath, "");
-                // The sidebar caches its tree; without this the new folder does not appear there, even after closing and reopening the tab.
+                // The sidebar caches its tree, so a new folder would not appear there.
                 app.ereSidebar?.refresh?.();
             } else {
                 const error = await response.json();
@@ -1620,13 +1724,13 @@ export class TagGroupContextMenu extends FileContextMenu {
 }
 
 /**
- * Bulk actions for a multi-selection of pills.
- * Not LiteGraph.ContextMenu: that one force-fits a filter input and rejects synthetic position events.
+ * A list of actions — every menu in the pack that is not a browser or a search.
+ * Not LiteGraph.ContextMenu: that one force-fits a filter input past a few entries and rejects the synthetic position events our pill and row anchors are.
  */
-export class TagSelectionContextMenu extends DynamicContextMenu {
+export class ActionContextMenu extends DynamicContextMenu {
     /**
      * @param {{clientX, clientY}} event  anchor position
-     * @param {Array<?{name, callback, disabled?}>} actions  null = separator
+     * @param {Array<?{name, callback, disabled?, submenu?}>} actions  null = separator
      */
     constructor(event, title, actions) {
         super(event, null);
@@ -1640,6 +1744,7 @@ export class TagSelectionContextMenu extends DynamicContextMenu {
             this.options.push({
                 name: action.name,
                 disabled: !!action.disabled,
+                submenu: action.submenu,
                 callback: () => {
                     this.close();
                     action.callback?.();
@@ -1650,21 +1755,32 @@ export class TagSelectionContextMenu extends DynamicContextMenu {
         this.show();
     }
 
-    show() {
-        this.close();
-        this.root = document.createElement("div");
-        this.root.className = "litegraph litecontextmenu litemenubar-panel dark";
-        this.root.close = this.close.bind(this);
-        Object.assign(this.root.style, {
-            left: `${this.event?.clientX ?? 0}px`,
-            top: `${this.event?.clientY ?? 0}px`,
-            width: 'auto',
-            minWidth: `${MENU_MIN_WIDTH}px`,
-        });
+}
 
-        document.body.appendChild(this.root);
-        this.renderItems();
-        this.setupEventListeners();
-        this.clampToViewport();
+/** Right-click on a Prompt Composer category header: the one place its title is edited and the one place it is removed. A header that turned into a text field on click could not also be the accordion toggle and the drag handle. Renaming is live — the title never reaches the prompt, so there is nothing to commit. */
+export class ComposerRowContextMenu extends DynamicContextMenu {
+    /** @param {{title, onRename, onRemove}} opts */
+    constructor(event, { title = "", onRename, onRemove } = {}) {
+        super(event, null);
+        // What renderItems seeds the carried-over input with.
+        this.currentWord = title;
+        this.options = [
+            { name: "Edit category", type: 'title' },
+            { type: 'filter', placeholder: "Category title", onInput: (value) => onRename?.(value) },
+            { type: 'separator' },
+            { name: "Remove Category", callback: () => { this.close(); onRemove?.(); } },
+        ];
+        this.show();
+    }
+
+
+    handleKeyboard(e) {
+        // Enter only closes while the highlight is nowhere: on an entry it is that entry's.
+        if (e.key === "Enter" && this.highlighted === -1
+                && document.activeElement === this.filterBox) {
+            this.close();
+            return true;
+        }
+        return super.handleKeyboard(e);
     }
 }

@@ -59,10 +59,7 @@ const withExtension = tag => (tag.extension ? `${tag.name}${tag.extension}` : ta
 // A tag with no explicit `active` renders as active, so it counts as one here too.
 const isActive = tag => tag.active !== false;
 
-/**
- * Dedupe by name, keeping the first position but letting an active entry win.
- * A node further down the chain can switch a tag back on, and that is the state that ran, so the later active copy replaces the earlier inactive one rather than being discarded.
- */
+/** Dedupe by name, keeping the first position but letting an active entry win: a node further down the chain can switch a tag back on, and that is the state that ran. */
 export function dedupeTags(tags) {
     const at = new Map();
     const out = [];
@@ -119,15 +116,10 @@ export function stripNestedGroups(tags, { warn = true } = {}) {
 
 // Display
 
-// Only these are stripped from a display name.
-// Cutting at the last "." truncated any name that merely contained one, so a lora called "v1.5_style" showed "v1".
+// A known list, not the last ".": a lora called "v1.5_style" showed as "v1".
 const KNOWN_EXTENSIONS = /\.(json|safetensors|ckpt|lora|pt|bin|embedding)$/i;
 
-/**
- * Order two tags by name, for anywhere tags are listed alphabetically — currently the MultiSelect / Randomizer dropdown of disabled tags.
- *
- * Case-insensitive first, then case-sensitive, then type: a total order, so the result is stable whatever arrangement it starts from and two tags differing only in case never swap places between renders.
- */
+/** Order two tags by name. Case-insensitive first, then case-sensitive, then type: a total order, so two tags differing only in case never swap places between renders. */
 export function byTagName(a, b) {
     const x = (a?.name || ""), y = (b?.name || "");
     const lx = x.toLowerCase(), ly = y.toLowerCase();

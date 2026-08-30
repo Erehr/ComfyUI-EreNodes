@@ -26,6 +26,7 @@ ComfyUI-EreNodes provides an intuitive and feature-rich solution for handling pr
 |------|-------------|-------------|
 | **Prompt Gallery** | Grid-based visual browser for LoRAs, Embeddings and Tag Groups | Image previews, intuitive selection |
 | **Prompt Cloud** | Interactive tag cloud visualization | Dynamic sizing, click-to-select |
+| **Prompt Composer** | Several tag clouds in one node, as reorderable categories | Collapsible rows, per-row bypass, acts like a chain of prompt nodes |
 | **Prompt Toggle** | Simple toggleable tag list | Easy enable/disable, clean interface |
 | **Prompt MultiSelect** | Multi-selection field for tags | Bulk selection, organized lists |
 | **Prompt Randomizer** | Randomize your prompt tags | Manual randomization button, Control after generate |
@@ -48,6 +49,13 @@ ComfyUI-EreNodes provides an intuitive and feature-rich solution for handling pr
 - **Positive Only**: Traces the graph backwards from the sampler's `positive` input — negatives and unconnected leftover nodes are never picked up
 - **Recovers Toggled-Off Tags**: If the image came from an EreNodes workflow, tags that were switched *off* come back as inactive pills, with their strengths and types intact
 - **Just Tags After That**: Fully editable — toggle, add, reorder, drag into another node, or save as a tag group
+
+### 🧱 Prompt Composer
+- **Categories, Not Nodes**: Keep character, outfit, background and quality apart in one node instead of four chained ones — each category has its own tag area, ≡ and + buttons
+- **Fold What You Are Not Editing**: Click a category header to collapse it; the layout is saved with the workflow
+- **Bypass a Whole Category**: The switch on the right turns one off without touching a single tag inside it, so switching it back on restores exactly what was there
+- **Drag Categories**: Reorder them by their header, or drag one straight into another Prompt Composer
+- **Same Pills Everywhere**: Tags drag between categories, and in and out of every other prompt node, exactly as they always have
 
 ### 📁 Tag Groups Management
 - **Favorite Prompts**: Save and organize your most-used prompts with tags, LoRAs, and trigger words
@@ -163,7 +171,10 @@ EreNodes provides flexible LoRA loading options to fit different workflow prefer
 
 ## 📋 Changelog
 
-### Version 3.4 - Latest
+### Version 3.5 - Latest
+- **New Node: Prompt Composer**: several tag clouds in one node as reorderable, collapsible categories
+
+### Version 3.4
 - **Sidebar Tag search**: now as alternative mode, automatically indexing cache database in background
 - **Autocomplete on the sidebar search box** (tag mode only): only from actual tags in tag groups (cached)
 - **Prompt randomizer** added missing seed control

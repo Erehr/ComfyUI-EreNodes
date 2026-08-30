@@ -54,26 +54,30 @@
     opacity: .92;
     filter: drop-shadow(0 3px 6px rgba(0, 0, 0, .6));
 }
-.ere-surface.ere-drag-ghost > * {
+.ere-surface.ere-drag-ghost > *:not(.ere-drag-counts) {
     outline: 2px solid var(--ere-drag-accent, var(--p-primary-color, #4a9eff));
     outline-offset: 1px;
 }
 .ere-surface.ere-drag-ghost.ere-no-drop {
     opacity: .5;
 }
-.ere-surface.ere-drag-ghost.ere-no-drop > * {
+.ere-surface.ere-drag-ghost.ere-no-drop > *:not(.ere-drag-counts) {
     outline-color: #b05050;
+}
+/* Per-type counts. On the ghost they float over its corner; a folded Composer
+   category shows the same badges inline. */
+.ere-surface .ere-drag-counts {
+    display: flex;
+    flex-direction: row;
+    gap: 2px;
 }
 .ere-surface.ere-drag-ghost .ere-drag-counts {
     position: absolute;
     top: -7px;
     right: -9px;
     z-index: 1;
-    display: flex;
-    flex-direction: row;
-    gap: 2px;
 }
-.ere-surface.ere-drag-ghost .ere-drag-count {
+.ere-surface .ere-drag-count {
     min-width: 16px;
     height: 16px;
     padding: 0 3px;
@@ -83,7 +87,6 @@
     color: #fff;
     font: 10px/16px monospace;
     text-align: center;
-    box-shadow: 0 0 0 1px rgba(0, 0, 0, .45);
 }
 
 /* Copy mode (Alt over another node) */

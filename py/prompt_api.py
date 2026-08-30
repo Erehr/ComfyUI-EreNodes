@@ -24,12 +24,10 @@ from .paths import (
 
 
 # Tag Group API Endpoints
-#
 # No module-level `prompts_dir`: the root is a user setting, so handlers call get_prompts_dir() and the toggle takes effect without a restart.
 
 
-# Strip characters that are unsafe in a filename.
-# Spaces and underscores stay.
+# Strip characters that are unsafe in a filename; spaces and underscores stay.
 def sanitize_filename(filename):
     filename = re.sub(r'[\/:*?"<>|]', '_', filename)
     filename = filename.replace('..', '_')
@@ -64,7 +62,6 @@ async def list_csv_files_handler(request):
     return web.json_response(files)
 
 # Report which of the given tags point at a file on disk.
-#
 # Takes {"items": [{"name", "type", "extension"}]} and returns {"exists": {"<type>:<name>": bool}}, keyed as sent.
 @server.PromptServer.instance.routes.post("/erenodes/check_files")
 async def check_files_handler(request):
@@ -103,8 +100,7 @@ async def check_files_handler(request):
             exists[key] = True
             continue
 
-        # An explicit extension wins.
-        # Without one, try the bare name first: a lora recovered from prompt text carries its extension inside the name (`style.safetensors`), so appending another would probe `style.safetensors.safetensors`.
+        # An explicit extension wins, then the bare name: a lora recovered from prompt text carries its extension inside the name.
         extension = item.get("extension")
         candidates = (extension,) if extension else ("",) + tuple(config["extensions"])
 
@@ -193,8 +189,7 @@ async def save_tag_group_handler(request):
 
         message = f"Tag group '{os.path.join(safe_path_param, safe_filename) if safe_path_param else safe_filename}' saved successfully."
 
-        # Save associated cover if provided.
-        # Stored as WebP at a fixed width - see py/images.py for why.
+        # Cover images are stored as WebP at a fixed width; see py/images.py.
         if image_file_field and hasattr(image_file_field, 'file') and image_file_field.file:
             try:
                 basename = os.path.splitext(safe_filename)[0]
@@ -207,8 +202,7 @@ async def save_tag_group_handler(request):
                 print(f"[EreNodes] Failed to save preview image for '{safe_filename}': {e}")
                 message += f" Failed to save cover: {e}"
         elif image_file_field is not None:
-            # A value was posted under "image_file" but it is not a file part (no .file attribute) - e.g. an empty string from an untouched form field.
-            # Say so rather than hinting at a mystery failure.
+            # Posted under "image_file" but not a file part, e.g. an empty string from an untouched form field.
             message += " (Ignored 'image_file': not an uploaded file.)"
 
         return web.json_response({"message": message})
@@ -221,11 +215,8 @@ async def save_tag_group_handler(request):
 
 # Tag Group Location
 
-# Current location plus both resolved paths, so the settings UI can show where things actually are without guessing at the install layout.
-# Switch between the two allowed roots.
-#
-# Keywords only: no way to name an arbitrary directory over HTTP.
-# A different disk goes in extra_model_paths.yaml.
+# Current location plus both resolved paths, so the settings UI can show where things actually are.
+# Switch between the two allowed roots. Keywords only: a different disk goes in extra_model_paths.yaml.
 @server.PromptServer.instance.routes.post("/erenodes/set_tag_groups_location")
 async def set_tag_groups_location_handler(request):
     try:
@@ -266,8 +257,7 @@ async def set_tag_groups_location_handler(request):
     })
 
 
-# Copy tag groups from one location to the other.
-# Never overwrites, never deletes - the source folder is left intact as a backup.
+# Copy tag groups from one location to the other, never overwriting or deleting, so the source is left intact as a backup.
 @server.PromptServer.instance.routes.post("/erenodes/migrate_tag_groups")
 async def migrate_tag_groups_handler(request):
     try:
@@ -310,7 +300,7 @@ async def get_lora_metadata_handler(request):
         if not lora_path:
             return web.json_response({"error": "Lora not found in any known folder"}, status=404)
 
-        # Same guard as save_file_image, for the same reason: `filename` is client-supplied. folder_paths.get_full_path sanitises in current ComfyUI, but it has not always, and this endpoint reads a file and returns part of its contents.
+        # `filename` is client-supplied and this reads a file: get_full_path sanitises in current ComfyUI, but it has not always.
         roots = get_model_paths("loras") + get_model_paths("loras_old")
         if not any(is_within(os.path.abspath(root), lora_path) for root in roots):
             return web.json_response({"error": "Forbidden path"}, status=403)
@@ -356,7 +346,6 @@ def _read_lora_tags(lora_path):
 # Unified File Search API Endpoint
 
 # Roots + extensions for a browsable file type, or None if unknown.
-#
 # Resolved per call, not cached: the tag-group root follows a live setting and model roots can change when extra_model_paths is reloaded.
 def get_type_config(file_type):
     if file_type == 'lora':
@@ -411,7 +400,7 @@ async def search_files_handler(request):
         scan_target_abs = None
         current_collection_root_abs = None
 
-        # (scan target, collection root) pairs: a given path resolves against whichever root contains it; no path scans every root, since loras can live in several via extra_model_paths.yaml.
+        # (scan target, collection root) pairs: a path resolves against whichever root holds it, since loras can live in several.
         if path_param:
             normalized_path_param = os.path.normpath(path_param.lstrip('/').lstrip('\\'))
             for root in collection_paths:
@@ -536,20 +525,7 @@ async def create_folder_handler(request):
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
-# Preview images are served straight off disk, so two headers have to be set by hand.
-#
-# Content-Type: aiohttp asks Python's `mimetypes`, which resolves .webp to None on
-# most systems (it reads the OS registry, and Windows frequently has no entry) - so
-# every cover this extension writes went out as application/octet-stream. Browsers
-# sniff and render it anyway; anything that trusts the header does not.
-#
-# Cache-Control: FileResponse sends ETag and Last-Modified but no freshness, which
-# leaves the browser guessing - roughly 10% of the file's age. For a cover saved
-# minutes ago that is near zero, so a grid of tiles revalidated on nearly every
-# render: one 304 round trip per tile, on ComfyUI's single-threaded server. Five
-# minutes is short enough that a cover replaced in another tab appears promptly,
-# and the client moves the URL (`bumpPreview`) when it replaces one itself, so the
-# tab that made the change never waits.
+# Preview images are served straight off disk, so two headers (Content-Type and Cache-Control) have to be set by hand.
 _PREVIEW_MIME = {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
@@ -576,8 +552,7 @@ async def view_file_handler(request):
     if not type_name or not path_param:
         return web.Response(status=400, text="Missing type or path")
 
-    # Accept optional sizing params for cache-key stability on the client.
-    # We do not resize server-side (no extra deps), but presence of w/h/fit in the URL should not cause 404 when an image exists.
+    # Sizing params are accepted for cache-key stability on the client and ignored here; nothing is resized server-side.
     _w = request.query.get("w")
     _h = request.query.get("h")
     _fit = request.query.get("fit")
@@ -593,17 +568,14 @@ async def view_file_handler(request):
     if not base_dirs:
         return web.Response(status=404, text=f"No folder configured for type '{type_name}'")
 
-    # This is a basic sanitization.
-    # The check below is more robust.
-    # It prevents using '..' to escape the intended directories.
+    # A first pass; the containment check below is what actually stops '..' escaping the intended directories.
     path_param = path_param.replace("..", "_")
 
     potential_extensions = IMAGE_EXTENSIONS
 
     for root_dir in base_dirs:
         abs_root_dir = os.path.abspath(root_dir)
-        # The path_param is the path to the main file, *without* its extension.
-        # It's what we use as the base for finding a preview image.
+        # The path without its extension, which is the base a preview image is found from.
         prospective_path_base = os.path.join(abs_root_dir, path_param)
 
         # Security check: ensure the requested path is within the intended directory (see is_within — a sibling dir like ".../loras_x" must not pass a ".../loras" check).
@@ -613,8 +585,7 @@ async def view_file_handler(request):
                 # First try: filename.extension (original pattern)
                 image_path = prospective_path_base + ext
                 if os.path.isfile(image_path):
-                    # If sizing params provided, still return the original file.
-                    # Client uses params for cache-key uniqueness; server does not resize.
+                    # The original file, whatever sizing params the URL carried.
                     return _preview_response(image_path)
 
                 # Second try: filename.preview.extension (new pattern)
@@ -622,15 +593,8 @@ async def view_file_handler(request):
                 if os.path.isfile(preview_image_path):
                     return _preview_response(preview_image_path)
     
-    # No file in any of the directories. 204 rather than 404: "no preview available"
-    # is an ordinary answer here, and a 404 per coverless tile is a screen of red in
-    # the network tab for something entirely normal.
-    #
-    # Deliberately *not* given a Cache-Control. A 204 is not heuristically cacheable
-    # and browser support for caching one explicitly is patchy, so the repeat
-    # requests are stopped on the client instead, where they can be invalidated
-    # exactly: `missingPreviews` in tagview.js records that this URL had nothing
-    # behind it and stops building an <img> for it at all.
+    # 204 rather than 404: "no preview available" is an ordinary answer, and a 404 per coverless tile is a screen of red in the network tab.
+    # No Cache-Control either, since a 204 is not reliably cacheable; the repeat requests are stopped client-side by `missingPreviews` in tagview.js.
     return web.Response(status=204)
 
 @server.PromptServer.instance.routes.post("/erenodes/save_file_image")
@@ -667,7 +631,7 @@ async def save_file_image_handler(request):
         if not config:
             return web.json_response({"error": f"Invalid file type: {file_type}"}, status=400)
 
-        # `name` is client-supplied, so check containment against the root it resolved under before probing — is_within, not startswith, so a sibling like ".../loras_backup" cannot pass a ".../loras" check.
+        # `name` is client-supplied: containment is checked with is_within, not startswith, so ".../loras_backup" cannot pass a ".../loras" check.
         file_path = None
         for root_dir in config['roots']:
             abs_root = os.path.abspath(root_dir)
@@ -701,8 +665,7 @@ async def save_file_image_handler(request):
 
 
 # Remove a tag group's cover image.
-#
-# Tag groups only: lora and embedding covers live in the model folders and are shared with every other tool that reads them.
+# Tag groups only: lora and embedding covers live in the model folders, shared with every other tool that reads them.
 @server.PromptServer.instance.routes.post("/erenodes/delete_file_image")
 async def delete_file_image_handler(request):
     try:
@@ -729,22 +692,16 @@ async def delete_file_image_handler(request):
 
 
 # Sidebar API Endpoints
-#
-# Whole-tree data, one request instead of one per folder.
-# The sidebar filters that tree itself: searching the tags inside each group meant reading every file on every keystroke, and matched so broadly that a character name was buried under every group mentioning it in passing.
+# Whole-tree data, one request instead of one per folder; the sidebar filters that tree itself.
 
 
 def _tree_excluded(name):
     return name.startswith('.') or name == "__pycache__"
 
 
-# Nested {folders, files} for one collection root.
-#
-# Paths in the result are relative to the root and always forward-slashed, so the client can use them directly in URLs regardless of host OS.
-# scandir, not listdir: the directory entry already says whether it is a directory, so this avoids a stat per file.
-# Over 36k tag groups that is the difference between a fraction of a second and a few seconds, and the gap is widest on Windows, where each stat is a full file open.
-#
-# depth 0 means the whole tree; depth 1 stops at this level, listing each folder with empty contents.
+# Nested {folders, files} for one collection root; depth 0 is the whole tree, depth 1 stops at this level.
+# Paths are relative to the root and forward-slashed, so the client can use them in URLs whatever the host OS.
+# scandir saves a stat per file, which is seconds over 36k groups.
 def _build_tree(root, extensions, rel="", depth=0):
     abs_dir = os.path.join(root, rel) if rel else root
     folders, files = [], []
@@ -786,9 +743,7 @@ _TREE_CACHE = {}
 
 
 # A fingerprint of every directory under the roots.
-#
-# A directory's mtime changes whenever an entry inside it is added, removed or renamed, which is exactly what the tree reflects — file *contents* do not appear in it.
-# So a few hundred directory stats stand in for tens of thousands of files, and reopening the sidebar costs that instead of a full walk.
+# A directory's mtime moves whenever an entry inside it is added, removed or renamed, which is exactly what the tree reflects, so a few hundred stats stand in for tens of thousands of files.
 def _tree_signature(roots):
     parts = []
     stack = [os.path.abspath(r) for r in roots if os.path.isdir(r)]
@@ -855,19 +810,8 @@ async def tree_handler(request):
 
 
 # Tag Index API Endpoints
-#
-# The second half of the sidebar's dual-mode search. The default mode filters the
-# tree the client already holds; this one answers "which groups contain this tag",
-# which no amount of client-side work can do without the file contents.
-#
-# Three routes, deliberately split:
-#   status  cheap enough to call on every mode switch - a directory walk, no reads
-#   sync    starts a background build and returns immediately; a first pass over
-#           36k files is far longer than any sensible HTTP timeout, so the client
-#           polls status rather than holding a request open
-#   search  the query itself, milliseconds once the index exists
-#
-# See py/tag_index.py for the schema and why the database sits beside the groups.
+# The half of the sidebar's search that answers "which groups contain this tag", which needs the file contents the client does not have.
+# Split by cost: status is a directory walk, sync starts a background build the client polls, search is the query itself.
 
 
 @server.PromptServer.instance.routes.get("/erenodes/tag_index/status")
@@ -889,21 +833,16 @@ async def tag_index_sync_handler(request):
         except Exception:
             rebuild = False
     started = tag_index.start_sync(rebuild=rebuild)
-    # `started: false` is not an error - it means a build was already under way,
-    # which is exactly what the caller wanted to happen.
+    # `started: false` is not an error: a build was already under way, which is what the caller wanted.
     return web.json_response({"started": started, **tag_index.progress()})
 
 
-# Autocomplete for the sidebar's tag-search box. Deliberately not `search_tags`:
-# that one completes from the CSV, which knows every danbooru tag whether or not
-# a single group of yours contains it. In a *search* field a completion that
-# returns nothing is worse than no completion at all, so this one completes from
-# what is actually indexed, and carries the group count for each.
+# Autocomplete for the sidebar's tag-search box, completing from what is indexed rather than from the CSV, with the group count for each.
+# In a search field, a completion that returns nothing is worse than no completion.
 @server.PromptServer.instance.routes.get("/erenodes/tag_index/suggest")
 async def tag_index_suggest_handler(request):
     query = request.query.get("query", "")
-    # Terms already committed in the box, so completions can be narrowed to the
-    # groups those still reach. Same comma syntax as the search field itself.
+    # Terms already committed in the box, so completions can be narrowed to the groups those still reach.
     context = request.query.get("context", "")
     limit = request.query.get("limit", "")
     limit = int(limit) if limit.isdigit() else tag_index.SUGGEST_LIMIT
@@ -928,10 +867,8 @@ async def tag_index_search_handler(request):
     return web.json_response(data)
 
 
-# Map a client-supplied relative path to an absolute one inside the root.
-#
-# Returns (abs_path, error_response).
-# The containment check is what keeps rename/delete from reaching outside the tag-group folder.
+# Map a client-supplied relative path to an absolute one inside the root, returning (abs_path, error_response).
+# The containment check is what keeps rename and delete from reaching outside the tag-group folder.
 def _resolve_group_path(rel_path, must_exist=True):
     if not rel_path:
         return None, web.json_response({"error": "path not provided"}, status=400)
@@ -947,8 +884,7 @@ def _resolve_group_path(rel_path, must_exist=True):
     return target, None
 
 
-# Rename a tag group or a folder.
-# Preview images follow the .json.
+# Rename a tag group or a folder; preview images follow the .json.
 @server.PromptServer.instance.routes.post("/erenodes/rename_path")
 async def rename_path_handler(request):
     try:
@@ -990,7 +926,6 @@ async def rename_path_handler(request):
 
 
 # Move a tag group or folder into another folder.
-#
 # Both ends resolve against the tag-group root, so neither can point outside it.
 @server.PromptServer.instance.routes.post("/erenodes/move_path")
 async def move_path_handler(request):
@@ -1064,8 +999,7 @@ async def delete_path_handler(request):
 # Prompt Extractor
 
 # Pull the positive prompt out of an uploaded image.
-#
-# Saved into ComfyUI's input directory, like any LoadImage upload, so the node can re-read it and the workflow stays portable.
+# Saved into ComfyUI's input directory like any LoadImage upload, so the node can re-read it and the workflow stays portable.
 @server.PromptServer.instance.routes.post("/erenodes/extract_prompt")
 async def extract_prompt_handler(request):
     from . import prompt_extractor

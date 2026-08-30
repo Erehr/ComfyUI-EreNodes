@@ -3,9 +3,10 @@ import { api } from "../../../scripts/api.js";
 import { attachPillDrag, markDropZone, injectDragStyles, installDragGlobals, pruneSelection,handlePillSelectClick,handlePillContextMenu,consumeDragClick } from "./dragdrop.js";
 import { SURFACE_CLASS, injectTagStyles, fallbackColors, renderTagPill, renderToggleRowEl, renderTagTile } from "./tagview.js";
 import { parseTags, byTagName } from "./parser.js";
+import { ActionContextMenu } from "./contextmenu.js";
 import { isKnownMissing, ensureChecked } from "./util.js";
 
-// Re-render tag UIs after undo/redo: the change tracker restores graph state and fires "graphChanged", but Vue keeps the existing DOM widget instances.
+// Undo/redo restores graph state and fires "graphChanged", but Vue keeps the existing DOM widget instances, so nothing repaints on its own.
 let graphChangedHooked = false;
 function hookGraphChanged() {
     if (graphChangedHooked) return;
@@ -19,6 +20,7 @@ function hookGraphChanged() {
 
 export const MODE_BY_TYPE = {
     ErePromptExtractor: "extract",
+    ErePromptComposer: "composer",
     ErePromptCloud: "cloud",
     ErePromptToggle: "toggle",
     ErePromptMultiSelect: "multiselect",
@@ -27,8 +29,8 @@ export const MODE_BY_TYPE = {
     ErePromptMultiline: "multiline",
 };
 
-/** Hide transport widgets from both renderers. */
-function hideNativeWidget(w) {
+/** Hide transport widgets from both renderers. Composer row widgets use it too. */
+export function hideNativeWidget(w) {
     if (!w || w._ereHidden) return;
     w._ereHidden = true;
     w.hidden = true;
@@ -42,7 +44,7 @@ function hideNativeWidget(w) {
     }
     if (w.element?.style) {
         w.element.style.display = "none";
-        // Belt and braces: if a renderer ever re-shows it (Vue manages the element itself), it must still never be a pointer target — a ctrl+drag landing on a stray textarea arms ComfyUI's box-select.
+        // If a renderer ever re-shows it, it must still not be a pointer target: a ctrl+drag landing on a stray textarea arms ComfyUI's box-select.
         w.element.style.pointerEvents = "none";
     }
 }
@@ -78,10 +80,7 @@ function bindRootListeners(el) {
     if (el._ereRootBound) return;
     el._ereRootBound = true;
 
-    /**
-     * Stop pill interactions from dragging/selecting the node — except the middle button, which pans the canvas.
-     * Forward that to the canvas element in the legacy renderer (the overlay otherwise swallows it); litegraph takes pointer capture on
-     */
+    /** Stop pill interactions from dragging the node — except the middle button, which pans the canvas and has to be forwarded there (the legacy overlay swallows it). */
     for (const type of ["pointerdown", "pointermove", "pointerup"]) {
         el.addEventListener(type, (e) => {
             const isMiddle = e.button === 1 || (e.buttons & 4) !== 0;
@@ -94,10 +93,8 @@ function bindRootListeners(el) {
             e.stopPropagation();
         });
     }
-    // Legacy renderer: DomWidgets overlay swallows wheel events.
-    // When the pill area is scrollable, keep the wheel entirely (including at scroll edges) so it never leaks into canvas zoom.
-    // Otherwise hand it to the canvas.
-    // Vue nodes handle zoom themselves — only stopPropagation while scrolling.
+    // Legacy renderer: DomWidgets overlay swallows wheel events, so an unhandled wheel is handed to the canvas.
+    // A scrollable pill area keeps the wheel even at its edges, so it never leaks into zoom.
     el.addEventListener("wheel", (e) => {
         const scrolls = app.ui?.settings?.getSettingValue?.("EreNodes.Nodes.TagAreaScroll", false) ?? false;
         if (scrolls) {
@@ -129,14 +126,14 @@ function makeButton(node, label, display, title) {
 
 function attachPillEvents(node, el, tag, index, mode) {
     // Drag & drop / multi-selection.
-    // Registers the pointerdown that may turn into a drag, tags the element with its data index and restores the selection outline after a re-render.
+    // Tags the element with its data index and restores the selection outline after a render.
     attachPillDrag(node, el, index, mode);
 
     el.addEventListener("click", (e) => {
         e.stopPropagation();
         // A click that closes a drag must not toggle the tag.
         if (consumeDragClick()) return;
-        // Ctrl/Shift click manage the selection instead of toggling; a plain click on a selected pill toggles the whole selection.
+        // Ctrl/Shift manage the selection instead of toggling.
         if (handlePillSelectClick(node, index, e)) return;
         node.onTagPillClick?.(e, [0, 0], { label: tag.name, index });
     });
@@ -154,20 +151,19 @@ function attachPillEvents(node, el, tag, index, mode) {
 
 function openInactiveDropdown(node, e) {
     const tagData = parseTags(node.properties?._tagDataJSON || "[]");
-    // Alphabetical, not pill order. The pill order here is whatever the last shuffle left behind, which is no order at all to a reader looking for one tag in a list of forty.
+    // Alphabetical, not pill order: forty disabled tags are scanned for one name.
     const inactive = tagData.filter(t => !t.active && t.name).sort(byTagName);
-    const dropdownOptions = inactive.map(tag => ({
-        content: tag.name,
-        callback: () => {
-            const entry = tagData.find(t => t.name === tag.name);
-            if (entry) entry.active = true;
-            node.properties._tagDataJSON = JSON.stringify(tagData, null, 2);
-            node.onUpdateTextWidget?.(node);
-        }
-    }));
-    if (dropdownOptions.length > 0 && window.LiteGraph?.ContextMenu) {
-        new window.LiteGraph.ContextMenu(dropdownOptions, { event: e, className: "dark" }, window);
-    }
+    if (!inactive.length) return;
+    new ActionContextMenu({ clientX: e.clientX, clientY: e.clientY }, "Disabled tags",
+        inactive.map(tag => ({
+            name: tag.name,
+            callback: () => {
+                const entry = tagData.find(t => t.name === tag.name);
+                if (entry) entry.active = true;
+                node.properties._tagDataJSON = JSON.stringify(tagData, null, 2);
+                node.onUpdateTextWidget?.(node);
+            },
+        })));
 }
 
 /**
@@ -207,7 +203,7 @@ function renderExtractImage(node) {
         e.stopPropagation();
         node.onExtractPick?.();
     });
-    // Native HTML5 drop, not the pill drag layer: the payload is a file from the OS or another browser tab.
+    // Native HTML5 drop, not the pill drag layer: the payload is a file.
     pane.addEventListener("dragover", (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -226,15 +222,12 @@ function renderExtractImage(node) {
 /** Modes that draw only their active tags, and so have something for the eye to reveal. */
 const HIDES_INACTIVE = new Set(["multiselect", "randomizer"]);
 
-/**
- * Toolbar, left to right: ≡, the eye, mode extras, then + on the right of every node.
- * The dice used to sit right of +; it moved so that "add" is in the same place whichever prompt node you are looking at.
- */
+/** Toolbar, left to right: ≡, the eye, mode extras, then + — "add" in the same place on every node. */
 function renderButtons(node, container, mode) {
     container.appendChild(makeButton(node, "button_menu", "≡", "Menu"));
     if (HIDES_INACTIVE.has(mode)) {
         const shown = !!node._showInactive;
-        // One glyph, state carried by the pressed style: there is no eye-with-a-slash that renders reliably at 20px across platforms, and two near-identical glyphs read worse than one that is visibly on or off.
+        // One glyph plus a pressed style: no eye-with-a-slash renders reliably at 20px, and two near-identical glyphs read worse than one that is visibly on or off.
         const eye = makeButton(node, "button_show_inactive", "👁︎",
             shown ? "Hide disabled tags" : "Show disabled tags");
         if (shown) eye.classList.add("ere-btn-on");
@@ -243,7 +236,12 @@ function renderButtons(node, container, mode) {
     if (mode === "randomizer") {
         container.appendChild(makeButton(node, "button_randomize", "🎲︎", "Randomize"));
     }
-    if (mode !== "multiline") {
+    // Composer has no node-level "+": tags belong to a category, so that button is on every row and this one adds a row.
+    if (mode === "composer") {
+        const add = makeButton(node, "button_add_row", "+ Category", "Add a category");
+        add.classList.add("ere-composer-add");
+        container.appendChild(add);
+    } else if (mode !== "multiline") {
         container.appendChild(makeButton(node, "button_add_tag", "+", "Add tag"));
     }
 }
@@ -260,7 +258,8 @@ function markIfMissing(el, tag) {
     return el;
 }
 
-function renderCloudPill(node, tag, index, colors, mode) {
+/** One pill, wired for click / quick edit / drag. `node` may be a pseudo node (Composer rows). */
+export function renderPill(node, tag, index, colors, mode) {
     const pill = renderTagPill(tag, { colors });
     attachPillEvents(node, pill, tag, index, mode);
     return markIfMissing(pill, tag);
@@ -287,9 +286,9 @@ export function attachTagDomWidget(node, mode) {
 
     for (const w of nativeWidgetsToHide(node, mode)) hideNativeWidget(w);
 
-    // `let`: hosts can be swapped for an already-mounted element after undo/redo. toolbar = sticky buttons; scroll/content = pills (only this scrolls).
+    // `let`: these can be swapped for an already-mounted element after undo/redo (see onAdded).
     let el = document.createElement("div");
-    // Two classes on purpose: `erenodes-dom` is the structural hook drag & drop and the Vue-remount adoption query on; `ere-surface` is the visual scope shared with the sidebar and the menu previews (see tagview.js).
+    // `erenodes-dom` is the structural hook (drag & drop, the remount adoption query); `ere-surface` is the visual scope shared with the sidebar and menu previews.
     el.className = `erenodes-dom ${SURFACE_CLASS}`;
     let toolbar = document.createElement("div");
     toolbar.className = "ere-toolbar ere-flow";
@@ -313,8 +312,7 @@ export function attachTagDomWidget(node, mode) {
     const render = () => {
         lastRenderedState = node.properties?._tagDataJSON || "[]";
         const rendered = parseTags(lastRenderedState);
-        // Fire-and-forget: a late verdict triggers exactly one re-render, which reads from cache and schedules nothing.
-        // Guarded on the tag data being unchanged, so an edit made in flight is not undone.
+        // Fire-and-forget: a late verdict costs one re-render, which reads from cache. Guarded on the tag data being unchanged, so an edit made in flight is not undone.
         ensureChecked(rendered).then((learned) => {
             if (learned && node._ereDom && node.properties?._tagDataJSON === lastRenderedState) {
                 render();
@@ -322,7 +320,7 @@ export function attachTagDomWidget(node, mode) {
         });
         toolbar.textContent = "";
         content.textContent = "";
-        // Extract mode renders its buttons inside the tag column instead, so they sit beside the image rather than spanning above both panes.
+        // Extract mode puts its buttons in the tag column, beside the image.
         if (mode === "extract") toolbar.style.display = "none";
         else renderButtons(node, toolbar, mode);
         const tagData = parseTags(node.properties?._tagDataJSON || "[]");
@@ -330,6 +328,12 @@ export function attachTagDomWidget(node, mode) {
         pruneSelection(node, tagData);
 
         if (mode === "multiline") {
+            return;
+        }
+
+        // Rows are drawn by js/composer.js, installed by the node's own extension.
+        if (mode === "composer") {
+            node.onRenderComposer?.(content, colors);
             return;
         }
 
@@ -378,7 +382,7 @@ export function attachTagDomWidget(node, mode) {
             flow.className = "ere-flow ere-split-tags";
             markDropZone(flow, "flow");
             for (let i = 0; i < tagData.length; i++) {
-                flow.appendChild(renderCloudPill(node, tagData[i], i, colors, "extract"));
+                flow.appendChild(renderPill(node, tagData[i], i, colors, "extract"));
             }
             column.appendChild(flow);
             split.appendChild(column);
@@ -392,17 +396,17 @@ export function attachTagDomWidget(node, mode) {
             const panel = document.createElement("div");
             panel.className = "ere-panel ere-flow";
             panel.addEventListener("click", (e) => {
-                // Not after a ctrl-drag selection, and not on a ctrl+click (that one belongs to the pill selection logic).
+                // Not after a ctrl-drag, and not on a ctrl+click: both belong to the selection.
                 if (e.ctrlKey || e.metaKey || consumeDragClick()) return;
-                // With the eye on, every disabled tag is already a pill on the panel; a menu listing them again would be a second way to do what a click now does directly.
+                // With the eye on, every disabled tag is already a pill; the menu would be a second way to do what a click does directly.
                 if (node._showInactive) return;
                 if (e.target === panel) openInactiveDropdown(node, e);
             });
             markDropZone(panel, "flow");
             for (let i = 0; i < tagData.length; i++) {
-                // The eye reveals disabled tags *in place* — dimmed, still disabled, but now draggable, selectable and quick-editable like any other pill. Without it they exist only in the dropdown, which can do none of that.
+                // The eye reveals disabled tags in place: dimmed, still disabled, but draggable, selectable and quick-editable, none of which the dropdown can do.
                 if (!tagData[i].active && !node._showInactive) continue;
-                panel.appendChild(renderCloudPill(node, tagData[i], i, colors, mode));
+                panel.appendChild(renderPill(node, tagData[i], i, colors, mode));
             }
             content.appendChild(panel);
             return;
@@ -413,7 +417,7 @@ export function attachTagDomWidget(node, mode) {
         flow.className = "ere-flow";
         markDropZone(flow, "flow");
         for (let i = 0; i < tagData.length; i++) {
-            flow.appendChild(renderCloudPill(node, tagData[i], i, colors, "cloud"));
+            flow.appendChild(renderPill(node, tagData[i], i, colors, "cloud"));
         }
         content.appendChild(flow);
     };
@@ -432,10 +436,7 @@ export function attachTagDomWidget(node, mode) {
     }
     if (widget.options) widget.options.serialize = false;
 
-    /**
-     * Multiline: ≡ button only; the textarea owns vertical resize.
-     * Shadowing computeLayoutSize with a non-function makes the ≡ row min-content — the Nodes 2.0 grid would otherwise split the height 50/50.
-     */
+    /** Multiline: ≡ button only, the textarea owns vertical resize. Shadowing computeLayoutSize with a non-function makes that row min-content — the Nodes 2.0 grid would otherwise split the height 50/50 with the textarea. */
     if (mode === "multiline") {
         el.classList.add("ere-multiline");
         scroll.style.display = "none";
@@ -449,7 +450,7 @@ export function attachTagDomWidget(node, mode) {
             widget.options.getHeight = () => barH();
         }
         widget.computeSize = () => [node.size?.[0] ?? 200, barH()];
-        // Own-property undefined shadows the prototype method (do not delete — delete would fall through to DOMWidgetImpl.computeLayoutSize again).
+        // Own-property undefined shadows the prototype method; delete would fall through to it.
         widget.computeLayoutSize = undefined;
 
         const origUpdate = node.onUpdateTextWidget;
@@ -474,7 +475,7 @@ export function attachTagDomWidget(node, mode) {
         return widget;
     }
 
-    // Height policy: Fit (default) locks height to content and leaves width free; Scroll lets the user size it and scrolls the pills under a sticky toolbar.
+    // Fit (default) locks height to content and leaves width free; Scroll lets the user size the node and scrolls the pills under a sticky toolbar.
     const PILL_ROW_H = 20;
     const scrollEnabled = () =>
         app.ui?.settings?.getSettingValue?.("EreNodes.Nodes.TagAreaScroll", false) ?? false;
@@ -490,8 +491,7 @@ export function attachTagDomWidget(node, mode) {
         const margin = widget.margin ?? 10;
         const toolH = toolbar.offsetHeight || PILL_ROW_H;
         const rowH = oneRowHeight();
-        // Floor is toolbar + one row only.
-        // Including the flex gap (and host padding) left enough room for the next row to peek at the bottom.
+        // Toolbar + one row only: including the flex gap left the next row peeking.
         return toolH + rowH + margin * 2;
     };
 
@@ -646,7 +646,7 @@ export function attachTagDomWidget(node, mode) {
         return origResize?.apply(this, args);
     };
 
-    // Remeasure only when content height changes — width-only observer noise rewriting fitHeight was the flicker.
+    // Only when the content height changes: width-only noise rewriting fitHeight flickers.
     const EXTRACT_WIDE_ON = 340;
     const EXTRACT_WIDE_OFF = 320;
     applyExtractLayout = () => {
@@ -697,7 +697,7 @@ export function attachTagDomWidget(node, mode) {
             syncSize();
         }
     };
-    // Undo/redo in Nodes 2.0 recreates the node objects but Vue keeps the PREVIOUS node's element mounted (component keyed by node id), so a fresh element would render into the void while the stale one stays on screen.
+    // Undo/redo in Nodes 2.0 recreates the node object but Vue keeps the previous one's element mounted (keyed by node id), so a fresh element would render into the void.
     const origAdded = node.onAdded;
     node.onAdded = function (...args) {
         const r = origAdded?.apply(this, args);
@@ -718,7 +718,7 @@ export function attachTagDomWidget(node, mode) {
                     node._ereDom.scroll = scroll;
                     node._ereDom.content = content;
                 }
-                // Keep the widget pointing at the live element in case Vue (re)mounts it later — same element either way.
+                // Keep the widget pointing at the live element for a later remount.
                 widget.element = el;
                 observer.disconnect();
                 observer.observe(content);
