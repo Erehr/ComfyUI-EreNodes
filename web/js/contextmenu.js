@@ -1,5 +1,5 @@
 import { app } from "../../../scripts/app.js";
-import { getCache, clearCache, isNotFound, beginUndoTransaction, endUndoTransaction } from "./util.js";
+import { getCache, clearCache, beginUndoTransaction, endUndoTransaction } from "./util.js";
 import { renderTagPill, SURFACE_CLASS, injectTagStyles } from "./tagview.js";
 import { showPreviewFor, hidePreviewPanel } from "./preview.js";
 
@@ -506,72 +506,46 @@ export class DynamicContextMenu { // Added export
     }
 
     showPreview(url) {
-        this.hidePreview(); // Clear previous preview
+        this.hidePreview();
+        if (!url || !this.root) return;
 
-        if (!url) {
-            return;
-        }
-        
-        const imageUrl = url;
-        const processImage = (url) => {
+        this.previewImage = document.createElement('img');
+        this.previewImage.className = PREVIEW_CLASS;
+
+        Object.assign(this.previewImage.style, {
+            position: 'fixed',
+            zIndex: 1001,
+            border: '1px solid #444',
+            display: 'block',
+            maxWidth: '256px',
+            maxHeight: '256px',
+        });
+
+        // Placed beside the menu once its size is known, flipping to the other side or up when it would leave the viewport.
+        this.previewImage.onload = () => {
             if (!this.root || !this.root.isConnected) return;
-            // getCache answers 204/404 with a sentinel rather than rejecting.
-            // Assigning that Symbol to img.src throws, so bail out here instead.
-            if (isNotFound(url) || typeof url !== 'string') return;
+            this.root.appendChild(this.previewImage);
 
-            this.previewImage = document.createElement('img');
-            this.previewImage.className = PREVIEW_CLASS;
+            const menuRect = this.root.getBoundingClientRect();
+            this.previewImage.style.left = `${menuRect.right + 5}px`;
+            this.previewImage.style.top = `${menuRect.top}px`;
 
-            Object.assign(this.previewImage.style, {
-                position: 'fixed',
-                zIndex: 1001,
-                border: '1px solid #444',
-                display: 'block',
-                maxWidth: '256px',
-                maxHeight: '256px',
-            });
-
-            this.previewImage.onload = () => {
-                if (!this.root || !this.root.isConnected) return;
-                this.root.appendChild(this.previewImage);
-
-                const menuRect = this.root.getBoundingClientRect();
-
-                this.previewImage.style.left = `${menuRect.right + 5}px`;
-                this.previewImage.style.top = `${menuRect.top}px`;
-
-                const previewRect = this.previewImage.getBoundingClientRect();
-                if (previewRect.right > window.innerWidth) {
-                    this.previewImage.style.left = `${menuRect.left - previewRect.width - 5}px`;
-                }
-                if (previewRect.bottom > window.innerHeight) {
-                    this.previewImage.style.top = `${window.innerHeight - previewRect.height - 5}px`;
-                }
-                if (previewRect.top < 0) {
-                    this.previewImage.style.top = `5px`;
-                }
-            };
-
-            this.previewImage.onerror = () => {
-                this.hidePreview();
-            };
-
-            this.previewImage.src = url;
+            const previewRect = this.previewImage.getBoundingClientRect();
+            if (previewRect.right > window.innerWidth) {
+                this.previewImage.style.left = `${menuRect.left - previewRect.width - 5}px`;
+            }
+            if (previewRect.bottom > window.innerHeight) {
+                this.previewImage.style.top = `${window.innerHeight - previewRect.height - 5}px`;
+            }
+            if (previewRect.top < 0) {
+                this.previewImage.style.top = `5px`;
+            }
         };
 
-        // Handle data URLs directly
-        if (imageUrl.startsWith('data:')) {
-            processImage(imageUrl);
-        } else {
-            // Use cache for server URLs
-            Promise.resolve(getCache(imageUrl, 'src')).then(url => {
-                processImage(url);
-            })
-            .catch((error) => {
-                // Catches the cache's "not found" and stops further requests for this URL.
-                this.hidePreview();
-            });
-        }
+        // The route answers 204 when a file has no preview, which fails to decode like any other bad image.
+        this.previewImage.onerror = () => this.hidePreview();
+
+        this.previewImage.src = url;
     }
 
     hidePreview() {

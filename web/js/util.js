@@ -56,22 +56,10 @@ export function getCache(url, type = "json") {
     return promise;
 }
 
-export function updateCache(url, data, type = "json") {
-    cache.set(`${type}:${url}`, data);
-}
-
-function drop(key) {
-    const value = cache.get(key);
-    cache.delete(key);
-    if (typeof value === "string" && value.startsWith("blob:")) {
-        try { URL.revokeObjectURL(value); } catch {}
-    }
-}
-
 /** Forget one URL, in every content type. */
 export function clearCache(url) {
     for (const key of [...cache.keys()]) {
-        if (key.endsWith(`:${url}`)) drop(key);
+        if (key.endsWith(`:${url}`)) cache.delete(key);
     }
 }
 
