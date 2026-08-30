@@ -6,12 +6,17 @@
     overflow-x: hidden;
     scrollbar-width: thin;
 }
-.ere-sidebar .ere-sb-selected,
-.ere-sidebar .ere-sb-tile.ere-sb-selected {
+.ere-sidebar .ere-sb-selected {
     background: rgba(var(--ere-drag-accent-rgb, 74, 158, 255), .18);
     outline: 1px solid var(--ere-drag-accent, var(--p-primary-color, #4a9eff));
     outline-offset: -1px;
     border-radius: var(--p-border-radius-sm, 4px);
+}
+/* A tile is filled edge to edge by its thumbnail, so the tint has nothing to tint and an
+   inset outline is drawn over the image it is meant to frame. Ring it from outside. */
+.ere-sidebar .ere-sb-tile.ere-sb-selected {
+    outline: 2px solid var(--ere-drag-accent, var(--p-primary-color, #4a9eff));
+    outline-offset: 2px;
 }
 .ere-sb-drop-target {
     outline: 2px dashed var(--ere-drag-accent, var(--p-primary-color, #4a9eff)) !important;

@@ -28,7 +28,6 @@ app.registerExtension({
 
             const textWidget = this.widgets?.find(w => w.name === "text");
             initializeSharedPromptFunctions(this, textWidget);
-            // Gallery previews are plain <img> tags (browser cache / lazy load) — no canvas ImageBitmap cache needed.
             attachTagDomWidget(this, "gallery");
             this.onUpdateTextWidget(this);
         };

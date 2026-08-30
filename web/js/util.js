@@ -39,7 +39,7 @@ export function getCache(url, type = "json") {
                 cache.set(cacheKey, data);
                 resolve(data);
             } else if (response.status === 404) {
-                // Resolve to the sentinel rather than rejecting, or a missing preview spams the console on every render.
+                // Resolve to the sentinel rather than reject: a missing preview would spam the console on every render.
                 cache.set(cacheKey, notFound);
                 resolve(notFound);
             } else {
@@ -79,6 +79,7 @@ export function clearCache(url) {
 
 let suppressed = false;
 let pendingWhileSuppressed = false;
+let depth = 0;
 
 function getTracker() {
     return app.extensionManager?.workflow?.activeWorkflow?.changeTracker
@@ -96,16 +97,18 @@ export function captureUndoState() {
     (tracker?.captureCanvasState ?? tracker?.checkState)?.call(tracker);
 }
 
-/**
- * Wrap a continuous gesture (dragging the strength control) so it lands as one undo step instead of one per tick.
- * Discrete actions should not use this.
- */
+/** Wrap a continuous gesture (dragging the strength control) so it lands as one undo step. Discrete actions should not. */
 export function beginUndoTransaction() {
-    suppressed = true;
-    pendingWhileSuppressed = false;
+    // Counted: a drop opens one and the node update it triggers opens another, and the inner end must not flush the outer gesture halfway through.
+    if (depth++ === 0) {
+        suppressed = true;
+        pendingWhileSuppressed = false;
+    }
 }
 
 export function endUndoTransaction() {
+    if (depth > 0) depth--;
+    if (depth > 0) return;
     suppressed = false;
     if (pendingWhileSuppressed) {
         pendingWhileSuppressed = false;
@@ -127,8 +130,7 @@ export function loadStyle(name) {
 }
 
 // Extraction
-//
-// The server answers with segments in execution order, one per node in the prompt chain: EreNodes nodes contribute `tags`, everything else `text`.
+// Segments come in execution order, one per node in the chain: ours contribute `tags`, everything else `text`.
 
 export const ACCEPTED_IMAGE_TYPES = [".png", ".jpg", ".jpeg", ".webp"];
 
@@ -197,7 +199,7 @@ export const isCheckable = (tag) => !!tag && CHECKABLE.has(tag.type) && !!tag.na
 const keyFor = (tag) => `${tag.type}:${tag.name}`;
 
 /**
- * @returns {boolean} true only when the file is *known* missing — an unchecked pill must not flash red on its way to being fine.
+ * @returns {boolean} true only when the file is *known* missing: an unchecked pill must not flash red on its way to being fine.
  */
 export function isKnownMissing(tag) {
     if (!isCheckable(tag)) return false;
@@ -272,10 +274,7 @@ async function request(items, era) {
     }
 }
 
-/**
- * Forget the verdicts for just these tags, so the next render re-checks them.
- * Used after an extraction: the pills are new to this session, and a verdict cached for the same name may predate the file being installed or removed.
- */
+/** Forget these verdicts, so the next render re-checks. Used after an extraction, where a verdict cached for the same name may predate the file. */
 export function forgetVerdicts(tags) {
     for (const tag of tags || []) {
         if (isCheckable(tag)) verdicts.delete(keyFor(tag));
@@ -284,7 +283,7 @@ export function forgetVerdicts(tags) {
 
 /** Forget every verdict. */
 export function clearMissingCache() {
-    // An in-flight request is left to run — cancelling its timer would strand every `await scheduleFlush()`.
+    // An in-flight request is left to run: cancelling strands every `await scheduleFlush()`.
     // The generation bump voids its answers.
     generation++;
     verdicts.clear();

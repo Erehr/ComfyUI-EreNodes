@@ -9,7 +9,7 @@ from .settings import get_erenodes_settings
 
 # Define constants for export
 CSV_FILES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "__autocomplete__")
-# utf-8-sig, not utf-8: several community tag files (the Korean danbooru sets in particular) are saved with a BOM, and without this the first row's tag comes back as "\ufeff1girl" — silently unmatchable, and it is always the highest-count tag in a count-sorted file.
+# utf-8-sig: several community tag files carry a BOM, which would make the first row's tag read as "\ufeff1girl" — unmatchable, and always the highest-count one.
 DEFAULT_ENCODING = 'utf-8-sig'
 TAG_TYPES = {
     0: "General",
@@ -19,13 +19,10 @@ TAG_TYPES = {
     5: "Meta"
 }
 
-# csv_file -> (mtime, tags). Keyed by name so /erenodes/set_setting can still drop
-# one entry; stamped with mtime so an edited or replaced CSV is noticed, which is
-# what get_filter_maps below has always done and this cache never did.
+# csv_file -> (mtime, tags), keyed by name so /erenodes/set_setting can drop one entry and stamped with mtime so an edited CSV is noticed.
 TAG_DATA_CACHE = {}
 
-# Parsing 320k rows takes a couple of seconds. Without this, two searches arriving
-# together while the cache is cold both pay for it.
+# Parsing 320k rows takes a couple of seconds, and without this two searches arriving together on a cold cache both pay for it.
 _TAG_DATA_LOCK = threading.Lock()
 
 # (csv_file -> (mtime, (tag_set, alias_map))) used by the Prompt Filter node
@@ -33,8 +30,7 @@ FILTER_MAP_CACHE = {}
 
 
 # Yield data rows, skipping a header line if the file has one.
-#
-# Two shapes are in circulation, so it is detected rather than assumed: a real data row has an integer post count in column 3.
+# Two shapes are in circulation, so it is detected rather than assumed: a data row has an integer post count in column 3.
 def _open_rows(csvfile):
     reader = csv.reader(csvfile)
     first = next(reader, None)
@@ -124,9 +120,7 @@ def load_tags_from_csv(csv_path):
     return tags
 
 # The active CSV, parsed and cached.
-#
-# Blocking: parsing the merged danbooru+e621 file is ~320k rows and a couple of
-# seconds. Call it from a thread (search_tags does), never on the event loop.
+# Blocking: the merged danbooru+e621 file is ~320k rows and a couple of seconds, so call it from a thread, never on the event loop.
 def get_tag_data():
     settings = get_erenodes_settings()
     active_csv = settings.get('autocomplete.csv')
@@ -154,22 +148,8 @@ def get_tag_data():
         TAG_DATA_CACHE[active_csv] = (mtime, tags)
     return tags
 
-# Substring match over tag names and their aliases, in file order.
-#
-# The scan looks linear but is not, in practice: the CSVs are sorted by post count
-# descending, so breaking at `limit` both stops early and hands back the highest-
-# count matches. Typical input is answered in well under a millisecond. The cost
-# is paid by input that matches little or nothing - a rare tag, a multi-word
-# fragment, a typo - which walks the whole file for ~50ms on the merged CSV.
-#
-# Substring, not prefix, on purpose: "eyes" has to find `blue eyes`, and "genshin"
-# has to find `genshin impact`. A prefix trie or a bisect over sorted names would
-# make the walk cheap, but only by answering a narrower question - and it would
-# lose the aliases, which are substring-matched here too. It would also have to
-# gather *every* prefix match and re-rank it by count, since name order is not
-# count order, which for a one-letter query is slower than what this does now.
-#
-# So the scan stays. What matters is that it does not run on the event loop.
+# Substring match over tag names and their aliases, in file order, so that "eyes" finds `blue eyes`.
+# The CSVs are sorted by post count descending, so breaking at `limit` stops early and hands back the highest-count matches; input that matches little or nothing walks the whole file for ~50ms.
 def _search_tags(query, limit):
     all_tags = get_tag_data()
 
@@ -213,23 +193,8 @@ async def search_tags(request):
     if not query:
         return web.json_response([])
 
-    # In a thread, like every other route in this pack that touches the disk or
-    # walks a large structure. Inline, the first search after a restart froze the
-    # whole ComfyUI server for the length of the CSV parse - websockets, progress
-    # and queue included - and each miss added ~50ms more. That reads as a stutter
-    # somewhere else entirely, never as "autocomplete is slow".
-    #
-    # Measured on the merged danbooru+e621 file (322k tags), worst loop stall:
-    #   cold parse   351ms inline -> 114ms threaded
-    #   scan, 0 hits  36ms inline ->  11ms threaded
-    #   typical query   under a millisecond either way
-    #
-    # Threaded is not free, and it is worth knowing why: this is pure Python, so
-    # the worker holds the GIL and only yields it every `sys.getswitchinterval()`
-    # (5ms by default), and the loop has to wait its turn each time. A thread
-    # turns one long freeze into a series of short ones - it does not remove
-    # them. Making the cold parse disappear entirely would mean warming the cache
-    # at startup instead of on the first keystroke.
+    # In a thread: inline, the first search after a restart froze the whole server for the length of the CSV parse, which reads as a stutter somewhere else entirely.
+    # Pure Python holds the GIL between switch intervals, so this turns one long freeze into a series of short ones rather than removing them.
     try:
         results = await asyncio.to_thread(_search_tags, query, limit)
     except Exception as e:

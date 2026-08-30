@@ -1,21 +1,12 @@
-# Recover the positive prompt from a generated image.
-#
-# Three metadata dialects, tried in order: ComfyUI's `prompt` chunk (the executed graph), its `workflow` chunk (the editor graph — the only place our `_tagDataJSON` survives, so tags toggled *off* come back as inactive pills), then A1111 / Forge parameters in a PNG text chunk or EXIF UserComment.
-#
-# Deciding *which* text is the positive prompt is the hard part: the graph is traced back from a sampler's `positive` input, and anything reachable only from `negative` is excluded.
-#
-# Approach informed by RS Image-Prompt (ComfyUI_RaykoStudio, Apache-2.0).
-
 import json
 import os
 import re
 
-# The formats a dropped image may be in — the same list as the covers we store.
-# See py/images.py, which owns it.
+# The formats a dropped image may be in, from py/images.py, which owns the list.
 from .images import IMAGE_EXTENSIONS
 
 # Node types known to hold prompt text.
-# Anything else is still traced through, so unknown wrappers do not break the walk - this list only decides where a *search* (rather than a trace) is allowed to stop.
+# Unknown wrappers are still traced through; this list only says where a search may stop.
 TEXT_NODE_TYPES = {
     "CLIPTextEncode",
     "CLIPTextEncodeSDXL",
@@ -39,6 +30,7 @@ TEXT_NODE_TYPES = {
     "ErePromptGallery",
     "ErePromptMultiline",
     "ErePromptExtractor",
+    "ErePromptComposer",
 }
 
 ERE_NODE_TYPES = {t for t in TEXT_NODE_TYPES if t.startswith("ErePrompt")}
@@ -54,12 +46,11 @@ TEXT_LINK_KEYS = (
 TEXT_VALUE_KEYS = ("text", "text_g", "string", "prompt", "populated_text", "value")
 
 # PNG text chunks that A1111-style tools use.
-# Deliberately excludes "prompt": that is ComfyUI's own graph chunk, handled in step 1, and treating it as free text meant a graph with no positive prompt returned its raw JSON.
+# Excludes "prompt": that is ComfyUI's own graph chunk, and reading it as free text returns raw JSON for a graph with no positive prompt.
 A1111_KEYS = ("parameters", "Comment", "Description")
 
 
 # A1111 / EXIF
-
 def _looks_like_settings(line):
     keys = ("Steps:", "Sampler:", "CFG scale:", "Seed:", "Size:", "Model hash:",
             "Model:", "Denoising strength:", "Clip skip:", "VAE:", "Version:",
@@ -75,8 +66,7 @@ def clean_a1111_text(text):
     if not text:
         return ""
 
-    # Some tools stash a whole ComfyUI graph in `parameters`.
-    # If it parses as a graph, its extraction result is final — falling through would return the raw JSON as if it were a prompt.
+    # Some tools stash a whole ComfyUI graph in `parameters`; if it parses as one, its result is final, since falling through returns the raw JSON as a prompt.
     if text.startswith("{"):
         try:
             return extract_from_prompt_graph(json.loads(text))
@@ -129,16 +119,13 @@ def _exif_user_comment(pil_image):
         return ""
 
 
-# API Graph Walk
-
-# A graph input reference looks like ["<node id>", <slot>].
+# API Graph Walk. A graph input reference looks like ["<node id>", <slot>].
 def _is_link(value):
     return isinstance(value, list) and len(value) >= 1
 
 
 # Gather every text segment feeding a node, in output order.
-#
-# EreNodes chain through `prefix`, each emitting `prefix + separator + text`, so the whole chain must be walked — not just the node the sampler points at.
+# EreNodes chain through `prefix`, each emitting `prefix + separator + text`, so the whole chain is walked rather than the node the sampler points at.
 def _collect_api_segments(graph, node_id, visited, out):
     node_id = str(node_id)
     if node_id in visited or node_id not in graph:
@@ -175,9 +162,7 @@ def _collect_api_segments(graph, node_id, visited, out):
                 return
 
 
-# Every node reachable from some node's `negative` input.
-#
-# Transitive: the text node feeding a negative CLIPTextEncode is negative too.
+# Every node reachable from some node's `negative` input, transitively: the text node feeding a negative CLIPTextEncode is negative too.
 def _negative_node_ids(graph):
     seeds = []
     for node in graph.values():
@@ -203,9 +188,7 @@ def _negative_node_ids(graph):
     return negatives
 
 
-# Nodes that some other node actually consumes.
-#
-# Rejects prompt nodes left unconnected in the workflow — they did not contribute to the image.
+# Nodes that some other node actually consumes, so a prompt node left unconnected is rejected.
 def _referenced_node_ids(graph):
     referenced = set()
     for node in graph.values():
@@ -217,15 +200,12 @@ def _referenced_node_ids(graph):
     return referenced
 
 
-# Positive prompt segments from ComfyUI's executed (API) graph.
-#
-# Returns a list of `{"text": str}` segments in prompt order.
+# Positive prompt segments from ComfyUI's executed (API) graph, as `{"text": str}` in prompt order.
 def extract_from_prompt_graph(graph):
     if not isinstance(graph, dict):
         return []
 
-    # Preferred: trace back from a `positive` input.
-    # That is the only reading that cannot confuse a negative or an unconnected leftover for the prompt.
+    # Tracing back from a `positive` input is the only reading that cannot confuse a negative or an unconnected leftover for the prompt.
     for node in graph.values():
         if not isinstance(node, dict):
             continue
@@ -236,8 +216,8 @@ def extract_from_prompt_graph(graph):
             if segments:
                 return segments
 
-    # Fallback for graphs with no `positive` input at all (some custom samplers name it differently).
-    # A candidate must be *wired into* the graph and not part of the negative branch - an unconnected node sitting in the background is not what produced the image.
+    # Fallback for graphs with no `positive` input, where some custom sampler names it differently.
+    # A candidate must be wired into the graph and outside the negative branch, since a node sitting unconnected did not produce the image.
     negatives = _negative_node_ids(graph)
     connected = _referenced_node_ids(graph)
     for node_id, node in graph.items():
@@ -270,7 +250,6 @@ def _widget_text(node):
 
 
 # Structured tags stored by our own nodes, inactive entries included.
-#
 # `_tagDataJSON` keeps type, strength and active state, so a tag switched off comes back as an inactive pill.
 def _ere_tags(node):
     properties = node.get("properties")
@@ -285,12 +264,14 @@ def _ere_tags(node):
         return None
     if not isinstance(tags, list):
         return None
+    # Prompt Composer stores categories: [{title, tags: [...]}, ...]
+    if tags and isinstance(tags[0], dict) and isinstance(tags[0].get("tags"), list):
+        tags = [t for row in tags for t in row.get("tags", [])]
     return [t for t in tags if isinstance(t, dict) and t.get("name")]
 
 
 # Positive prompt segments from the editor graph, in prompt order.
-#
-# Each is `{"tags": [...]}` (an EreNodes node, so strengths and inactive entries survive) or `{"text": str}`.
+# Each is `{"tags": [...]}` for one of ours, where strengths and inactive entries survive, or `{"text": str}`.
 def extract_from_workflow_graph(workflow):
     if not isinstance(workflow, dict):
         return []
@@ -318,8 +299,7 @@ def extract_from_workflow_graph(workflow):
         spec = specs[index] if index < len(specs) else None
         return spec.get("name") if isinstance(spec, dict) else None
 
-    # Input indices with the text-bearing ones first.
-    # Slot order is not priority order: a CLIPTextEncode has `clip` at slot 0, and following that wire reaches whatever produced the CLIP - a LoRA scheduler fed by the same prompt chain - which then answers for the whole node and the real `text` wire is never tried.
+    # Input indices with the text-bearing ones first: CLIPTextEncode has `clip` at slot 0, and following that wire reaches whatever produced the CLIP.
     def ordered_inputs(node):
         specs = node.get("inputs", []) or []
         named = {}
@@ -403,12 +383,8 @@ def extract_from_workflow_graph(workflow):
     return []
 
 
-# Entry Point
-
-# Shape a segment list into the API response.
-#
-# `segments` is the authoritative, ordered form.
-# `text` and `tags` are conveniences for the simple single-source cases and for error reporting.
+# Shape a segment list into the API response, where `segments` is the authoritative ordered form.
+# `text` and `tags` are conveniences for the single-source cases and for error reporting.
 def _segments_result(segments, source):
     tag_segments = [s for s in segments if s.get("tags")]
     text_segments = [s for s in segments if s.get("text")]
@@ -421,9 +397,7 @@ def _segments_result(segments, source):
     }
 
 
-# Read an image and return the prompt as ordered segments.
-#
-# `{"segments": [{"tags"} | {"text"}], "text": str, "source": str}`, upstream prefix first.
+# Read an image and return the prompt as ordered segments, upstream prefix first: `{"segments": [{"tags"} | {"text"}], "text": str, "source": str}`.
 def extract_from_image(path):
     try:
         from PIL import Image
@@ -439,8 +413,7 @@ def extract_from_image(path):
         return {"segments": [], "text": "", "tags": None, "source": "",
                 "error": f"Cannot read image: {e}"}
 
-    # The editor graph is tried first when it contains our nodes, because it is the only source that keeps strengths and inactive tags.
-    # It is also the only place a chain is visible as separate nodes rather than as one already-flattened string.
+    # The editor graph is tried first when it holds our nodes: it is the only source that keeps strengths and inactive tags, and the only one where a chain is still separate nodes.
     workflow_segments = []
     raw_workflow = info.get("workflow")
     if isinstance(raw_workflow, str) and raw_workflow.strip():

@@ -4,7 +4,7 @@ import { getCache, isNotFound, loadStyle, isAcceptedImage, ACCEPTED_IMAGE_TYPES,
 import { SURFACE_CLASS, injectTagStyles, renderTagPill, previewUrl, bumpPreview } from "./tagview.js";
 import { parseTags, dedupeTags } from "./parser.js";
 import { injectDragStyles, markDropZone, attachPillDrag, pruneSelection, handlePillSelectClick, handlePillContextMenu, consumeDragClick, clearAllSelections } from "./dragdrop.js";
-import { TagSelectionContextMenu } from "./contextmenu.js";
+import { ActionContextMenu } from "./contextmenu.js";
 
 const toast = (severity, summary, detail, life = 4000) => {
     try { app.extensionManager?.toast?.add({ severity, summary, detail, life }); } catch {}
@@ -31,7 +31,6 @@ async function loadGroupTags(name, extension = ".json") {
 
 /**
  * Replace every tag group pill with its contents, in place.
- *
  * @returns {boolean} whether anything changed.
  */
 async function unpackGroups(host) {
@@ -66,7 +65,6 @@ async function unpackGroups(host) {
 }
 
 // The Pseudo Node
-//
 // The drag layer and the menus only need "a node": `properties._tagDataJSON` plus some callbacks.
 // None touch the graph, so a plain object suffices.
 
@@ -82,7 +80,7 @@ function makeHost(onChange) {
     };
     initializeSharedPromptFunctions(host, null);
 
-    // Everything that mutates tags funnels through here, so unpacking a dropped group and re-rendering both need to happen in exactly one place.
+    // Every mutation funnels through here, so unpacking and re-rendering happen in one place.
     const inner = host.onUpdateTextWidget;
     host.onUpdateTextWidget = async (node) => {
         await inner?.(node || host);
@@ -106,8 +104,7 @@ function makeHost(onChange) {
 // The Panel
 
 /**
- * Build an editor panel in three pieces: the name and cover rows go in the sidebar header (the search row and tab strip slots), the pills in the body.
- *
+ * The editor panel, in three pieces: the name and cover rows go in the sidebar header (the search row and tab strip slots), the pills in the body.
  * @param {string} opts.folder  destination folder ("" is the root)
  * @param {string} opts.coverUrl  existing cover to show (edit mode)
  * @param {File} opts.coverFile  a cover to upload on save
@@ -125,12 +122,11 @@ export function createTagEditor(opts) {
     let pendingCover = coverFile;             // File, uploaded on save
     let objectUrl = null;                     // revoked on destroy
     let dropCover = false;                    // edit mode: remove the stored one
-    // A cover handed in as a File (dropping an image on the tree) has no URL yet — it is not on the server until Save.
-    // Show it from memory meanwhile, or the pane would read as empty right after the drop that filled it.
+    // A cover handed in as a File is not on the server until Save, so show it from memory — the pane would otherwise read as empty right after the drop that filled it.
     if (coverFile) objectUrl = URL.createObjectURL(coverFile);
     let coverSrc = objectUrl || coverUrl;
 
-    // Name row: SidebarTopArea + SearchInput markup, class for class, minus the magnifier and its `pl-8` offset.
+    // SidebarTopArea + SearchInput markup, minus the magnifier and its `pl-8` offset.
     const nameRow = el("div", "flex items-center gap-2 p-2 2xl:px-4");
     const nameOuter = el("div", "min-w-0 flex-1", nameRow);
     const nameBox = el("div",
@@ -148,7 +144,7 @@ export function createTagEditor(opts) {
 
     const body = el("div", `ere-editor ${SURFACE_CLASS}`);
 
-    // `erenodes-dom` is what the drag layer looks for (rootOf); `_ereNode` and `_ereMode` are how it resolves the drop target.
+    // What the drag layer looks for: `erenodes-dom` (rootOf), then `_ereNode` / `_ereMode`.
     const dom = el("div", `erenodes-dom ${SURFACE_CLASS} ere-editor-dom`, body);
     const host = makeHost(() => renderTags());
     host.properties._tagDataJSON = JSON.stringify(tags || [], null, 2);
@@ -163,7 +159,7 @@ export function createTagEditor(opts) {
 
     host._ereDom = { el: dom, toolbar, scroll, content, render: () => renderTags() };
 
-    // Actions ComfyUI's own button classes, not ours: these are chrome, and the monospace `ere-surface` font belongs to tag pills alone.
+    // ComfyUI's own button classes: these are chrome, and `ere-surface`'s monospace font belongs to tag pills alone.
     const BTN_BASE = "relative inline-flex items-center justify-center gap-2 cursor-pointer touch-manipulation whitespace-nowrap appearance-none border-none font-medium font-inter transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 h-8 rounded-lg p-2 text-xs";
     const BTN_SECONDARY =
         `${BTN_BASE} bg-secondary-background text-base-foreground hover:bg-secondary-background-hover`;
@@ -226,8 +222,7 @@ export function createTagEditor(opts) {
             img.src = coverSrc;
             img.alt = "Cover image";
             img.draggable = false;
-            // A group with no cover still has a URL — the route just 404s.
-            // Fall all the way back to the empty state rather than hiding the image and leaving a blank box: the pane would collapse and read as missing, when it is in fact the drop target.
+            // A group with no cover still has a URL; the route just 404s. Fall back to the empty state rather than a blank box, which would not read as a drop target.
             img.addEventListener("error", () => {
                 coverSrc = "";
                 renderCover();
@@ -246,8 +241,7 @@ export function createTagEditor(opts) {
             });
         } else {
             const empty = el("div", "ere-extract-empty", pane);
-            // Cover only.
-            // Extraction happens in exactly two places: the Prompt Extractor node, and a drop on the sidebar tree.
+            // Cover only: extraction happens in the Extractor node and on a drop on the tree.
             empty.textContent = "Drop an image to use as the cover.";
         }
     }
@@ -280,15 +274,15 @@ export function createTagEditor(opts) {
 
     /** Reduced: a file is being edited, not a node, so only the actions that change what gets written are useful here. */
     function openMenu(e) {
-        new TagSelectionContextMenu(
+        new ActionContextMenu(
             { clientX: e.clientX, clientY: e.clientY },
             "Tag Group",
             [
-                { name: "🔀 Toggle All Tags", callback: () => host.onToggleTags?.() },
-                { name: "🧹 Remove Inactive Tags", callback: () => host.onRemoveTags?.("inactive") },
-                { name: "🗑️ Remove All Tags", callback: () => host.onRemoveTags?.("all") },
+                { name: "Toggle All Tags", callback: () => host.onToggleTags?.() },
+                { name: "Remove Inactive Tags", callback: () => host.onRemoveTags?.("inactive") },
+                { name: "Remove All Tags", callback: () => host.onRemoveTags?.("all") },
                 null,
-                { name: "🖼️ Choose Cover Image…", callback: () => pickCover() },
+                { name: "Choose Cover Image…", callback: () => pickCover() },
             ]
         );
     }
@@ -305,13 +299,8 @@ export function createTagEditor(opts) {
         for (let i = 0; i < tagData.length; i++) {
             flow.appendChild(makePill(tagData[i], i));
         }
-        // Same fire-and-forget as the node renderer: draw from what is known, re-render once if a "missing" verdict arrives late.
-        // Saving a group whose LoRA has vanished is exactly when you want to be told.
+        // As in the node renderer: draw from what is known, repaint once if a late verdict says a file is gone — which is exactly what you want to know before saving.
         ensureChecked(tagData).then((learned) => { if (learned) renderTags(); });
-        if (!tagData.length) {
-            const empty = el("div", "ere-editor-empty", flow);
-            empty.textContent = "Drag tags here from any prompt node, or use +.";
-        }
         setSaveEnabled(tagData.length > 0);
     }
 
@@ -361,10 +350,7 @@ export function createTagEditor(opts) {
         saving = true;
         setSaveEnabled(false);
         try {
-            /**
-             * Editing and renaming are the same gesture: change the name, press Save.
-             * The rename goes first and through the normal route, which also carries the cover image across; writing the new file and leaving the old one
-             */
+            // Editing and renaming are one gesture. The rename goes first, through the route that carries the cover across; writing the new file alone would duplicate it.
             if (mode === "edit" && filename !== name) {
                 const renamed = await renameGroup(folder, name, filename);
                 if (!renamed) return;               // renameGroup already reported
@@ -375,8 +361,7 @@ export function createTagEditor(opts) {
                 filename,
                 tags: tagData,
                 imageFile: pendingCover || undefined,
-                // Edit mode is *about* rewriting an existing file; asking "this already exists, overwrite?" about the file the user opened is noise.
-                // A new group still asks — including after a rename, where the destination is a name the user has not seen.
+                // Edit mode is about rewriting the file the user opened, so asking is noise. A rename still asks: that destination is a name they have not seen.
                 overwriteSilently: mode === "edit" && filename === name,
             });
             if (!result?.ok) return;                 // saveTagGroup already reported
@@ -450,8 +435,7 @@ async function removeCover(folder, filename) {
     } catch (e) {
         console.warn("[EreNodes] Could not remove cover image.", e);
     }
-    // Whether or not the delete reached the server, this cover is no longer what the
-    // browser has cached for it.
+    // Whether or not the delete reached the server, this cover is no longer what the browser has cached for it.
     bumpPreview("group", path);
 }
 

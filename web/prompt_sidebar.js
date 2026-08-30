@@ -2,7 +2,7 @@ import { app } from "../../scripts/app.js";
 import { mountSidebar, unmountSidebar, refresh } from "./js/sidebar.js";
 
 // Registers the EreNodes sidebar tab.
-// `type: "custom"` hands us a bare HTMLElement, and `render(el)` runs again on every re-mount — so mountSidebar is idempotent and keeps its state in a module singleton.
+// `type: "custom"` hands us a bare HTMLElement and `render(el)` runs again on every re-mount, so mountSidebar is idempotent and keeps its state in a module singleton.
 app.registerExtension({
     name: "EreNodes.Sidebar",
     async setup() {

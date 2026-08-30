@@ -1,8 +1,4 @@
-# Where tag groups live, per the `tag_groups.location` setting:
-#
-#  "node"    <custom_nodes>/ComfyUI-EreNodes/__prompts__   (default)
-#  "models"  <models_dir>/tag_groups
-#
+# Where tag groups live, per the `tag_groups.location` setting: "node" is <custom_nodes>/ComfyUI-EreNodes/__prompts__, "models" is <models_dir>/tag_groups.
 # The models option goes through ComfyUI's folder_paths registry, so it honours --base-directory and can be redirected from extra_model_paths.yaml.
 
 import os
@@ -16,16 +12,14 @@ LOCATION_MODELS = "models"
 VALID_LOCATIONS = (LOCATION_NODE, LOCATION_MODELS)
 
 # Preview images that travel with a tag group when it is copied or renamed.
-# One definition, in the module that owns image formats; re-exported here because every caller of sibling_images() already imports from paths.
+# Re-exported from the module that owns image formats, since every caller of sibling_images() already imports from paths.
 from .images import IMAGE_EXTENSIONS
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 
 
 # Register <models_dir>/tag_groups under the 'tag_groups' folder name.
-#
 # Two positional arguments only: `is_default` is a later addition and would break on older ComfyUI.
-# Appending leaves an extra_model_paths.yaml entry first.
 def _register_models_folder():
     try:
         folder_paths.add_model_folder_path(
@@ -43,9 +37,7 @@ def node_prompts_dir():
     return os.path.join(_PROJECT_ROOT, "__prompts__")
 
 
-# First registered root for 'tag_groups'.
-#
-# One root, not merged like loras: tag groups are written too, and a multi-root write target is ambiguous.
+# First registered root for 'tag_groups'. One root, not merged like loras: tag groups are written too, and a multi-root write target is ambiguous.
 def models_prompts_dir():
     try:
         roots = folder_paths.get_folder_paths(FOLDER_NAME)
@@ -61,8 +53,7 @@ def dir_for_location(location):
     return models_prompts_dir() if location == LOCATION_MODELS else node_prompts_dir()
 
 
-# Active location setting, normalised.
-# Defaults to the legacy folder.
+# Active location setting, normalised, defaulting to the legacy folder.
 def get_location():
     # Imported lazily: settings imports nothing from us, but keeping the import local avoids a cycle if that ever changes.
     from .settings import get_erenodes_settings
@@ -71,8 +62,7 @@ def get_location():
 
 
 # Active tag-group root, created on demand.
-#
-# Every handler calls this instead of a module-level constant so the toggle takes effect without restarting ComfyUI.
+# Every handler calls this instead of a module-level constant, so the toggle takes effect without restarting ComfyUI.
 def get_prompts_dir():
     path = dir_for_location(get_location())
     try:
@@ -83,9 +73,7 @@ def get_prompts_dir():
 
 
 # True if `target` is `root` or lives inside it.
-#
-# commonpath, not startswith: a sibling like "__prompts__backup" would pass a prefix check.
-# Mismatched Windows drives raise ValueError -> not contained.
+# commonpath, not startswith: a sibling like "__prompts__backup" would pass a prefix check, and mismatched Windows drives raise ValueError.
 def is_within(root, target):
     try:
         abs_root = os.path.abspath(root)
@@ -104,11 +92,8 @@ def count_tag_groups(path):
     return total
 
 
-# Copy tag groups from `src` to `dst`, never overwriting.
-#
+# Copy tag groups from `src` to `dst`, never overwriting, so the old folder stays a backup.
 # Returns (copied, skipped).
-# Preview images sitting next to a .json are carried along.
-# Copy rather than move, so the old folder stays a backup.
 def copy_tag_groups(src, dst):
     copied = skipped = 0
     if not os.path.isdir(src) or os.path.abspath(src) == os.path.abspath(dst):

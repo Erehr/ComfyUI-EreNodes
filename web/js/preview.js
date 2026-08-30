@@ -25,7 +25,7 @@ function ensurePanel() {
     // The panel renders tags, so it is a tag surface like any node.
     panel.className = SURFACE_CLASS;
     panel.hidden = true;
-    // Moving the pointer from the row into the panel must not close it — that is what makes the pills reachable.
+    // Moving from the row into the panel must not close it, or the pills are unreachable.
     panel.addEventListener("pointerenter", () => clearTimeout(hideTimer));
     panel.addEventListener("pointerleave", () => hidePreviewPanel());
     document.body.appendChild(panel);
@@ -85,10 +85,9 @@ async function loadTags(type, path, extension) {
 
 /**
  * Show the preview for a file.
- *
  * @param {DOMRect} opts.anchor  rect to position against
  * @param {boolean} [opts.image=true]  include the thumbnail
- * @param {boolean} [opts.interactive=false]  let the pointer enter and pick tags (sidebar only — menu previews must stay click-through)
+ * @param {boolean} [opts.interactive=false]  let the pointer enter and pick tags (sidebar only; menu previews stay click-through)
  */
 export function showPreviewFor({ type, path, extension, anchor, image = true, interactive = false }) {
     if (!type || !path || !anchor) return hidePreviewPanel();
@@ -136,7 +135,7 @@ export function showPreviewFor({ type, path, extension, anchor, image = true, in
             if (interactive) attachPillPicking(cloud, tags, el);
             hasTags = true;
         } else if (type === "group") {
-            // A group that exists but holds nothing is worth saying out loud; a lora with no trained words simply has nothing to add.
+            // An empty group is worth saying; a lora with no trained words is not.
             const empty = document.createElement("div");
             empty.className = "ere-preview-empty";
             empty.textContent = "Empty tag group";
@@ -147,10 +146,7 @@ export function showPreviewFor({ type, path, extension, anchor, image = true, in
     }, HOVER_DELAY);
 }
 
-/**
- * Make the pills in an interactive preview selectable and draggable, with the same grammar as pills inside a node.
- * Dragging carries the picked set into the graph through the shared drag machinery.
- */
+/** Selectable, draggable pills, with the same grammar as pills inside a node. */
 function attachPillPicking(cloud, tags, panelEl) {
     const pills = [...cloud.querySelectorAll(".ere-pill:not(.ere-more)")];
     const picked = new Set();
@@ -161,7 +157,7 @@ function attachPillPicking(cloud, tags, panelEl) {
         if (onPickChange) onPickChange(picked.size);
     };
 
-    // Dragging on the panel background rubber-bands over the pills, the same gesture as empty space inside a node or in the sidebar.
+    // The background rubber-bands, as empty space does in a node or in the sidebar.
     attachPanelMarquee(panelEl, pills, picked, sync);
 
     pills.forEach((pill, index) => {
@@ -199,10 +195,7 @@ function attachPillPicking(cloud, tags, panelEl) {
                 window.removeEventListener("pointerup", onUp, true);
                 if (dragging) return;
 
-                /**
-                 * A plain click does nothing: this is a preview, not an editor, and toggling a tag here would imply it changes the stored group.
-                 * Only the explicit multi-select modifiers pick.
-                 */
+                // A plain click does nothing: toggling here would imply it changes the group.
                 if (ev.ctrlKey || ev.metaKey) {
                     if (picked.has(index)) picked.delete(index);
                     else picked.add(index);
@@ -275,7 +268,7 @@ function attachPanelMarquee(panelEl, pills, picked, sync) {
     });
 }
 
-// Injected by the sidebar rather than imported: a static `import ... from "./dragdrop.js"` here would close the cycle preview -> dragdrop -> contextmenu -> preview.
+// Injected by the sidebar rather than imported: importing dragdrop.js here would close the cycle preview -> dragdrop -> contextmenu -> preview.
 // Class exports are not hoisted, so such a cycle risks a temporal-dead-zone error at module init.
 let startDrag = null;
 let onCanvasDropFromPreview = null;
