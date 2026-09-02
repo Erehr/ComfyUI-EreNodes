@@ -124,3 +124,22 @@ body.ere-marquee-active,
 body.ere-marquee-active * {
     cursor: crosshair !important;
 }
+
+/* On the cursor a text pill keeps its width (set inline by buildGhost) but collapses to a single
+   ellipsised row — a paragraph following the pointer is unreadable and covers what it is aimed at. */
+.ere-drag-ghost .ere-pill.ere-text {
+    flex-basis: auto;
+    height: 20px;
+    white-space: nowrap;
+}
+
+/* Where a tag dropped into a textarea will land. The drop placeholder's job, in a surface that
+   cannot hold an element: a caret between two words, never inside one. */
+.ere-text-caret {
+    position: fixed;
+    z-index: 10000;
+    width: 2px;
+    pointer-events: none;
+    background: var(--ere-drag-accent, var(--p-primary-color, #4a9eff));
+    box-shadow: 0 0 4px var(--ere-drag-accent, #4a9eff);
+}

@@ -1,5 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { TagContextMenu } from "./js/contextmenu.js";
+import { getElementOrCursorCoords } from "./js/util.js";
 
 // Helper class for textarea caret operations
 class TextAreaCaretHelper {
@@ -67,99 +68,6 @@ class TextAreaCaretHelper {
         }
         this.el.dispatchEvent(new Event('input', { bubbles: true }));
     }
-}
-
-// Screen coordinates of the caret, or of the element itself when it is not a textarea.
-function getElementOrCursorCoords(element, position) {
-    if (!element || typeof element.getBoundingClientRect !== 'function') {
-        return { x: 0, y: 0, right: 0, bottom: 0 };
-    }
-
-    const rect = element.getBoundingClientRect();
-
-    if (element.tagName !== 'TEXTAREA') {
-        return { x: rect.left, y: rect.top, right: rect.right, bottom: rect.bottom };
-    }
-
-    const scaleX = element.offsetWidth > 0 ? rect.width / element.offsetWidth : 1;
-    const scaleY = element.offsetHeight > 0 ? rect.height / element.offsetHeight : 1;
-
-    const style = getComputedStyle(element);
-
-    // Helper to get line-height in px, handling "normal" and unitless values.
-    const getLineHeightPx = () => {
-        const lineHeight = style.lineHeight;
-        if (lineHeight === 'normal') {
-            const temp = document.createElement('div');
-            temp.innerHTML = '&nbsp;';
-            Object.assign(temp.style, {
-                fontFamily: style.fontFamily,
-                fontSize: style.fontSize,
-                position: 'absolute',
-                visibility: 'hidden'
-            });
-            document.body.appendChild(temp);
-            const height = temp.offsetHeight;
-            document.body.removeChild(temp);
-            return height;
-        }
-        const numericLineHeight = parseFloat(lineHeight);
-        // If the parsed number is the same as the string, it's unitless.
-        if (String(numericLineHeight) === lineHeight) {
-            return numericLineHeight * parseFloat(style.fontSize);
-        }
-        return numericLineHeight;
-    };
-    const finalLineHeight = getLineHeightPx();
-
-    const text = element.value;
-    const selectionEnd = position ?? element.selectionEnd;
-    const before = text.substring(0, selectionEnd);
-
-    // Create a hidden "mirror" div to calculate the cursor's position.
-    const dummy = document.createElement("div");
-
-    [
-        'font', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontVariant',
-        'lineHeight', 'letterSpacing', 'wordSpacing', 'textIndent', 'textTransform',
-        'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
-        'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
-        'boxSizing', 'whiteSpace', 'wordWrap', 'wordBreak'
-    ].forEach(prop => dummy.style[prop] = style[prop]);
-
-    dummy.style.position = "absolute";
-    dummy.style.visibility = "hidden";
-    dummy.style.left = "-9999px";
-    dummy.style.top = "-9999px";
-    dummy.style.width = `${element.clientWidth}px`;
-    dummy.style.height = 'auto';
-    
-    // Use a unique ID for the marker span to avoid conflicts.
-    const markerId = `cursor-marker-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
-    dummy.innerHTML = before.replace(/\n/g, '<br />') + `<span id="${markerId}"></span>`;
-
-    document.body.appendChild(dummy);
-
-    const cursorMarker = dummy.querySelector(`#${markerId}`);
-    
-    const internalX = cursorMarker.offsetLeft;
-    const internalY = cursorMarker.offsetTop;
-    // The marker's offsetHeight is the line's rendered height inside the mirror.
-    const internalLineHeight = cursorMarker.offsetHeight || finalLineHeight;
-
-    document.body.removeChild(dummy);
-
-    const cursorX = rect.left + (internalX * scaleX) - (element.scrollLeft * scaleX);
-    const cursorY = rect.top + (internalY * scaleY) - (element.scrollTop * scaleY);
-    const cursorBottom = cursorY + (internalLineHeight * scaleY);
-
-    return {
-        x: cursorX,
-        y: cursorY,
-        right: cursorX, 
-        bottom: cursorBottom,
-        lineHeight: internalLineHeight * scaleY
-    };
 }
 
 /** Autocomplete over a textarea or a single-line input. `attach` takes the menu *class* rather than the suggestions, so a caller (the sidebar's tag search) can supply a different source while this class keeps owning the typing. */
@@ -529,6 +437,9 @@ const ERE_NODE_TYPE_PREFIX = "ErePrompt";
 
 /** Is this textarea the prompt input of one of our own nodes? */
 function isEreNodeTextarea(target) {
+    // Ours outright: a Composer multiline category builds its own field.
+    if (target.classList?.contains("ere-textarea")) return true;
+
     // Legacy: multiline (and any other) text widget owns the textarea as element/inputEl.
     for (const node of app.graph?._nodes ?? []) {
         if (!node.type?.startsWith(ERE_NODE_TYPE_PREFIX)) continue;

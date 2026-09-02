@@ -4,11 +4,27 @@ import re
 DEFAULT_PREFIX_SEPARATOR = ",\\n\\n"
 
 
+# Punctuation a part can already end with, which the separator must then not repeat.
+TERMINATORS = ",.;:!?"
+
+
+# The separator to put after `previous`, with its own leading punctuation dropped when that part
+# already ends in some: the default ",\n\n" after a sentence would otherwise read ".,".
+def separator_after(separator, previous):
+    last = previous.rstrip()[-1:]
+    return separator.lstrip(TERMINATORS) if last and last in TERMINATORS else separator
+
+
 # Join the non-empty parts with the (escaped) separator.
 def join_parts(parts, separator=None):
     if separator is None or separator == "":
         separator = DEFAULT_PREFIX_SEPARATOR
-    return str(separator).replace("\\n", "\n").join(p for p in parts if p)
+    separator = str(separator).replace("\\n", "\n")
+    out = ""
+    for part in (p for p in parts if p):
+        out += separator_after(separator, out) if out else ""
+        out += part
+    return out
 
 
 # Join prefix and text with the (escaped) separator.
@@ -162,4 +178,13 @@ if __name__ == "__main__":
     optional = c.INPUT_TYPES()["optional"]
     assert "row_7" in optional and optional["row_7"][0] == "STRING"
     assert ErePrompt().process("t", "p", None) == ("p,\n\nt",)
+
+    # A part that already ends in punctuation keeps it, and the separator drops its own.
+    assert join_parts(["a sentence.", "tags"], None) == "a sentence.\n\ntags"
+    assert join_parts(["trailing,", "tags"], None) == "trailing,\n\ntags"
+    assert join_parts(["what?", "tags"], ", ") == "what? tags"
+    assert join_parts(["tags", "more"], None) == "tags,\n\nmore"
+    assert join_parts(["a.", "b"], " | ") == "a. | b"       # nothing to drop
+    assert join_parts(["", "only"], None) == "only"
+    assert join_parts(["a. ", "b"], None) == "a. \n\nb"     # trailing space, still a sentence
     print("ok")

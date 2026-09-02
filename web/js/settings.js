@@ -176,6 +176,20 @@ app.registerExtension({
             options: ["Replace tags", "Append tags"].map(v => ({ text: v, value: v })),
         },
         {
+            id: "EreNodes.Nodes.TagSeparator",
+            name: "Default tag separator",
+            tooltip: "What goes between tags in a newly created node. Written as stored, with \\n for a line break. Existing nodes keep the separator they were saved with — change theirs in the node's ≡ menu, under Options.",
+            type: "text",
+            defaultValue: ", ",
+        },
+        {
+            id: "EreNodes.Nodes.PrefixSeparator",
+            name: "Default node separator",
+            tooltip: "What goes between a newly created node and the node feeding its prefix (and between a Composer's categories). Written as stored, with \\n for a line break. Existing nodes keep the separator they were saved with — change theirs in the node's ≡ menu, under Options.",
+            type: "text",
+            defaultValue: ",\\n\\n",
+        },
+        {
             id: "EreNodes.Nodes.TagAreaScroll",
             name: "Scrollable Tag Area",
             tooltip: "When on, resizing a node smaller than its tags scrolls them. When off (default), the node always grows/shrinks to fit the tags — only width is free.",

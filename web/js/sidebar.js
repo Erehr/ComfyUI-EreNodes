@@ -1,6 +1,7 @@
 import { app } from "../../../scripts/app.js";
 import { getCache, isNotFound, loadStyle, clearMissingCache, isAcceptedImage, extractFromImage, tagsFromResult, forgetVerdicts } from "./util.js";
-import { SURFACE_CLASS, injectTagStyles, renderTagTile, previewUrl, bumpPreview } from "./tagview.js";
+import { SURFACE_CLASS, injectTagStyles, renderTagTile, previewUrl, bumpPreview,
+         TILE_SIZE, TILE_GAP, TILE_SIZES, TILE_RATIOS, tileBoxFor } from "./tagview.js";
 import { showPreviewFor, hidePreviewPanel, setPreviewHandlers } from "./preview.js";
 import { startExternalDrag, isDragActive, injectDragStyles } from "./dragdrop.js";
 import { ActionContextMenu, TagIndexContextMenu } from "./contextmenu.js";
@@ -53,25 +54,7 @@ const MOVE_THRESHOLD = 5;
 const SEARCH_DEBOUNCE_MS = 250;
 // Slow enough not to hammer the server, fast enough that a 36k first build visibly moves.
 const INDEX_POLL_MS = 600;
-// Folder tiles stay small whatever the groups do: a folder icon gains nothing from size.
-const TILE_SIZE = 96;
-
-// Grid gap, in px, shared with the stylesheet so the two cannot drift.
-// A large tile spans two small ones plus the gap: 4 x 96 + 3 gaps == 2 x 200 + 1 gap.
-const TILE_GAP = 8;
-
-const TILE_SIZES = [
-    { id: "small", width: TILE_SIZE, icon: "icon-[lucide--minimize-2]", label: "Small previews" },
-    { id: "large", width: TILE_SIZE * 2 + TILE_GAP, icon: "icon-[lucide--maximize-2]", label: "Large previews" },
-];
-
-// Portrait only - landscape tiles read badly in a narrow sidebar.
-// ComfyUI compiles a subset of lucide without the rectangles, so all three stretch the square: at 16px the scaling reads as the shape.
-const TILE_RATIOS = [
-    { id: "1-1",  ratio: 1,      label: "Aspect 1:1" },
-    { id: "3-4",  ratio: 3 / 4,  label: "Aspect 3:4" },
-    { id: "9-16", ratio: 9 / 16, label: "Aspect 9:16" },
-];
+// Tile sizes, ratios and the grid gap live in tagview.js: the Gallery node's menu offers the same set.
 const RATIO_ICON = "icon-[lucide--square]";
 
 const state = {
@@ -1014,9 +997,7 @@ function collectRows(node, out, container, searching, level = 1) {
 
 /** The pixel box for an item tile, from the size and ratio toggles. */
 function tileBox() {
-    const size = TILE_SIZES.find(o => o.id === state.tileSize[state.tab]) ?? TILE_SIZES[0];
-    const ratio = TILE_RATIOS.find(o => o.id === state.tileRatio[state.tab]) ?? TILE_RATIOS[0];
-    return { width: size.width, height: Math.round(size.width / ratio.ratio) };
+    return tileBoxFor(state.tileSize[state.tab], state.tileRatio[state.tab]);
 }
 
 function makeTile(row, box = null) {

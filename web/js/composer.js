@@ -1,11 +1,11 @@
 import { app } from "../../../scripts/app.js";
 import { initializeSharedPromptFunctions } from "../prompt.js";
-import { captureUndoState, beginUndoTransaction, endUndoTransaction, loadStyle, ensureChecked } from "./util.js";
-import { parseTags } from "./parser.js";
+import { captureUndoState, beginUndoTransaction, endUndoTransaction, loadStyle, ensureChecked, tagsToText, insertTagsAsText } from "./util.js";
+import { parseTags, parseTextToTagData, joinPrompt, looksLikeProse } from "./parser.js";
 import { SURFACE_CLASS, renderSwitchEl } from "./tagview.js";
-import { markDropZone, clearAllSelections, pruneSelection, buildCountBadges, isDragActive } from "./dragdrop.js";
-import { renderPill, hideNativeWidget } from "./renderer.js";
-import { ComposerRowContextMenu, ActionContextMenu } from "./contextmenu.js";
+import { markTextDropZone, clearAllSelections, pruneSelection, buildCountBadges, isDragActive } from "./dragdrop.js";
+import { renderTagBody, hideNativeWidget } from "./renderer.js";
+import { ActionContextMenu, TagContextMenuInsert } from "./contextmenu.js";
 
 loadStyle("composer");
 
@@ -19,6 +19,15 @@ const MOVE_THRESHOLD = 5;   // ...or move this far, whichever comes first
 // Row Model
 // One property, two shapes: a Composer stores `[{title, active, open, tags}]`, every other prompt node stores a flat tag list. A flat list read here is one category, which is all "convert a Cloud into a Composer" has to do.
 
+/** How a category draws itself. The same tag list, rendered as one of the prompt nodes would. */
+export const ROW_LAYOUTS = [
+    { id: "cloud", label: "Cloud" },
+    { id: "toggle", label: "Toggle" },
+    { id: "multiselect", label: "MultiSelect" },
+    { id: "gallery", label: "Gallery" },
+    { id: "multiline", label: "Multiline" },
+];
+
 function normalizeRow(row) {
     if (!row || typeof row !== "object") return null;
     return {
@@ -26,7 +35,12 @@ function normalizeRow(row) {
         // Off bypasses the row: it stops emitting, its tags keep their own states.
         active: row.active !== false,
         open: row.open !== false,
+        layout: ROW_LAYOUTS.some(l => l.id === row.layout) ? row.layout : "cloud",
         tags: Array.isArray(row.tags) ? row.tags : [],
+        // Multiline only: the row's prompt is this text verbatim, with no tags behind it.
+        text: typeof row.text === "string" ? row.text : "",
+        // Multiline only: a height the user dragged the field to. Null means "fit the text".
+        height: Number.isFinite(row.height) && row.height > 0 ? row.height : null,
     };
 }
 
@@ -42,7 +56,8 @@ function setRows(node, rows) {
     node.properties[TAGS_KEY] = JSON.stringify(rows, null, 2);
 }
 
-const makeRow = (title, tags = []) => ({ title, active: true, open: true, tags });
+const makeRow = (title, tags = [], layout = "cloud") =>
+    ({ title, active: true, open: true, layout, tags, text: "", height: null });
 
 /** Rows, normalized in place. A new node starts empty — a category nobody asked for is one to delete. */
 export function ensureRows(node) {
@@ -52,9 +67,11 @@ export function ensureRows(node) {
     return rows;
 }
 
-/** Flatten to a plain tag list, irreversibly. What Convert-to leaves behind. */
+/** Flatten to a plain tag list, irreversibly. What Convert-to leaves behind. A multiline category has no tags, so its text is parsed back into some — the same trip switching its layout would make. */
 export function flattenRows(node) {
-    node.properties[TAGS_KEY] = JSON.stringify(getRows(node).flatMap(r => r.tags), null, 2);
+    const tags = getRows(node).flatMap(row =>
+        row.layout === "multiline" ? parseTextToTagData(row.text || "") : row.tags);
+    node.properties[TAGS_KEY] = JSON.stringify(tags, null, 2);
 }
 
 // Pseudo Node
@@ -102,13 +119,93 @@ function hostFor(node, index) {
     return host;
 }
 
-/** Forget hosts past the last category, so a removed row cannot hold a selection. */
+/** Forget hosts and textareas past the last category, so a removed row cannot hold a selection. */
 function dropStaleHosts(node, rows) {
-    const cache = node._composerHosts;
-    if (!cache) return;
-    for (const index of [...cache.keys()]) {
-        if (index >= rows.length) cache.delete(index);
+    for (const cache of [node._composerHosts, node._composerAreas]) {
+        if (!cache) continue;
+        for (const index of [...cache.keys()]) {
+            if (index >= rows.length) cache.delete(index);
+        }
     }
+}
+
+// Keys typed in a category's field are the field's, not the app's: without this a bare "a" or "m"
+// opens a ComfyUI sidebar tab mid-word and Ctrl+Z undoes the graph instead of the typing.
+// Bound on window in the capture phase — the first hop — because stopping it at the element (as
+// the sidebar's rename field does) is too late for a handler bound above us in the same phase.
+// Only the keys the field itself consumes are stopped: arrows, Enter, Tab and Escape travel on,
+// so the autocomplete's own handler still drives its menu. Typing still reaches it through the
+// `input` event, which is what it listens to for composed (IME) text anyway.
+const FIELD_KEYS = /^(Backspace|Delete|Home|End|PageUp|PageDown)$/;
+window.addEventListener("keydown", (e) => {
+    if (!e.target?.classList?.contains("ere-textarea")) return;
+    const editing = !e.ctrlKey && !e.metaKey && !e.altKey
+        && (e.key.length === 1 || FIELD_KEYS.test(e.key));
+    const undo = (e.ctrlKey || e.metaKey) && "zyZY".includes(e.key);
+    if (editing || undo) e.stopPropagation();
+}, true);
+
+/**
+ * Height the field to its content. Skipped once the user has dragged it to a size of their own:
+ * that is a deliberate choice, and the node can be made shorter than its content on purpose
+ * (see the Scrollable tag area setting).
+ */
+function fitTextarea(area) {
+    if (area._ereLocked || !area.isConnected) return;
+    area.style.height = "auto";
+    const target = `${area.scrollHeight}px`;
+    area.style.height = target;
+    // What the resize observer compares against to tell our height from a dragged one.
+    area._ereAutoHeight = target;
+}
+
+/** Apply the row's stored height, or fit the text when it has none. */
+function applyTextareaHeight(area, row) {
+    area._ereLocked = !!row.height;
+    if (row.height) {
+        area.style.height = `${row.height}px`;
+        area._ereAutoHeight = area.style.height;
+        return;
+    }
+    fitTextarea(area);
+}
+
+/**
+ * One textarea per multiline category, kept across renders rather than rebuilt — the same reason
+ * the context menu carries its filter box over. A fresh element would lose focus, the caret and
+ * the height, and this node re-renders on every edit anywhere in it.
+ */
+function textareaFor(node, index) {
+    const cache = node._composerAreas || (node._composerAreas = new Map());
+    let area = cache.get(index);
+    if (!area) {
+        area = document.createElement("textarea");
+        area.className = "ere-textarea";
+        area.spellcheck = false;
+        area.placeholder = "Prompt text";
+        area.addEventListener("input", () => {
+            setRowText(node, index, area.value);
+            fitTextarea(area);
+        });
+        // Belt and braces for anything bound below the window guard above.
+        area.addEventListener("keydown", (e) => e.stopPropagation());
+        markTextDropZone(area, node);
+        // The resize grip writes `style.height` itself, which is how a dragged height is told from
+        // one we set. Anything else that changes the box (the node's width, so the text re-wraps)
+        // just re-fits, which is a no-op once the height already matches.
+        new ResizeObserver(() => {
+            const height = area.style.height;
+            if (height && height !== area._ereAutoHeight) {
+                area._ereLocked = true;
+                area._ereAutoHeight = height;
+                saveRowHeightSoon(node, index, parseFloat(height));
+                return;
+            }
+            fitTextarea(area);
+        }).observe(area);
+        cache.set(index, area);
+    }
+    return area;
 }
 
 // Transport
@@ -137,8 +234,7 @@ function syncRowWidgets(node, texts) {
 
 /** Rows join the way chained nodes do; Python repeats this on the same values. */
 function joinRows(texts, separator) {
-    const sep = String(separator || ",\\n\\n").replace(/\\n/g, "\n");
-    return texts.filter(t => t && t.trim()).join(sep);
+    return joinPrompt(texts.filter(t => t && t.trim()), separator || ",\\n\\n");
 }
 
 /** Recompute every category: its text, the flat mirror, the transport widgets and the node's combined text. */
@@ -150,11 +246,18 @@ export async function updateComposer(node) {
     beginUndoTransaction();
     try {
         for (const [index, row] of rows.entries()) {
+            // A multiline row emits its text as typed — that is the whole point of the layout.
+            if (row.layout === "multiline") {
+                texts.push(row.active ? (row.text || "") : "");
+                continue;
+            }
             const host = hostFor(node, index);
             host.title = row.title;
             host.properties._tagDataJSON = JSON.stringify(row.tags, null, 2);
-            // One separator setting for the node, not one per row.
+            // One separator setting for the node, not one per row. Tile size travels the same way.
             host.properties._tagSeparator = node.properties._tagSeparator;
+            host.properties._tagImageWidth = node.properties._tagImageWidth;
+            host.properties._tagImageHeight = node.properties._tagImageHeight;
             host.widgets[0].value = "";
             await host.computeText(host);
             texts.push(row.active ? host.widgets[0].value : "");
@@ -175,12 +278,110 @@ async function commit(node) {
     app.graph?.setDirtyCanvas?.(true, true);
 }
 
-export function addRow(node) {
+export function addRow(node, layout = "cloud") {
     const rows = getRows(node);
-    rows.push(makeRow(`Category ${rows.length + 1}`));
+    rows.push(makeRow(`Category ${rows.length + 1}`, [], layout));
     dropRowSelection(node);
     setRows(node, rows);
     commit(node);
+}
+
+/** A new category from the clipboard, drawn as whatever its text turns out to be. */
+export async function addRowFromClipboard(node) {
+    let text = "";
+    try { text = await navigator.clipboard.readText(); } catch { return; }
+    text = (text || "").trim();
+    if (!text) return;
+
+    const rows = getRows(node);
+    const title = `Category ${rows.length + 1}`;
+    if (looksLikeProse(text)) {
+        const row = makeRow(title, [], "multiline");
+        row.text = text;
+        rows.push(row);
+    } else {
+        const tags = parseTextToTagData(text);
+        if (!tags.length) return;
+        rows.push(makeRow(title, tags));
+    }
+    dropRowSelection(node);
+    setRows(node, rows);
+    commit(node);
+}
+
+/**
+ * Switch how a category draws itself. The four pill layouts share one tag list and convert
+ * nothing; multiline has no tags, so the trip in and out goes through text — lossy in exactly
+ * the place converting a whole node to Prompt Multiline has always been lossy.
+ */
+async function setRowLayout(node, index, layout) {
+    const rows = getRows(node);
+    const row = rows[index];
+    if (!row || row.layout === layout) return;
+
+    if (layout === "multiline") {
+        row.text = await tagsToText(row.tags, node.properties._tagSeparator);
+        row.tags = [];
+    } else if (row.layout === "multiline") {
+        row.tags = parseTextToTagData(row.text || "");
+        row.text = "";
+    }
+    row.layout = layout;
+    // The host at this index now holds a different tag list, so anything selected in it is stale.
+    clearAllSelections();
+    setRows(node, rows);
+    commit(node);
+}
+
+/** The "+" on a multiline category: the pick is written into the text at the caret, as a drop is. */
+function addTextTag(node, index, e) {
+    const area = node._composerAreas?.get(index);
+    if (!area) return;
+    const existing = parseTextToTagData(area.value).map(tag => ({ name: tag.name, type: tag.type }));
+    new TagContextMenuInsert(e, async (tagObject) => {
+        if (!tagObject?.name) return;
+        await insertTagsAsText(area, [{ ...tagObject, active: true }], node.properties._tagSeparator);
+    }, existing);
+}
+
+/** A dragged height, stored on the row so it survives a reload. Null means "fit the text" again. */
+function setRowHeight(node, index, height) {
+    const rows = getRows(node);
+    if (!rows[index] || rows[index].height === height) return;
+    rows[index].height = height;
+    setRows(node, rows);
+    // The field is already that tall; a repaint here would only cost it its focus.
+    node._ereDom?.markRendered?.();
+    captureUndoState();
+}
+
+// Dragging the grip fires the observer continuously; one write per gesture, not per pixel.
+let heightTimer = 0;
+function saveRowHeightSoon(node, index, height) {
+    clearTimeout(heightTimer);
+    heightTimer = setTimeout(() => setRowHeight(node, index, height), 200);
+}
+
+/** Back to fitting the text: the only way out of a height the user set by hand. */
+function fitRowHeight(node, index) {
+    setRowHeight(node, index, null);
+    const area = node._composerAreas?.get(index);
+    if (!area) return;
+    area._ereLocked = false;
+    fitTextarea(area);
+}
+
+/** A multiline row's text, saved without re-rendering — the textarea being typed into is in the DOM we would replace. */
+function setRowText(node, index, text) {
+    const rows = getRows(node);
+    if (!rows[index] || rows[index].text === text) return;
+    rows[index].text = text;
+    setRows(node, rows);
+    // Before the update: its undo checkpoint raises `graphChanged`, and the repaint that follows
+    // would re-parent the textarea being typed into — which blurs it, so the next character goes
+    // to <body> and ComfyUI's keybindings answer it instead.
+    node._ereDom?.markRendered?.();
+    updateComposer(node);
 }
 
 export function removeAllRows(node) {
@@ -223,6 +424,8 @@ function renameRow(node, index, title) {
     if (!rows[index] || rows[index].title === title) return;
     rows[index].title = title;
     setRows(node, rows);
+    // The label below is the repaint; `graphChanged` must not order another one.
+    node._ereDom?.markRendered?.();
     const label = node._ereDom?.content?.querySelector(
         `[data-ere-row="${index}"] .ere-composer-title`);
     if (label) {
@@ -271,20 +474,40 @@ async function moveRows(sourceNode, indices, targetNode, index, copy = false) {
     }
 }
 
-// A pill drag over a folded category opens it, rather than dropping into something the user cannot see. Its pills are already rendered inside the hidden body, so dropping the class is enough for the drag layer to find them — no re-render mid-drag.
+// A pill drag that *rests* on a folded category opens it, rather than dropping into something the
+// user cannot see. Its pills are already rendered inside the hidden body, so dropping the class is
+// enough for the drag layer to find them — no re-render mid-drag.
+// It waits, because a drag on its way to a row further down passes over every folded row between:
+// opening each one in turn moves the target out from under the pointer.
+const HOVER_OPEN_MS = 500;
+const hoverOpen = { el: null, timer: 0 };
+
+function cancelHoverOpen() {
+    clearTimeout(hoverOpen.timer);
+    hoverOpen.el = null;
+    hoverOpen.timer = 0;
+}
+
 window.addEventListener("pointermove", (e) => {
-    if (!isDragActive()) return;
-    const el = document.elementFromPoint(e.clientX, e.clientY)
-        ?.closest?.(".ere-composer-row.collapsed");
+    const el = isDragActive()
+        ? document.elementFromPoint(e.clientX, e.clientY)?.closest?.(".ere-composer-row.collapsed")
+        : null;
+    if (el === hoverOpen.el) return;
+    cancelHoverOpen();
     if (!el) return;
-    el.classList.remove("collapsed");
-    const node = el.closest(".ere-composer")?._ereComposerNode;
-    if (!node) return;
-    const rows = getRows(node);
-    const index = Number(el.dataset.ereRow);
-    if (!rows[index]) return;
-    rows[index].open = true;
-    setRows(node, rows);
+    hoverOpen.el = el;
+    hoverOpen.timer = setTimeout(() => {
+        cancelHoverOpen();
+        if (!isDragActive() || !el.isConnected) return;
+        el.classList.remove("collapsed");
+        const node = el.closest(".ere-composer")?._ereComposerNode;
+        if (!node) return;
+        const rows = getRows(node);
+        const index = Number(el.dataset.ereRow);
+        if (!rows[index]) return;
+        rows[index].open = true;
+        setRows(node, rows);
+    }, HOVER_OPEN_MS);
 }, true);
 
 // Row Selection
@@ -665,13 +888,70 @@ function rowButton(label, title, onClick) {
     return btn;
 }
 
-/** The row's ≡: tag actions on this category. The category itself is edited from the header's right-click menu. */
+/** The layouts a category can be drawn as, current one marked. */
+export function layoutMenuItem(node, index, current) {
+    return {
+        name: "Layout",
+        submenu: ROW_LAYOUTS.map(layout => ({
+            name: `${layout.id === current ? "✓ " : ""}${layout.label}`,
+            callback: () => setRowLayout(node, index, layout.id),
+        })),
+    };
+}
+
+/**
+ * The row's ≡, and its right-click: everything a category has.
+ * The title leads as a live field (focused on open) and Remove closes the list, so there is no
+ * second menu — two entries never justified one.
+ */
 function openRowMenu(node, index, host, e) {
+    const row = getRows(node)[index];
+    const anchor = { clientX: e.clientX, clientY: e.clientY };
+    const head = [
+        {
+            type: "input",
+            // Renaming does not re-render, so read the title back rather than trusting a closure.
+            value: row?.title || "",
+            placeholder: "Category",
+            onInput: (value) => renameRow(node, index, value),
+        },
+        null,
+        layoutMenuItem(node, index, row?.layout || "cloud"),
+        null,
+    ];
+    const tail = [null, { name: "Remove Category", callback: () => removeRow(node, index) }];
+
+    // A multiline row has no tags for any of the tag actions to act on.
+    if (row?.layout === "multiline") {
+        // Its text parses to tags like any other prompt text — one text pill per sentence — so
+        // saving and exporting a category of prose is the same action it is everywhere else.
+        const textTags = parseTextToTagData(row.text || "");
+        new ActionContextMenu(anchor, null, [
+            ...head,
+            { name: "Clear Text", callback: () => setRowText(node, index, "") },
+            // The one way back from a height dragged by hand.
+            { name: "Fit Height to Text", disabled: !row.height,
+              callback: () => fitRowHeight(node, index) },
+            null,
+            {
+                name: "Save Tag Group",
+                disabled: !textTags.length,
+                callback: () => host.onSaveTagGroup?.(e, { tags: textTags, indices: [] }),
+            },
+            {
+                name: "Export Tags (.json)",
+                disabled: !textTags.length,
+                callback: () => host.onExportTags?.(textTags),
+            },
+            ...tail,
+        ]);
+        return;
+    }
+
     const tags = parseTags(host.properties._tagDataJSON || "[]");
-    // Renaming does not re-render, so read the title back rather than trusting the closure.
-    const title = getRows(node)[index]?.title || "Category";
     // The node menu's own order, minus what only a whole node can do (convert, fit height).
-    new ActionContextMenu({ clientX: e.clientX, clientY: e.clientY }, title, [
+    new ActionContextMenu(anchor, null, [
+        ...head,
         { name: "Replace Tags from Clipboard", callback: () => host.onClipboardReplace?.() },
         { name: "Add Tags from Clipboard", callback: () => host.onClipboardAppend?.() },
         null,
@@ -688,13 +968,17 @@ function openRowMenu(node, index, host, e) {
         null,
         { name: "Import Tags (.json)", callback: () => host.onImportTags?.() },
         { name: "Export Tags (.json)", callback: () => host.onExportTags?.() },
+        ...tail,
     ]);
 }
 
 function renderRow(node, row, index, colors) {
+    const multiline = row.layout === "multiline";
     const host = hostFor(node, index);
     // Undo/redo re-renders without an update pass, so re-seed here.
     host.properties._tagDataJSON = JSON.stringify(row.tags, null, 2);
+    host.properties._tagImageWidth = node.properties._tagImageWidth;
+    host.properties._tagImageHeight = node.properties._tagImageHeight;
 
     // The row is the drag root: that class, `_ereNode` and `_ereMode` are how the drag layer resolves a drop target, and putting them here rather than on the tag area means a folded category still takes a drop (on its header).
     const el = document.createElement("div");
@@ -704,13 +988,17 @@ function renderRow(node, row, index, colors) {
         + (isRowSelected(node, index) ? " ere-selected" : "");
     el.dataset.ereRow = String(index);
     el._ereNode = host;
-    el._ereMode = "cloud";
+    // The drag layer treats the row as a node of that type — column drops for toggle, tile-sized
+    // placeholders for gallery, and no pill drops at all for multiline.
+    el._ereMode = row.layout;
 
     // `ere-toolbar` is what tells the drag layer this strip is not tag area: without it a press here would open a marquee and never reach the accordion or the row drag.
     const head = document.createElement("div");
     head.className = "ere-toolbar ere-composer-head";
     head.appendChild(rowButton("≡", "Category menu", (e) => openRowMenu(node, index, host, e)));
-    head.appendChild(rowButton("+", "Add tag", (e) => host.onAddTag?.(e, [0, 0])));
+    head.appendChild(rowButton("+", "Add tag", (e) => (multiline
+        ? addTextTag(node, index, e)
+        : host.onAddTag?.(e, [0, 0]))));
 
     const title = document.createElement("span");
     title.className = "ere-composer-title";
@@ -719,7 +1007,7 @@ function renderRow(node, row, index, colors) {
     head.appendChild(title);
 
     // What is folded away, by type — the drag ghost's badges. Only while folded: with the pills on screen it would be counting what you are looking at.
-    if (!row.open) {
+    if (!row.open && !multiline) {
         const badges = buildCountBadges(row.tags.filter(t => t.active !== false));
         if (badges) head.appendChild(badges);
     }
@@ -739,20 +1027,15 @@ function renderRow(node, row, index, colors) {
         clearRowSelection();
         toggleRow(node, index, "open");
     });
+    // A selection of several categories keeps its right-click menu: it acts on the set, not on
+    // this row, so it is not the ≡'s to open. A single category has no right-click menu at all —
+    // the ≡ is the one way in, and a header opening the same entries is a second place to look.
     head.addEventListener("contextmenu", (e) => {
+        const selected = selectedRowIndices(node);
+        if (selected.length < 2 || !selected.includes(index)) return;
         e.preventDefault();
         e.stopPropagation();
-        // Right-clicking inside a selection acts on the whole set; outside one drops it.
-        const selected = selectedRowIndices(node);
-        if (selected.length > 1) {
-            if (selected.includes(index)) return openSelectionMenu(node, selected, e);
-            clearRowSelection();
-        }
-        new ComposerRowContextMenu({ clientX: e.clientX, clientY: e.clientY }, {
-            title: row.title || "",
-            onRename: (value) => renameRow(node, index, value),
-            onRemove: () => removeRow(node, index),
-        });
+        openSelectionMenu(node, selected, e);
     });
     head.addEventListener("pointerdown", (e) => {
         if (e.button !== 0) return;
@@ -763,19 +1046,37 @@ function renderRow(node, row, index, colors) {
     el.appendChild(head);
 
     const body = document.createElement("div");
-    body.className = "ere-composer-body";
-    const flow = document.createElement("div");
-    flow.className = "ere-flow ere-composer-tags";
-    markDropZone(flow, "flow");
-    body.appendChild(flow);
+    // The field is the whole body, so it carries the padding and the tint (see composer.css).
+    body.className = "ere-composer-body" + (multiline ? " ere-composer-text" : "");
     el.appendChild(body);
 
-    host._ereDom = { el, content: flow, render: () => node._ereDom?.render?.() };
-
-    pruneSelection(host, row.tags);
-    for (let i = 0; i < row.tags.length; i++) {
-        flow.appendChild(renderPill(host, row.tags[i], i, colors, "cloud"));
+    if (multiline) {
+        const area = textareaFor(node, index);
+        // While it has focus, what the user is typing is newer than what we were rendered with.
+        const focused = document.activeElement === area;
+        if (!focused && area.value !== (row.text || "")) {
+            area.value = row.text || "";
+        }
+        // Re-parenting takes an element out of the document for an instant, which blurs it —
+        // and a blurred field hands the next keystroke to ComfyUI's keybindings. Put it back.
+        const [start, end] = [area.selectionStart, area.selectionEnd];
+        body.appendChild(area);
+        if (focused) {
+            area.focus();
+            area.setSelectionRange(start, end);
+        }
+        // After appending: a detached textarea has no scrollHeight to fit to.
+        applyTextareaHeight(area, row);
+        // No pills here, so nothing should be holding this row's previous tag area.
+        host._ereDom = null;
+        return el;
     }
+
+    // Before rendering: the pills read the selection as they are built.
+    pruneSelection(host, row.tags);
+    const tagArea = renderTagBody(host, body, row.layout, colors, row.tags);
+    tagArea.classList.add("ere-composer-tags");
+    host._ereDom = { el, content: tagArea, render: () => node._ereDom?.render?.() };
     return el;
 }
 

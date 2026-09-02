@@ -1,5 +1,5 @@
 import { app } from "../../../scripts/app.js";
-import { beginUndoTransaction, endUndoTransaction, loadStyle } from "./util.js";
+import { beginUndoTransaction, endUndoTransaction, loadStyle, insertTagsAsText, caretIndexFromPoint, getElementOrCursorCoords } from "./util.js";
 import { ActionContextMenu } from "./contextmenu.js";
 import { accentForTags, hexToRgbTriplet, TYPE_FILL, DEFAULT_FILL, injectTagStyles, renderTagPill } from "./tagview.js";
 import { parseTags } from "./parser.js";
@@ -178,12 +178,21 @@ export function handlePillSelectClick(node, index, e) {
 
 function rootOf(el) {
     const root = el?.closest?.(".erenodes-dom");
-    if (!root || root.classList.contains("ere-multiline")) return null;
+    // A multiline surface has no pills — it takes text drops instead. Read from the mode rather
+    // than the class, which also carries the Multiline *node*'s layout rules.
+    if (!root || root._ereMode === "multiline") return null;
     return root;
 }
 
 function pillElement(node, index) {
     return node?._ereDom?.content?.querySelector(`[data-ere-index="${index}"]`) ?? null;
+}
+
+/** What the drag is carrying: the source node's picked tags, or an external payload. */
+function draggedTags(d) {
+    return d.sourceNode
+        ? d.indices.map(i => getTags(d.sourceNode)[i]).filter(Boolean)
+        : (d.externalTags || []);
 }
 
 /** Visible drop candidates (the dragged pills are hidden, so they drop out). */
@@ -281,14 +290,22 @@ function buildGhost(elements, primary, scale, tags = []) {
     // Not `erenodes-dom`: that is what rootOf() matches, and the ghost must never be a target.
     ghost.className = "ere-surface ere-drag-ghost";
 
+    // A text pill keeps the width it is drawn at — its whole row — so the ghost matches the shape
+    // that will land, and can never be wider than the pill it came from. Its *height* is left to
+    // dragdrop.css, which collapses it to one ellipsised row: a paragraph on the cursor is
+    // unreadable and hangs over everything.
+    const sizeFromSource = (clone, src) => {
+        clone.style.width = `${src.offsetWidth}px`;
+        if (!clone.classList.contains("ere-text")) clone.style.height = `${src.offsetHeight}px`;
+    };
+
     for (const [i, src] of elements.slice(1, 3).entries()) {
         const clone = src.cloneNode(true);
         clone.classList.remove("ere-selected", "ere-drag-source");
         clone.style.position = "absolute";
         clone.style.left = `${(i + 1) * 4}px`;
         clone.style.top = `${(i + 1) * 4}px`;
-        clone.style.width = `${src.offsetWidth}px`;
-        clone.style.height = `${src.offsetHeight}px`;
+        sizeFromSource(clone, src);
         clone.style.opacity = String(0.7 - i * 0.2);
         ghost.appendChild(clone);
     }
@@ -296,8 +313,7 @@ function buildGhost(elements, primary, scale, tags = []) {
     const main = primary.cloneNode(true);
     main.classList.remove("ere-selected", "ere-drag-source");
     main.style.position = "relative";
-    main.style.width = `${primary.offsetWidth}px`;
-    main.style.height = `${primary.offsetHeight}px`;
+    sizeFromSource(main, primary);
     ghost.appendChild(main);
 
     const total = tags.length || elements.length;
@@ -606,6 +622,10 @@ function beginDrag() {
         origin: null,
         sidebarZone: null,
         sidebarDrop: null,
+        textZone: null,
+        textCaret: null,
+        textIndex: null,
+        textAt: null,
         raf: 0,
     };
     state.pending = null;
@@ -627,6 +647,24 @@ function updateDrag(x, y) {
     d.ghost.style.top = `${y - d.grabY}px`;
 
     const under = document.elementFromPoint(x, y);
+
+    // A textarea that opted in takes the tags as text. Checked first: a multiline surface is
+    // deliberately invisible to rootOf(), so there is nothing else here to compete with.
+    const textZone = under?.closest?.("[data-ere-text-drop]");
+    if (textZone) {
+        if (d.placeholder.parentNode) d.placeholder.remove();
+        d.ghost.classList.remove("ere-no-drop");
+        highlightTarget(null);
+        setSidebarTarget(d, null);
+        setTextTarget(d, textZone, x, y);
+        d.target = null;
+        d.dropIndex = null;
+        d.lastKey = null;
+        setCopyMode(d, d.alt && !d.variants && !!d.sourceNode
+            && textZone._ereTextNode !== d.sourceNode);
+        return;
+    }
+    setTextTarget(d, null);
 
     // The sidebar is a second kind of drop target.
     // A zone can refuse this drag (a folder will not take what already sits in it), and refusing makes the whole drop invalid rather than handing it to an outer zone.
@@ -683,6 +721,124 @@ function updateDrag(x, y) {
     d.target = targetNode;
     d.targetMode = mode;
     d.dropIndex = toDataIndex(pos, items);
+}
+
+// Text Drop
+// Tags dropped into a textarea arrive as the prompt they would emit. Only the two textareas that
+// opt in are ever targets: the Prompt Multiline node's and a Composer multiline row's.
+
+/**
+ * Let a textarea take tag drops.
+ * @param {object} node  whose `_tagSeparator` joins the inserted tags
+ */
+export function markTextDropZone(el, node) {
+    if (!el) return;
+    el.dataset.ereTextDrop = "1";
+    el._ereTextNode = node;
+}
+
+/**
+ * The nearest position to `index` that is not inside a word: a drop belongs between words, never
+ * in the middle of one. Start and end of the text count as gaps, as does either side of a
+ * space or a comma.
+ */
+export function snapToGap(text, index) {
+    const gap = (i) => i <= 0 || i >= text.length
+        || /[\s,]/.test(text[i - 1]) || /[\s,]/.test(text[i]);
+    const i = Math.max(0, Math.min(index, text.length));
+    if (gap(i)) return i;
+    let left = i;
+    let right = i;
+    while (left > 0 && !gap(left)) left--;
+    while (right < text.length && !gap(right)) right++;
+    return (i - left <= right - i) ? left : right;
+}
+
+/** Self-check for snapToGap: `import("./js/dragdrop.js").then(m => m.demo())` in the console. */
+export function demo() {
+    const eq = (got, want, what) => {
+        if (got !== want) throw new Error(`snapToGap ${what}: got ${got}, want ${want}`);
+    };
+    const t = "blue sunlight, now";
+    eq(snapToGap(t, 8), 5, "mid-word snaps to the nearer edge (left)");
+    eq(snapToGap(t, 11), 13, "mid-word snaps to the nearer edge (right)");
+    eq(snapToGap(t, 5), 5, "already at a space");
+    eq(snapToGap(t, 14), 14, "already after a comma");
+    eq(snapToGap(t, 0), 0, "start");
+    eq(snapToGap(t, t.length), t.length, "end");
+    eq(snapToGap(t, 999), t.length, "past the end clamps");
+    eq(snapToGap(t, -5), 0, "before the start clamps");
+    eq(snapToGap("", 0), 0, "empty");
+    eq(snapToGap("word", 2), 0, "single word snaps to whichever end is nearer");
+    eq(snapToGap("word", 3), 4, "…and to the other end past the middle");
+    console.log("[EreNodes] snapToGap ok");
+    return true;
+}
+
+/** The insertion bar, drawn at the snapped index and re-measured only when that index moves. */
+function setTextTarget(d, el, x = 0, y = 0) {
+    if (!el) {
+        if (!d.textZone) return;
+        d.textCaret?.remove();
+        d.textCaret = null;
+        d.textZone = null;
+        d.textIndex = null;
+        d.textAt = null;
+        return;
+    }
+    if (d.textZone !== el) {
+        d.textZone = el;
+        d.textIndex = null;
+        d.textAt = null;
+    }
+    // Locating the caret costs a handful of mirror measurements, so only when the pointer moved.
+    if (d.textAt && Math.hypot(x - d.textAt.x, y - d.textAt.y) < 3 && d.textCaret) return;
+    d.textAt = { x, y };
+
+    const index = snapToGap(el.value, caretIndexFromPoint(el, x, y));
+    if (index === d.textIndex && d.textCaret) return;
+    d.textIndex = index;
+
+    if (!d.textCaret) {
+        d.textCaret = document.createElement("div");
+        d.textCaret.className = "ere-text-caret";
+        document.body.appendChild(d.textCaret);
+    }
+    const at = getElementOrCursorCoords(el, index);
+    const box = el.getBoundingClientRect();
+    // A caret for text scrolled out of view would otherwise be drawn outside the field.
+    const top = Math.min(Math.max(at.y, box.top), box.bottom);
+    Object.assign(d.textCaret.style, {
+        left: `${Math.min(Math.max(at.x, box.left), box.right)}px`,
+        top: `${top}px`,
+        height: `${Math.min(at.lineHeight || 14, box.bottom - top)}px`,
+    });
+}
+
+/** Insert the dragged tags as text, and take them out of the node they came from. */
+async function dropIntoText(d) {
+    const el = d.textZone;
+    const node = el?._ereTextNode;
+    const dragged = draggedTags(d);
+    if (!el || !dragged.length) return;
+    // Text has no on/off, so a disabled pill dropped here arrives enabled. Emitting nothing for it
+    // would make the drop look broken, and refusing the drop loses a tag the user aimed at a field.
+    const tags = dragged.map(tag => ({ ...tag, active: true }));
+
+    beginUndoTransaction();
+    try {
+        const inserted = await insertTagsAsText(
+            el, tags, node?.properties?._tagSeparator, d.textIndex);
+        if (!inserted) return;
+        // A drag out of a node is a move unless Alt says otherwise; an external payload has no source.
+        if (d.sourceNode && !d.alt) {
+            const moved = new Set(d.indices);
+            await setTags(d.sourceNode, getTags(d.sourceNode).filter((_, i) => !moved.has(i)));
+        }
+        clearSelectionState(d.sourceNode);
+    } finally {
+        endUndoTransaction();
+    }
 }
 
 /** Track (and highlight) a sidebar folder row as the drop target. */
@@ -762,6 +918,10 @@ export function startExternalDrag({ tags, label, altTags = null, altLabel = "", 
         copying: false,
         sidebarZone: null,
         sidebarDrop: null,
+        textZone: null,
+        textCaret: null,
+        textIndex: null,
+        textAt: null,
         raf: 0,
     };
 
@@ -806,6 +966,14 @@ function sizePlaceholder(d, targetNode, container, mode) {
     if (mode === "gallery") {
         ph.style.width = `${targetNode.properties?._tagImageWidth ?? 100}px`;
         ph.style.height = `${targetNode.properties?._tagImageHeight ?? 100}px`;
+        return;
+    }
+
+    // A text pill takes the whole row wherever it lands, so the probe below would measure the
+    // wrong thing entirely — it asks how wide the words are.
+    if (draggedTags(d).some(tag => tag?.type === "text")) {
+        ph.style.width = "100%";
+        ph.style.height = `${PILL_ROW_H}px`;
         return;
     }
 
@@ -870,6 +1038,7 @@ function teardownDrag() {
     if (d.raf) cancelAnimationFrame(d.raf);
     d.ghost.remove();
     d.placeholder.remove();
+    d.textCaret?.remove();
     d.sidebarZone?.classList.remove("ere-sb-drop-target");
     clearDragAccent();
     document.body.classList.remove("ere-dragging-active");
@@ -904,6 +1073,11 @@ export function isDragActive() {
 async function finishDrag() {
     const d = teardownDrag();
     if (!d) return;
+
+    if (d.textZone) {
+        await dropIntoText(d);
+        return;
+    }
 
     /** Dropped on the sidebar rather than a node — hand the payload over and let it decide (entries already in the sidebar move; tags from a node open the tag group editor). */
     if (d.sidebarDrop) {

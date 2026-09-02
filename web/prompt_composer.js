@@ -1,10 +1,19 @@
 import { app } from "../../scripts/app.js";
-import { initializeSharedPromptFunctions, applyContextMenuPatch, convertMenuItem } from "./prompt.js";
+import { initializeSharedPromptFunctions, applyContextMenuPatch, convertMenuItem, optionsMenuItem, tileMenuItems } from "./prompt.js";
 import { attachTagDomWidget } from "./js/renderer.js";
 import { ActionContextMenu } from "./js/contextmenu.js";
-import { ensureRows, updateComposer, renderComposer, addRow, removeAllRows, setAllRows, flattenRows } from "./js/composer.js";
+import { ensureRows, updateComposer, renderComposer, addRow, addRowFromClipboard, removeAllRows, setAllRows, flattenRows, getRows, ROW_LAYOUTS } from "./js/composer.js";
 
 const NODE_TYPE = "ErePromptComposer";
+
+/** The "+ Category" caret: add a category already set to a layout. */
+function openAddRowMenu(node, e) {
+    new ActionContextMenu({ clientX: e.clientX, clientY: e.clientY }, "",
+        ROW_LAYOUTS.map(layout => ({
+            name: layout.label,
+            callback: () => addRow(node, layout.id),
+        })));
+}
 
 /** The node's ≡: what applies to the whole stack. Per-category actions live on the row. */
 function openComposerMenu(node, e) {
@@ -12,6 +21,10 @@ function openComposerMenu(node, e) {
     const convert = (type) => { flattenRows(node); node.convertTo(type); };
     new ActionContextMenu({ clientX: e.clientX, clientY: e.clientY }, node.title, [
         { name: "Add Category", callback: () => addRow(node) },
+        { name: "Add Category as", submenu: ROW_LAYOUTS.map(layout => ({
+            name: layout.label, callback: () => addRow(node, layout.id) })) },
+        null,
+        { name: "Create Category from Clipboard", callback: () => addRowFromClipboard(node) },
         null,
         { name: "Expand All", callback: () => setAllRows(node, "open", true) },
         { name: "Collapse All", callback: () => setAllRows(node, "open", false) },
@@ -20,6 +33,9 @@ function openComposerMenu(node, e) {
         { name: "Disable All Categories", callback: () => setAllRows(node, "active", false) },
         { name: "Remove All Categories", callback: () => removeAllRows(node) },
         null,
+        // Tile controls only once a category is drawn as a gallery, which is the only thing they affect.
+        optionsMenuItem(node, getRows(node).some(r => r.layout === "gallery")
+            ? tileMenuItems(node) : []),
         convertMenuItem(node, convert),
     ]);
 }
@@ -47,11 +63,15 @@ app.registerExtension({
             node.onUpdateTextWidget = (n) => updateComposer(n || node);
             node.onRenderComposer = (content, colors) => renderComposer(node, content, colors);
             node.onActionMenu = (e) => openComposerMenu(node, e);
+            // Ctrl+V on the node: always a new category, never a replace — the node has no tag
+            // list of its own to replace, and the categories it has are the point of it.
+            node.onClipboardPaste = () => addRowFromClipboard(node);
 
             // The toolbar's "+ Category" (renderButtons) rides the shared button channel.
             const origPillClick = node.onTagPillClick;
             node.onTagPillClick = (e, pos, pill) => {
                 if (pill?.label === "button_add_row") return addRow(node);
+                if (pill?.label === "button_add_row_menu") return openAddRowMenu(node, e);
                 return origPillClick?.(e, pos, pill);
             };
 
