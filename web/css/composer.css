@@ -7,11 +7,12 @@
     gap: 5px;
     width: 100%;
 }
+/* Padding sits on the header and the body separately, not on the row: the body is then a band
+   the full width of the row, which is what lets a layout tint its whole area. */
 .ere-surface .ere-composer-row {
     display: flex;
     flex-direction: column;
-    gap: 5px;
-    padding: 5px;
+    gap: 0;
     border: 1px solid #444;
     border-radius: 5px;
     background: var(--component-node-widget-background, #222);
@@ -25,6 +26,7 @@
     align-items: center;
     gap: 5px;
     min-height: 20px;
+    padding: 5px;
     cursor: pointer;
     user-select: none;
 }
@@ -46,8 +48,19 @@
    draws its own box — the rule is what keeps the header from reading as part of them. */
 .ere-surface .ere-composer-body {
     min-width: 0;
-    padding-top: 5px;
+    padding: 5px;
     border-top: 1px dashed #4c4c4c;
+}
+/* A MultiSelect category needs the panel to read as a panel. Its own shade is the row's, so it
+   would disappear into it; one step darker separates them without a second border. */
+/* The same with Toggle rows */ 
+.ere-surface .ere-composer-body .ere-panel,
+.ere-surface .ere-composer-body .ere-toggle-row {
+    background: #2b2c2f;
+}
+/* Multiline: the field *is* the body, so the tint goes edge to edge and the padding with it. */
+.ere-surface .ere-composer-body.ere-composer-text {
+    padding: 0;
 }
 .ere-surface .ere-composer-row.collapsed .ere-composer-body {
     display: none;
@@ -69,6 +82,45 @@
 .ere-surface .ere-btn.ere-composer-add {
     width: auto;
     padding: 0 8px;
+}
+/* Split button: one control, two hit boxes. The label adds a category, the caret picks its
+   layout first — the shape every web toolbar uses for "do the usual thing, or choose". */
+.ere-surface .ere-split-btn {
+    display: flex;
+    align-items: stretch;
+}
+.ere-surface .ere-split-btn > .ere-btn.ere-composer-add {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+}
+.ere-surface .ere-btn.ere-composer-add-caret {
+    width: 14px;
+    margin-left: -1px;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    font-size: 9px;
+}
+
+/* A multiline category: the row's whole body is the field. No border of its own — the row already
+   draws one, and a second one inside it reads as a separate control sitting in a container. The
+   tint is the MultiSelect panel's, so the two layouts read as the same kind of area. */
+.ere-surface .ere-composer-body > .ere-textarea {
+    display: block;
+    width: 100%;
+    /* One line plus its padding: the height follows the text from there (fitTextarea). */
+    min-height: 62px;
+    box-sizing: border-box;
+    padding: 10px;
+    border: none;
+    background: #2b2c2f;
+    /* The row's own corners, so the tint does not square off the bottom of it. */
+    border-radius: 0 0 4px 4px;
+    color: var(--input-text, #ddd);
+    font: 12px monospace;
+    resize: vertical;
+}
+.ere-surface .ere-composer-body > .ere-textarea:focus {
+    outline: none;
 }
 
 /* A drop lands where the placeholder is; the shared outline is drawn behind the row and

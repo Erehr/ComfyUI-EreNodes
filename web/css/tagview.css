@@ -17,6 +17,12 @@
     flex-direction: column;
     gap: 5px;
 }
+/* While a Nodes 2.0 resize drag is in flight (see beginResizeDrag): the tag area reports no
+   intrinsic height, so it cannot act as a floor for ComfyUI's per-pointermove clamp. It is still
+   drawn — as a flex child of a column with a definite height it fills what the node has. */
+.erenodes-dom.ere-resizing .ere-scroll {
+    contain: size;
+}
 .erenodes-dom.ere-multiline {
     height: auto;
     flex: 0 0 auto;
@@ -42,6 +48,35 @@
     flex-wrap: wrap;
     gap: 5px;
     align-items: flex-start;
+}
+/* A `text` pill is an ordinary pill in every respect but two: it takes the whole row, and it
+   wraps instead of being capped at one line. Colour aside, that is the entire difference —
+   anything else here would drift from how every other pill is drawn. */
+.ere-surface .ere-pill.ere-text {
+    flex-basis: 100%;
+    height: auto;
+    min-height: 20px;
+    white-space: pre-wrap;
+}
+.ere-surface .ere-toggle-row.ere-text {
+    height: auto;
+    min-height: 20px;
+}
+.ere-surface .ere-toggle-row.ere-text .ere-label {
+    white-space: pre-wrap;
+}
+/* Beside the first line rather than centred on the paragraph: 4px puts a 10px switch on the
+   middle of an 18px line, which is where it sits in every other row. */
+.ere-surface .ere-toggle-row.ere-text .ere-switch {
+    align-self: flex-start;
+    margin-top: 4px;
+}
+
+/* Toggle rows: one per line, full width. */
+.ere-surface .ere-column {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
 }
 .ere-surface .ere-btn {
     width: 20px;
@@ -85,7 +120,7 @@
     color: #FFF;
 }
 .ere-surface .ere-pill.inactive {
-    opacity: .75;
+    opacity: .5;
 }
 .ere-surface .ere-pill.ere-more {
     background: transparent;
@@ -123,8 +158,10 @@
     user-select: none;
     overflow: hidden;
 }
+/* Half, not three quarters: a text pill's own fill is dark, so at .75 a disabled one read as
+   *darker* than an enabled one — the wrong way round for "switched off". */
 .ere-surface .ere-toggle-row.inactive {
-    opacity: .75;
+    opacity: .5;
 }
 .ere-surface .ere-toggle-row .ere-label {
     overflow: hidden;
@@ -293,6 +330,35 @@
 .litemenu-entry.ere-menu-dropzone .ere-extract-pane {
     aspect-ratio: 16 / 9;
     max-height: 120px;
+}
+
+/* A live field in a menu (the separator options). Label above, field below, and no hover
+   highlight — there is nothing here to pick. */
+.litemenu-entry.ere-menu-input {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    background: none !important;
+    cursor: default;
+}
+.litemenu-entry.ere-menu-input > span {
+    opacity: .7;
+    font-size: 11px;
+}
+.litemenu-entry.ere-menu-input > input,
+.litemenu-entry.ere-menu-input > textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 3px 6px;
+    border: 1px solid #444;
+    border-radius: 4px;
+    background: var(--comfy-input-bg, #222);
+    color: var(--input-text, #ddd);
+    font-family: inherit;
+    font-size: 12px;
+}
+.litemenu-entry.ere-menu-input > textarea {
+    resize: vertical;
 }
 .ere-surface .ere-extract-busy {
     position: absolute;

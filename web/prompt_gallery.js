@@ -1,5 +1,5 @@
 import { app } from "../../scripts/app.js";
-import { initializeSharedPromptFunctions, applyContextMenuPatch } from "./prompt.js";
+import { initializeSharedPromptFunctions, applyContextMenuPatch, tileMenuItems } from "./prompt.js";
 import { attachTagDomWidget } from "./js/renderer.js";
 
 app.registerExtension({
@@ -28,6 +28,8 @@ app.registerExtension({
 
             const textWidget = this.widgets?.find(w => w.name === "text");
             initializeSharedPromptFunctions(this, textWidget);
+            // Read by the shared action menu, which puts them at the end of its Options flyout.
+            this.onExtraOptions = () => tileMenuItems(this);
             attachTagDomWidget(this, "gallery");
             this.onUpdateTextWidget(this);
         };

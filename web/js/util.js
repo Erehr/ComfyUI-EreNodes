@@ -1,5 +1,5 @@
 import { app } from "../../../scripts/app.js";
-import { parseTextToTagData, dedupeTags } from "./parser.js";
+import { parseTextToTagData, dedupeTags, formatTag, joinParts, separatorAfter } from "./parser.js";
 
 // Fetch Cache
 
@@ -276,4 +276,242 @@ export function clearMissingCache() {
     generation++;
     verdicts.clear();
     queue.clear();
+}
+
+// Caret Geometry
+
+/**
+ * The character index nearest a point in a textarea.
+ * `document.caretRangeFromPoint` does not answer this for a textarea — it hands back the control
+ * itself, or a node inside its shadow — so this binary-searches the caret positions the mirror
+ * below already measures. Positions run in reading order, which is what makes the search valid.
+ * It rounds up: any boundary left of the point counts as before it, so a pointer inside a
+ * character lands after it rather than at the nearer side. Half a character, and callers snap
+ * the result to a word gap anyway; testing the midpoint would double the measurements.
+ * ponytail: ~8 mirror builds per call, so callers throttle it; cache the mirror if it ever drags.
+ */
+export function caretIndexFromPoint(element, x, y) {
+    const value = element?.value ?? "";
+    let lo = 0;
+    let hi = value.length;
+    while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        const caret = getElementOrCursorCoords(element, mid);
+        // Before the point when its line ends above it, or it sits to the left on the same line.
+        const before = y > caret.bottom || (y >= caret.y && x > caret.x);
+        if (before) lo = mid + 1;
+        else hi = mid;
+    }
+    // Past the end of a line, every position on it is "before", so the search stops at the first
+    // position of the *next* line. Step back, or pointing to the right of a line would insert at
+    // the start of the one below it.
+    if (lo > 0 && y < getElementOrCursorCoords(element, lo).y) lo--;
+    return lo;
+}
+
+// Screen coordinates of the caret, or of the element itself when it is not a textarea.
+export function getElementOrCursorCoords(element, position) {
+    if (!element || typeof element.getBoundingClientRect !== 'function') {
+        return { x: 0, y: 0, right: 0, bottom: 0 };
+    }
+
+    const rect = element.getBoundingClientRect();
+
+    if (element.tagName !== 'TEXTAREA') {
+        return { x: rect.left, y: rect.top, right: rect.right, bottom: rect.bottom };
+    }
+
+    const scaleX = element.offsetWidth > 0 ? rect.width / element.offsetWidth : 1;
+    const scaleY = element.offsetHeight > 0 ? rect.height / element.offsetHeight : 1;
+
+    const style = getComputedStyle(element);
+
+    // Helper to get line-height in px, handling "normal" and unitless values.
+    const getLineHeightPx = () => {
+        const lineHeight = style.lineHeight;
+        if (lineHeight === 'normal') {
+            const temp = document.createElement('div');
+            temp.innerHTML = '&nbsp;';
+            Object.assign(temp.style, {
+                fontFamily: style.fontFamily,
+                fontSize: style.fontSize,
+                position: 'absolute',
+                visibility: 'hidden'
+            });
+            document.body.appendChild(temp);
+            const height = temp.offsetHeight;
+            document.body.removeChild(temp);
+            return height;
+        }
+        const numericLineHeight = parseFloat(lineHeight);
+        // If the parsed number is the same as the string, it's unitless.
+        if (String(numericLineHeight) === lineHeight) {
+            return numericLineHeight * parseFloat(style.fontSize);
+        }
+        return numericLineHeight;
+    };
+    const finalLineHeight = getLineHeightPx();
+
+    const text = element.value;
+    const selectionEnd = position ?? element.selectionEnd;
+    const before = text.substring(0, selectionEnd);
+
+    // Create a hidden "mirror" div to calculate the cursor's position.
+    const dummy = document.createElement("div");
+
+    [
+        'font', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontVariant',
+        'lineHeight', 'letterSpacing', 'wordSpacing', 'textIndent', 'textTransform',
+        'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+        'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+        'boxSizing', 'whiteSpace', 'wordWrap', 'wordBreak'
+    ].forEach(prop => dummy.style[prop] = style[prop]);
+
+    dummy.style.position = "absolute";
+    dummy.style.visibility = "hidden";
+    dummy.style.left = "-9999px";
+    dummy.style.top = "-9999px";
+    dummy.style.width = `${element.clientWidth}px`;
+    dummy.style.height = 'auto';
+    
+    // Use a unique ID for the marker span to avoid conflicts.
+    const markerId = `cursor-marker-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
+    dummy.innerHTML = before.replace(/\n/g, '<br />') + `<span id="${markerId}"></span>`;
+
+    document.body.appendChild(dummy);
+
+    const cursorMarker = dummy.querySelector(`#${markerId}`);
+    
+    const internalX = cursorMarker.offsetLeft;
+    const internalY = cursorMarker.offsetTop;
+    // The marker's offsetHeight is the line's rendered height inside the mirror.
+    const internalLineHeight = cursorMarker.offsetHeight || finalLineHeight;
+
+    document.body.removeChild(dummy);
+
+    const cursorX = rect.left + (internalX * scaleX) - (element.scrollLeft * scaleX);
+    const cursorY = rect.top + (internalY * scaleY) - (element.scrollTop * scaleY);
+    const cursorBottom = cursorY + (internalLineHeight * scaleY);
+
+    return {
+        x: cursorX,
+        y: cursorY,
+        right: cursorX, 
+        bottom: cursorBottom,
+        lineHeight: internalLineHeight * scaleY
+    };
+}
+
+// Tag Text
+
+/** A node's own prompt textarea: the native `text` widget's, which we never rebuild. */
+export function textareaOf(node) {
+    const widget = node?.widgets?.find(w => w.name === "text");
+    const host = widget?.inputEl ?? widget?.element;
+    if (!host) return null;
+    return host.tagName === "TEXTAREA" ? host : (host.querySelector?.("textarea") ?? null);
+}
+
+/**
+ * Put tags into a textarea as the prompt they emit, at `at` (default: the caret).
+ * The one path for it, so a drop and the "+" menu insert identically.
+ * A separator is added only on a side that has real content and does not already end in one.
+ */
+export async function insertTagsAsText(el, tags, tagSeparator, at = null) {
+    if (!el || !tags?.length) return false;
+    const text = await tagsToText(tags, tagSeparator);
+    if (!text) return false;
+
+    const separator = (tagSeparator || ", ").replace(/\\n/g, "\n");
+    const index = Math.max(0, Math.min(at ?? el.selectionStart ?? el.value.length, el.value.length));
+    const before = el.value.slice(0, index);
+    const after = el.value.slice(index);
+    // separatorAfter for the same reason the joins use it: after "a sentence." the separator's
+    // own comma is not wanted.
+    const lead = before.trim() && !/[\s,]$/.test(before) ? separatorAfter(separator, before) : "";
+    const trail = after.trim() && !/^[\s,]/.test(after) ? separator : "";
+
+    el.setRangeText(lead + text + trail, index, index, "end");
+    // The widget (or the Composer row) stores its value off this event, exactly as typing does.
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+}
+
+/**
+ * The prompt a tag list emits: active tags only, groups expanded from disk, lora triggers
+ * appended, strengths formatted, joined with the tag separator.
+ * @param {string} [tagSeparator]  as stored ("\n" escaped), defaults to ", "
+ */
+export async function tagsToText(tagData, tagSeparator) {
+    if (tagData.length === 0) return "";
+    const activeTags = tagData.filter(t => (t.active && t.name));
+
+    tagSeparator = (tagSeparator || ", ").replace(/\\n/g, "\n");
+
+    // Content only: joinParts puts the separators between them, and leaves out the one a part
+    // already ends with. Interleaving them by hand is what produced ".," after a sentence.
+    // A `text` tag is a *block*: it goes on its own line, which is what lets parseTextToTagData
+    // recognise it as prose when this text is read back (converting, pasting, extracting).
+    const segments = [];
+    let line = [];
+    const flush = () => {
+        if (line.length) segments.push({ text: joinParts(line, tagSeparator) });
+        line = [];
+    };
+
+    for (const tag of activeTags) {
+        if (tag.type === 'text') {
+            flush();
+            segments.push({ text: formatTag(tag), block: true });
+            continue;
+        }
+        if (tag.type !== 'group') {
+            line.push(formatTag(tag));
+            if (tag.type === 'lora' && tag.triggers?.length > 0) line.push(...tag.triggers);
+            continue;
+        }
+        // A group expands to its contents, in place.
+        flush();
+        try {
+            const filename = tag.extension ? `${tag.name}${tag.extension}` : tag.name;
+            const result = getCache(
+                `/erenodes/get_tag_group?filename=${encodeURIComponent(filename)}`, 'json');
+            const groupTagData = result instanceof Promise ? await result : result;
+            if (!Array.isArray(groupTagData)) continue;
+
+            const groupParts = [];
+            for (const gTag of groupTagData.filter(t => t.active && t.name)) {
+                groupParts.push(formatTag(gTag));
+                if (gTag.type === 'lora' && gTag.triggers?.length > 0) groupParts.push(...gTag.triggers);
+            }
+            if (!groupParts.length) continue;
+
+            let groupPart = joinParts(groupParts, tagSeparator);
+            const strength = parseFloat(tag.strength);
+            if (strength && !isNaN(strength) && strength !== 1.0) {
+                groupPart = `(${groupPart}:${strength.toFixed(2)})`;
+            }
+            segments.push({ text: groupPart });
+        } catch (error) {
+            console.error(`[EreNodes] Failed to load and parse tag group: ${tag.name}`, error);
+        }
+    }
+    flush();
+
+    // Everything is joined with the tag separator, except a boundary touching a text block, which
+    // ends the line instead: the separator's trailing space becomes the newline that keeps the
+    // sentence recognisable on the way back.
+    let out = "";
+    let previousBlock = false;
+    for (const segment of segments) {
+        if (!segment.text) continue;
+        if (out) {
+            out += (segment.block || previousBlock)
+                ? separatorAfter(tagSeparator.replace(/\s+$/, ""), out) + "\n"
+                : separatorAfter(tagSeparator, out);
+        }
+        out += segment.text;
+        previousBlock = !!segment.block;
+    }
+    return out;
 }

@@ -8,6 +8,9 @@ export const TYPE_FILL = {
     lora: "#415041",       // dark green
     embedding: "#504149",  // dark purple
     group: "#504C41",      // dark amber
+    // Prose is not a category of thing, it is the thing itself: near-black, and darker than the
+    // #2b2c2f a Composer body is drawn on so it still reads as a pill there.
+    text: "#262626",
 };
 export const DEFAULT_FILL = "#414650";
 
@@ -16,6 +19,7 @@ export const TOGGLE_KNOB = {
     lora: "#89a189",
     embedding: "#9b8899",
     group: "#9b9188",
+    text: "#9b9b9b",
 };
 export const TOGGLE_KNOB_DEFAULT = "#8899bb";
 
@@ -25,6 +29,7 @@ export const TYPE_ACCENT = {
     lora: "#5fbf6a",       // green
     embedding: "#d2687f",  // red
     group: "#e0a53f",      // amber
+    text: "#9aa0a6",       // neutral grey
     mixed: "#a97ee0",      // violet
 };
 export const DEFAULT_ACCENT = TYPE_ACCENT.tag;
@@ -48,6 +53,34 @@ export function hexToRgbTriplet(hex) {
     if (!m) return "74, 158, 255";
     const n = parseInt(m[1], 16);
     return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
+}
+
+// Tile Sizing
+// Shared by the sidebar's grid toggles and the Gallery node's menu, so the two cannot drift.
+
+/** Folder tiles stay small whatever the items do: a folder icon gains nothing from size. */
+export const TILE_SIZE = 96;
+/** Grid gap, in px, shared with sidebar.css. A large tile spans two small ones plus the gap. */
+export const TILE_GAP = 8;
+
+export const TILE_SIZES = [
+    { id: "small", width: TILE_SIZE, icon: "icon-[lucide--minimize-2]", label: "Small previews" },
+    { id: "large", width: TILE_SIZE * 2 + TILE_GAP, icon: "icon-[lucide--maximize-2]", label: "Large previews" },
+];
+
+// Portrait only - landscape tiles read badly in a narrow sidebar.
+// ComfyUI compiles a subset of lucide without the rectangles, so all three stretch the square: at 16px the scaling reads as the shape.
+export const TILE_RATIOS = [
+    { id: "1-1",  ratio: 1,      label: "Aspect 1:1" },
+    { id: "3-4",  ratio: 3 / 4,  label: "Aspect 3:4" },
+    { id: "9-16", ratio: 9 / 16, label: "Aspect 9:16" },
+];
+
+/** The pixel box for a size id and a ratio id. */
+export function tileBoxFor(sizeId, ratioId) {
+    const size = TILE_SIZES.find(o => o.id === sizeId) ?? TILE_SIZES[0];
+    const ratio = TILE_RATIOS.find(o => o.id === ratioId) ?? TILE_RATIOS[0];
+    return { width: size.width, height: Math.round(size.width / ratio.ratio) };
 }
 
 // Surface
@@ -102,7 +135,9 @@ export function bumpPreview(type, name) {
 export function renderTagPill(tag, opts = {}) {
     const colors = opts.colors ?? fallbackColors();
     const pill = document.createElement("div");
-    pill.className = "ere-pill" + (tag.active === false ? " inactive" : "");
+    // A text pill is a paragraph, not a chip — see .ere-text in tagview.css.
+    pill.className = "ere-pill" + (tag.active === false ? " inactive" : "")
+        + (tag.type === "text" ? " ere-text" : "");
 
     const fill = TYPE_FILL[tag.type] || DEFAULT_FILL;
     if (tag.active === false) {
@@ -152,7 +187,8 @@ export function renderSwitchEl(active, type) {
 export function renderToggleRowEl(tag, opts = {}) {
     const colors = opts.colors ?? fallbackColors();
     const row = document.createElement("div");
-    row.className = "ere-toggle-row" + (tag.active ? "" : " inactive");
+    row.className = "ere-toggle-row" + (tag.active ? "" : " inactive")
+        + (tag.type === "text" ? " ere-text" : "");
     if (!tag.active) row.style.color = colors.widgetText;
 
     row.appendChild(renderSwitchEl(tag.active, tag.type));

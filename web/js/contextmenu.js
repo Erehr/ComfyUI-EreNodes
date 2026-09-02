@@ -9,6 +9,8 @@ const PREVIEW_CLASS = "ere-menu-preview";
 // Menus size to their content between these bounds.
 const MENU_MIN_WIDTH = 160;
 const MENU_MAX_WIDTH = 320;
+// Editing a sentence in a 320px column is editing it through a letterbox.
+const TEXT_MENU_WIDTH = 460;
 
 // A menu can open before any node has mounted a widget, so the tag styles are ensured here too.
 injectTagStyles();
@@ -19,6 +21,14 @@ const isEditableTarget = (el) =>
 
 // Base class for dynamic context menus
 export class DynamicContextMenu { // Added export
+    /** Widen (or release) the menu for a mode that needs the room — the text field. */
+    setWidth(px) {
+        if (!this.root) return;
+        this.root.style.minWidth = px ? `${px}px` : "";
+        this.root.style.maxWidth = px ? `${px}px` : "";
+        this.clampToViewport();
+    }
+
     /** Keep a menu opened near an edge fully on screen. */
     clampToViewport() {
         if (!this.root) return;
@@ -64,7 +74,8 @@ export class DynamicContextMenu { // Added export
 
         const child = new DynamicContextMenu(
             { clientX: parentRect.right, clientY: itemRect.top }, null);
-        child.options = option.submenu;
+        // `null` is a separator here too, so a flyout is written like any other action list.
+        child.options = option.submenu.map(o => o ?? { type: 'separator' });
         child.autoHighlight = fromKeyboard;
         child.parentMenu = this;
         // Nothing in a flyout has to close by hand; picking one closes the chain.
@@ -167,7 +178,8 @@ export class DynamicContextMenu { // Added export
 
     handleKeyboard(e) {
         const navigable = o => !o.disabled && !o.skipNav
-            && o.type !== 'separator' && o.type !== 'title' && o.type !== 'filter';
+            && o.type !== 'separator' && o.type !== 'title'
+            && o.type !== 'filter' && o.type !== 'input';
         const enabledOptions = this.options.map((o, i) => navigable(o) ? i : -1).filter(i => i !== -1);
         if (enabledOptions.length === 0 && e.key !== 'Escape') return false;
 
@@ -258,11 +270,16 @@ export class DynamicContextMenu { // Added export
     /** The filter input is carried over, never rebuilt. Every keystroke re-renders the menu, and throwing the input away drops focus to <body> for a tick — long enough for the next key to reach ComfyUI's global keybindings instead of the field. */
     renderItems() {
         this.closeSubmenu();
-        const keptFilter = this.filterBox?.parentNode === this.root ? this.filterBox : null;
+        // Only carried over while the new options still have a filter: otherwise the old box
+        // would be left in the menu with nothing rendering it, and still take the focus.
+        const hasFilter = this.options.some(o => o.type === 'filter');
+        const keptFilter = hasFilter && this.filterBox?.parentNode === this.root ? this.filterBox : null;
+        if (!hasFilter) this.filterBox = null;
         for (const child of [...this.root.childNodes]) {
             if (child !== keptFilter) child.remove();
         }
         this.renderedOptionElements = [];
+        this.inputBox = null;
 
         this.options.forEach((option, i) => {
             let element;
@@ -293,7 +310,7 @@ export class DynamicContextMenu { // Added export
             this.renderedOptionElements.push(element);
         });
 
-        setTimeout(() => this.filterBox?.focus(), 0);
+        setTimeout(() => (this.filterBox ?? this.inputBox)?.focus(), 0);
         this.setInitialHighlight();
     }
 
@@ -307,6 +324,35 @@ export class DynamicContextMenu { // Added export
                 item.className = "litemenu-title";
                 item.innerHTML = `<div>${option.name}</div>`;
                 break;
+            case 'input': {
+                // A labelled field that applies as it is typed. Not `filter`: that one is the menu's
+                // search box, singular by construction and rebuilt on every keystroke.
+                item.className = "litemenu-entry submenu ere-menu-input";
+                if (option.name !== undefined) {
+                    const label = document.createElement("span");
+                    label.textContent = option.name;
+                    item.appendChild(label);
+                }
+                // A sentence needs room; a filename does not.
+                const input = document.createElement(option.multiline ? "textarea" : "input");
+                if (option.multiline) input.rows = option.rows ?? 4;
+                else input.type = "text";
+                input.value = option.value ?? "";
+                input.placeholder = option.placeholder || "";
+                input.addEventListener("input", () => option.onInput?.(input.value));
+                input.addEventListener("keydown", (e) => {
+                    // Shift+Enter types a newline; a plain Enter is the commit.
+                    if (e.key !== "Enter" || e.shiftKey || !option.onEnter) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    option.onEnter(input.value);
+                });
+                // Anywhere on the row belongs to the field, and no click here picks an option.
+                item.addEventListener("click", (e) => { e.stopPropagation(); input.focus(); });
+                item.appendChild(input);
+                this.inputBox ??= input;
+                break;
+            }
             case 'dropzone': {
                 // Reuses the extractor's pane so a drop target looks the same wherever it appears.
                 // `skipNav` keeps it out of arrow-key navigation - it has nothing to activate.
@@ -394,12 +440,22 @@ export class DynamicContextMenu { // Added export
                 return;
             }
             if (this.filterBox && e.target === this.filterBox) {
-                const isNavKey = ['ArrowUp', 'ArrowDown', 'Enter', 'Escape', 'Tab'].includes(e.key);
+                // Shift+Enter belongs to the field: it is how a newline is typed into one.
+                const isNavKey = ['ArrowUp', 'ArrowDown', 'Enter', 'Escape', 'Tab'].includes(e.key)
+                    && !(e.key === "Enter" && e.shiftKey);
                 const isOverridden = this.filterBoxOverrides && this.filterBoxOverrides.includes(e.key);
 
                 if (!isNavKey && !isOverridden) {
                     return;
                 }
+            }
+            // A plain field (type 'input') owns everything but Escape — including Enter, which is
+            // its own commit, and Shift+Enter, which is its newline. This handler is on `document`
+            // in the capture phase, so without it the menu would swallow the key before the field
+            // ever saw it.
+            if (e.key !== "Escape" && isEditableTarget(e.target) && e.target !== this.filterBox
+                && this.root?.contains(e.target)) {
+                return;
             }
             const handledByMenu = this.handleKeyboard(e);
             if (handledByMenu) {
@@ -967,7 +1023,8 @@ export class TagIndexContextMenu extends TagContextMenu {
 export class TagContextMenuInsert extends TagContextMenu {
     constructor(event, onSelectCallback, existingTags = []) {
         super(event, onSelectCallback, existingTags);
-        // Not a search: it opens on "Add Lora" and friends, which must not be armed.
+        // It opens on "Add Lora" and friends, which must not be armed. updateOptions turns the
+        // highlight back on as soon as there is a query to match against.
         this.autoHighlight = false;
         this.show();
     }
@@ -978,10 +1035,52 @@ export class TagContextMenuInsert extends TagContextMenu {
         this.searchTags(""); // This will call this class's updateOptions
     }
 
+    /**
+     * A whole sentence rather than a tag: the search field is replaced by a textarea, because it
+     * is the *search* field — treating a leading capital as "this is prose" would silently stop
+     * anyone who capitalises a character name out of habit from searching at all.
+     */
+    switchToTextMode() {
+        this.textMode = true;
+        this.textValue = "";
+        this.updateOptions([]);
+    }
+
     // Override parent's updateOptions to add special items
     updateOptions(tagSuggestions = []) {
         const query = this.currentWord;
-        
+
+        if (this.textMode) {
+            const commit = () => {
+                const name = (this.textValue || "").trim();
+                if (!name) return;
+                this.onSelect({ name, type: 'text' });
+                this.close();
+            };
+            this.autoHighlight = false;
+            // Writing a sentence in a menu-width column is writing it through a letterbox.
+            this.setWidth(TEXT_MENU_WIDTH);
+            this.options = [
+                { type: 'input', multiline: true, rows: 5, placeholder: 'Type or paste text…',
+                  value: this.textValue, onEnter: commit,
+                  onInput: (value) => { this.textValue = value; } },
+                { name: "Add", callback: commit },
+                { name: "Back", callback: () => {
+                    this.textMode = false;
+                    this.setWidth(null);
+                    this.searchTags("");
+                } },
+            ];
+            this.renderItems();
+            return;
+        }
+
+        // Armed only once something has been typed. With an empty query this menu is a list of
+        // commands (Add Lora and friends) and Enter must not fire the first of them; with a query
+        // it is a search again, and the best match is the answer — which is what the constructor's
+        // blanket `false` took away.
+        this.autoHighlight = !!query;
+
         // Build the list of standard tag options first
         const tagOptions = [];
         const exactMatch = tagSuggestions.some(s => s.name.toLowerCase() === query.toLowerCase());
@@ -1044,6 +1143,7 @@ export class TagContextMenuInsert extends TagContextMenu {
         
         // Show file-type options only when the search is empty
         if (!query) {
+            specialOptions.push({ name: 'Add Text', type: 'tag', callback: () => this.switchToTextMode() });
             specialOptions.push({ name: 'Add Lora', type: 'tag', callback: () => this.switchToFileMenu('lora') });
             specialOptions.push({ name: 'Add Embedding', type: 'tag', callback: () => this.switchToFileMenu('embedding') });
             specialOptions.push({ name: 'Add Tag Group', type: 'tag', callback: () => this.switchToFileMenu('group') });
@@ -1165,12 +1265,13 @@ export class TagEditContextMenu extends DynamicContextMenu {
         this.root.close = this.close.bind(this);
         
         const { clientX: x, clientY: y } = this.event;
+        const wide = this.tag.type === 'text';
         Object.assign(this.root.style, {
             left: `${x}px`,
             top: `${y}px`,
             width: 'auto',
-            minWidth: `${MENU_MIN_WIDTH}px`,
-            maxWidth: `${MENU_MAX_WIDTH}px`,
+            minWidth: `${wide ? TEXT_MENU_WIDTH : MENU_MIN_WIDTH}px`,
+            maxWidth: `${wide ? TEXT_MENU_WIDTH : MENU_MAX_WIDTH}px`,
         });
 
         document.body.appendChild(this.root);
@@ -1203,8 +1304,16 @@ export class TagEditContextMenu extends DynamicContextMenu {
                     element.style.background = "#222";
                     element.style.minWidth = "100%";
                     element.style.margin = "0";
-                    element.style.width = "fit-content";
-                    element.style.fieldSizing = "content";
+                    if (this.tag.type === 'text') {
+                        // Prose: a box that fills the (wider) menu and wraps, rather than
+                        // `fit-content`, which would stretch the menu to the width of the sentence.
+                        element.rows = 5;
+                        element.style.width = "100%";
+                        element.style.resize = "vertical";
+                    } else {
+                        element.style.width = "fit-content";
+                        element.style.fieldSizing = "content";
+                    }
                     element.placeholder = "Close to remove tag."; // remove when empty
 
                     element.addEventListener("input", () => {
@@ -1507,12 +1616,14 @@ export class TagGroupContextMenu extends FileContextMenu {
             if (this.saveMode === "options") {
                  // Show save options after clicking "Save Here"
                  this.options = [
-                     { 
-                         type: 'filter', 
+                     {
+                         // A plain field, not the menu's filter box: there is nothing to filter here.
+                         type: 'input',
+                         name: "File name",
+                         value: this.saveFileName,
                          placeholder: 'Enter filename...',
-                         onInput: (value) => {
-                             this.saveFileName = value;
-                         }
+                         onInput: (value) => { this.saveFileName = value; },
+                         onEnter: () => this.executeSave(),
                      },
                      {
                         // Sits above "Set Image" and does the same job by drag.
@@ -1624,7 +1735,7 @@ export class TagGroupContextMenu extends FileContextMenu {
     }
 
     executeSave() {
-        const filename = this.filterBox ? this.filterBox.value.trim() : this.saveFileName.trim();
+        const filename = this.saveFileName.trim();
         if (!filename) {
             app.extensionManager.toast.add({
                 severity: "error",
@@ -1704,15 +1815,21 @@ export class TagGroupContextMenu extends FileContextMenu {
 export class ActionContextMenu extends DynamicContextMenu {
     /**
      * @param {{clientX, clientY}} event  anchor position
+     * @param {?string} title  omitted when the first entry already names the thing (an input row)
      * @param {Array<?{name, callback, disabled?, submenu?}>} actions  null = separator
      */
     constructor(event, title, actions) {
         super(event, null);
 
-        this.options = [{ name: title, type: 'title' }];
+        this.options = title ? [{ name: title, type: 'title' }] : [];
         for (const action of actions) {
             if (!action) {
                 this.options.push({ type: 'separator' });
+                continue;
+            }
+            // Anything carrying its own type (an input row) is passed to the renderer as it stands.
+            if (action.type) {
+                this.options.push(action);
                 continue;
             }
             this.options.push({
@@ -1729,32 +1846,4 @@ export class ActionContextMenu extends DynamicContextMenu {
         this.show();
     }
 
-}
-
-/** Right-click on a Prompt Composer category header: the one place its title is edited and the one place it is removed. A header that turned into a text field on click could not also be the accordion toggle and the drag handle. Renaming is live — the title never reaches the prompt, so there is nothing to commit. */
-export class ComposerRowContextMenu extends DynamicContextMenu {
-    /** @param {{title, onRename, onRemove}} opts */
-    constructor(event, { title = "", onRename, onRemove } = {}) {
-        super(event, null);
-        // What renderItems seeds the carried-over input with.
-        this.currentWord = title;
-        this.options = [
-            { name: "Edit category", type: 'title' },
-            { type: 'filter', placeholder: "Category title", onInput: (value) => onRename?.(value) },
-            { type: 'separator' },
-            { name: "Remove Category", callback: () => { this.close(); onRemove?.(); } },
-        ];
-        this.show();
-    }
-
-
-    handleKeyboard(e) {
-        // Enter only closes while the highlight is nowhere: on an entry it is that entry's.
-        if (e.key === "Enter" && this.highlighted === -1
-                && document.activeElement === this.filterBox) {
-            this.close();
-            return true;
-        }
-        return super.handleKeyboard(e);
-    }
 }

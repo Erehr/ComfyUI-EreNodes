@@ -1,10 +1,10 @@
 import { app } from "../../../scripts/app.js";
 import { api } from "../../../scripts/api.js";
-import { attachPillDrag, markDropZone, injectDragStyles, installDragGlobals, pruneSelection,handlePillSelectClick,handlePillContextMenu,consumeDragClick } from "./dragdrop.js";
+import { attachPillDrag, markDropZone, markTextDropZone, injectDragStyles, installDragGlobals, pruneSelection,handlePillSelectClick,handlePillContextMenu,consumeDragClick } from "./dragdrop.js";
 import { SURFACE_CLASS, injectTagStyles, fallbackColors, renderTagPill, renderToggleRowEl, renderTagTile } from "./tagview.js";
 import { parseTags, byTagName } from "./parser.js";
 import { ActionContextMenu } from "./contextmenu.js";
-import { isKnownMissing, ensureChecked } from "./util.js";
+import { isKnownMissing, ensureChecked, textareaOf } from "./util.js";
 
 // Undo/redo restores graph state and fires "graphChanged", but Vue keeps the existing DOM widget instances, so nothing repaints on its own.
 let graphChangedHooked = false;
@@ -65,6 +65,48 @@ function nativeWidgetsToHide(node, mode) {
     return list;
 }
 
+/**
+ * A scrollable tag area (or one of our textareas) keeps the wheel, stopped on `window` in the
+ * capture phase — the first hop.
+ * Nodes 2.0 puts the canvas' own wheel handling above the node in the tree, so stopping it as the
+ * event bubbles out of the widget (which is what the root listener below does, and all the legacy
+ * renderer needs) is far too late: the canvas has already zoomed. Only propagation is stopped —
+ * scrolling itself is the default action, which is left alone.
+ */
+let wheelGuardInstalled = false;
+function installWheelGuard() {
+    if (wheelGuardInstalled) return;
+    wheelGuardInstalled = true;
+    window.addEventListener("wheel", (e) => {
+        const el = e.target?.closest?.(".ere-scroll, .ere-textarea");
+        if (el && el.scrollHeight > el.clientHeight + 1) e.stopPropagation();
+    }, { capture: true, passive: false });
+}
+
+/**
+ * Resize drags in Nodes 2.0, tracked once for every node.
+ * ComfyUI's resize handler re-measures the node's intrinsic height on every pointermove
+ * (`useNodeResize.ts`: set `--node-height: 0`, read `getBoundingClientRect().height`) and refuses
+ * to accept a height below it. Nodes carrying our widget only shrink as the tag area's own height
+ * shrinks — see `beginResizeDrag` for what that cost before.
+ */
+const resizeDrags = new Set();
+let pointerIsDown = false;
+let dragTrackingInstalled = false;
+function installResizeDragTracking() {
+    if (dragTrackingInstalled) return;
+    dragTrackingInstalled = true;
+    window.addEventListener("pointerdown", () => { pointerIsDown = true; }, true);
+    const release = () => {
+        pointerIsDown = false;
+        const ending = [...resizeDrags];
+        resizeDrags.clear();
+        for (const end of ending) end();
+    };
+    window.addEventListener("pointerup", release, true);
+    window.addEventListener("pointercancel", release, true);
+}
+
 // Rendering lives in tagview.js; this module owns the node-specific parts — event wiring, layout modes and the height policy.
 
 function injectStyles() {
@@ -96,6 +138,13 @@ function bindRootListeners(el) {
     // Legacy renderer: DomWidgets overlay swallows wheel events, so an unhandled wheel is handed to the canvas.
     // A scrollable pill area keeps the wheel even at its edges, so it never leaks into zoom.
     el.addEventListener("wheel", (e) => {
+        // A textarea sized smaller than its text scrolls itself, the same rule the tag area
+        // follows: it keeps the wheel even at its edges rather than leaking into canvas zoom.
+        const area = e.target?.closest?.("textarea");
+        if (area && area.scrollHeight > area.clientHeight + 1) {
+            e.stopPropagation();
+            return;
+        }
         const scrolls = app.ui?.settings?.getSettingValue?.("EreNodes.Nodes.TagAreaScroll", false) ?? false;
         if (scrolls) {
             const scroller = el.querySelector(".ere-scroll") || el;
@@ -219,6 +268,16 @@ function renderExtractImage(node) {
     return pane;
 }
 
+/**
+ * Let the Prompt Multiline node's textarea take tag drops. It belongs to the native `text`
+ * widget rather than to our DOM widget, so it is found rather than built — and re-marked on
+ * every render, because in Nodes 2.0 the element can appear after the widget is attached.
+ */
+function markNativeTextarea(node) {
+    const area = textareaOf(node);
+    if (area) markTextDropZone(area, node);
+}
+
 /** Modes that draw only their active tags, and so have something for the eye to reveal. */
 const HIDES_INACTIVE = new Set(["multiselect", "randomizer"]);
 
@@ -237,11 +296,19 @@ function renderButtons(node, container, mode) {
         container.appendChild(makeButton(node, "button_randomize", "🎲︎", "Randomize"));
     }
     // Composer has no node-level "+": tags belong to a category, so that button is on every row and this one adds a row.
+    // Split in two, the way a web toolbar's split button is: the label adds a Cloud category, the caret picks a layout.
     if (mode === "composer") {
+        const group = document.createElement("div");
+        group.className = "ere-split-btn";
         const add = makeButton(node, "button_add_row", "+ Category", "Add a category");
         add.classList.add("ere-composer-add");
-        container.appendChild(add);
-    } else if (mode !== "multiline") {
+        const caret = makeButton(node, "button_add_row_menu", "▾", "Add a category with a layout");
+        caret.classList.add("ere-composer-add-caret");
+        group.appendChild(add);
+        group.appendChild(caret);
+        container.appendChild(group);
+    } else {
+        // Multiline has one too: it inserts the tag as text at the caret.
         container.appendChild(makeButton(node, "button_add_tag", "+", "Add tag"));
     }
 }
@@ -277,11 +344,74 @@ function renderGalleryTile(node, tag, index, colors, pillW, pillH) {
     return markIfMissing(tile, tag);
 }
 
+/**
+ * Draw a tag list into `container` the way `mode` draws it, and return the element it made.
+ * One implementation for a node's own tag area and for a Composer category, which is why it
+ * takes anything node-shaped (`properties._tagDataJSON` plus the shared callbacks).
+ */
+export function renderTagBody(node, container, mode, colors, tagData) {
+    if (mode === "toggle") {
+        const list = document.createElement("div");
+        list.className = "ere-column";
+        markDropZone(list, "column");
+        for (let i = 0; i < tagData.length; i++) {
+            list.appendChild(renderToggleRow(node, tagData[i], i, colors));
+        }
+        container.appendChild(list);
+        return list;
+    }
+
+    if (mode === "gallery") {
+        const pillW = node.properties?._tagImageWidth ?? 100;
+        const pillH = node.properties?._tagImageHeight ?? 100;
+        const grid = document.createElement("div");
+        grid.className = "ere-flow";
+        markDropZone(grid, "flow");
+        for (let i = 0; i < tagData.length; i++) {
+            grid.appendChild(renderGalleryTile(node, tagData[i], i, colors, pillW, pillH));
+        }
+        container.appendChild(grid);
+        return grid;
+    }
+
+    if (mode === "multiselect" || mode === "randomizer") {
+        const panel = document.createElement("div");
+        panel.className = "ere-panel ere-flow";
+        panel.addEventListener("click", (e) => {
+            // Not after a ctrl-drag, and not on a ctrl+click: both belong to the selection.
+            if (e.ctrlKey || e.metaKey || consumeDragClick()) return;
+            // With the eye on, every disabled tag is already a pill; the menu would be a second way to do what a click does directly.
+            if (node._showInactive) return;
+            if (e.target === panel) openInactiveDropdown(node, e);
+        });
+        markDropZone(panel, "flow");
+        for (let i = 0; i < tagData.length; i++) {
+            // The eye reveals disabled tags in place: dimmed, still disabled, but draggable, selectable and quick-editable, none of which the dropdown can do.
+            if (!tagData[i].active && !node._showInactive) continue;
+            panel.appendChild(renderPill(node, tagData[i], i, colors, mode));
+        }
+        container.appendChild(panel);
+        return panel;
+    }
+
+    // cloud / extract — all pills, inactive dimmed
+    const flow = document.createElement("div");
+    flow.className = "ere-flow";
+    markDropZone(flow, "flow");
+    for (let i = 0; i < tagData.length; i++) {
+        flow.appendChild(renderPill(node, tagData[i], i, colors, mode));
+    }
+    container.appendChild(flow);
+    return flow;
+}
+
 /** Attach the DOM tag UI to a node. Call after initializeSharedPromptFunctions. */
 export function attachTagDomWidget(node, mode) {
     if (node._ereDom) return node._ereDom.widget;
 
     injectStyles();
+    installWheelGuard();
+    installResizeDragTracking();
     const colors = fallbackColors();
 
     for (const w of nativeWidgetsToHide(node, mode)) hideNativeWidget(w);
@@ -328,38 +458,13 @@ export function attachTagDomWidget(node, mode) {
         pruneSelection(node, tagData);
 
         if (mode === "multiline") {
+            markNativeTextarea(node);
             return;
         }
 
         // Rows are drawn by js/composer.js, installed by the node's own extension.
         if (mode === "composer") {
             node.onRenderComposer?.(content, colors);
-            return;
-        }
-
-        if (mode === "toggle") {
-            const list = document.createElement("div");
-            list.style.display = "flex";
-            list.style.flexDirection = "column";
-            list.style.gap = "5px";
-            markDropZone(list, "column");
-            for (let i = 0; i < tagData.length; i++) {
-                list.appendChild(renderToggleRow(node, tagData[i], i, colors));
-            }
-            content.appendChild(list);
-            return;
-        }
-
-        if (mode === "gallery") {
-            const pillW = node.properties?._tagImageWidth ?? 100;
-            const pillH = node.properties?._tagImageHeight ?? 100;
-            const grid = document.createElement("div");
-            grid.className = "ere-flow";
-            markDropZone(grid, "flow");
-            for (let i = 0; i < tagData.length; i++) {
-                grid.appendChild(renderGalleryTile(node, tagData[i], i, colors, pillW, pillH));
-            }
-            content.appendChild(grid);
             return;
         }
 
@@ -378,13 +483,8 @@ export function attachTagDomWidget(node, mode) {
             renderButtons(node, bar, mode);
             column.appendChild(bar);
 
-            const flow = document.createElement("div");
-            flow.className = "ere-flow ere-split-tags";
-            markDropZone(flow, "flow");
-            for (let i = 0; i < tagData.length; i++) {
-                flow.appendChild(renderPill(node, tagData[i], i, colors, "extract"));
-            }
-            column.appendChild(flow);
+            renderTagBody(node, column, "extract", colors, tagData)
+                .classList.add("ere-split-tags");
             split.appendChild(column);
 
             content.appendChild(split);
@@ -392,34 +492,7 @@ export function attachTagDomWidget(node, mode) {
             return;
         }
 
-        if (mode === "multiselect" || mode === "randomizer") {
-            const panel = document.createElement("div");
-            panel.className = "ere-panel ere-flow";
-            panel.addEventListener("click", (e) => {
-                // Not after a ctrl-drag, and not on a ctrl+click: both belong to the selection.
-                if (e.ctrlKey || e.metaKey || consumeDragClick()) return;
-                // With the eye on, every disabled tag is already a pill; the menu would be a second way to do what a click does directly.
-                if (node._showInactive) return;
-                if (e.target === panel) openInactiveDropdown(node, e);
-            });
-            markDropZone(panel, "flow");
-            for (let i = 0; i < tagData.length; i++) {
-                // The eye reveals disabled tags in place: dimmed, still disabled, but draggable, selectable and quick-editable, none of which the dropdown can do.
-                if (!tagData[i].active && !node._showInactive) continue;
-                panel.appendChild(renderPill(node, tagData[i], i, colors, mode));
-            }
-            content.appendChild(panel);
-            return;
-        }
-
-        // Default: cloud — all pills, inactive dimmed
-        const flow = document.createElement("div");
-        flow.className = "ere-flow";
-        markDropZone(flow, "flow");
-        for (let i = 0; i < tagData.length; i++) {
-            flow.appendChild(renderPill(node, tagData[i], i, colors, "cloud"));
-        }
-        content.appendChild(flow);
+        renderTagBody(node, content, mode, colors, tagData);
     };
 
     if (typeof node.addDOMWidget !== "function") {
@@ -472,6 +545,8 @@ export function attachTagDomWidget(node, mode) {
             renderIfChanged: () => {},
         };
         render();
+        // Vue mounts the textarea after this pass; marking is idempotent.
+        requestAnimationFrame(() => markNativeTextarea(node));
         return widget;
     }
 
@@ -556,6 +631,7 @@ export function attachTagDomWidget(node, mode) {
         if (scroll.style.overflowY !== value) scroll.style.overflowY = value;
     };
 
+
     const clampToFitHeight = () => {
         if (!(fitHeight > 0) || Math.abs(node.size[1] - fitHeight) <= 0.5) return;
         applyingAutoHeight = true;
@@ -576,6 +652,9 @@ export function attachTagDomWidget(node, mode) {
 
         /** Nodes 2.0: don't fight Vue's ResizeObserver with setSize — cap the scroll body with max-height so the toolbar stays visible. */
         if (window.LiteGraph?.vueNodesMode) {
+            // Mid-drag the body is bounded by size containment instead (beginResizeDrag), and a
+            // write here would put the clamp back in the loop.
+            if (resizing) return;
             const available = availableHeight();
             const toolH = toolbar.offsetHeight || 0;
             const bodyH = content.offsetHeight || 0;
@@ -617,6 +696,41 @@ export function attachTagDomWidget(node, mode) {
         });
     };
 
+    /**
+     * A Nodes 2.0 resize drag has started.
+     *
+     * ComfyUI clamps every pointermove to the node's measured intrinsic height, and our tag area
+     * is most of that measurement. The cap we write is what lowers it — one frame after the clamp
+     * has already read the *previous* cap, so a shrink advanced one small step per frame and the
+     * node crawled after the cursor. (Deferring or coalescing that write only changed the step
+     * size; it is the sequencing that is wrong, not the cost.)
+     *
+     * So for the duration of the drag the tag area stops contributing its content height at all:
+     * `contain: size` makes it report zero intrinsic height, the clamp collapses to the toolbar,
+     * and the drag runs free in both directions with no per-frame write at all. The body is still
+     * drawn — it is a flex child of a column with a definite height, so it fills whatever the node
+     * has and scrolls inside it.
+     */
+    let resizing = false;
+    const beginResizeDrag = () => {
+        if (resizing) return;
+        resizing = true;
+        // The flex column bounds the body now; a stale cap would fight it (and show empty space
+        // when the node is dragged taller).
+        scroll.style.maxHeight = "";
+        el.classList.add("ere-resizing");
+        resizeDrags.add(endResizeDrag);
+    };
+    const endResizeDrag = () => {
+        if (!resizing) return;
+        resizing = false;
+        resizeDrags.delete(endResizeDrag);
+        // Cap first, uncontain second: with the cap already in place the node's intrinsic height
+        // matches the size the drag ended at, so it cannot spring back to its content height.
+        applyHeightPolicy();
+        el.classList.remove("ere-resizing");
+    };
+
     node.onTagAreaPolicyChanged = () => {
         if (node.properties && !scrollEnabled()) delete node.properties._tagAreaManualHeight;
         applyHeightPolicy();
@@ -640,8 +754,12 @@ export function attachTagDomWidget(node, mode) {
             node.properties = node.properties || {};
             node.properties._tagAreaManualHeight = true;
         }
+        // A resize the user is dragging is handled by containment until they let go; anything
+        // else (a programmatic size change, a collapse) still runs the policy, coalesced to one
+        // pass per frame.
         if (window.LiteGraph?.vueNodesMode && !applyingAutoHeight) {
-            applyHeightPolicy();
+            if (pointerIsDown) beginResizeDrag();
+            else syncSize();
         }
         return origResize?.apply(this, args);
     };
@@ -734,6 +852,7 @@ export function attachTagDomWidget(node, mode) {
     const origRemoved = node.onRemoved;
     node.onRemoved = function (...args) {
         observer.disconnect();
+        resizeDrags.delete(endResizeDrag);
         node._ereDom = null;
         return origRemoved?.apply(this, args);
     };
@@ -745,8 +864,17 @@ export function attachTagDomWidget(node, mode) {
         syncSize();
     };
 
+    /**
+     * "The DOM already shows this." For a mutation that updated its own element and does not want
+     * the repaint `graphChanged` would otherwise trigger — a Composer category's textarea, which
+     * would be re-parented mid-keystroke and lose focus, and with it the next character.
+     */
+    const markRendered = () => {
+        lastRenderedState = node.properties?._tagDataJSON || "[]";
+    };
+
     hookGraphChanged();
-    node._ereDom = { widget, el, toolbar, scroll, content, render, renderIfChanged };
+    node._ereDom = { widget, el, toolbar, scroll, content, render, renderIfChanged, markRendered };
     render();
     syncSize();
     return widget;

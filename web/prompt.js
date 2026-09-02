@@ -1,7 +1,7 @@
 import { app } from "../../scripts/app.js";
 import { TagContextMenuInsert, TagEditContextMenu, TagGroupContextMenu, ActionContextMenu } from "./js/contextmenu.js";
-import { getCache, clearCache, captureUndoState } from "./js/util.js";
-import { bumpPreview } from "./js/tagview.js";
+import { getCache, clearCache, captureUndoState, tagsToText, textareaOf, insertTagsAsText } from "./js/util.js";
+import { bumpPreview, TILE_SIZES, TILE_RATIOS, tileBoxFor } from "./js/tagview.js";
 import { parseTags, parseTag, formatTag, parseTextToTagData, stripNestedGroups, dedupeTags } from "./js/parser.js";
 
 // The dice button's range. ComfyUI's seed goes to 2^64, which a JS number cannot hold exactly and nothing here needs.
@@ -166,7 +166,7 @@ const getTextInput = async (title, promptMessage, defaultValue = "") => {
 
 // Global keyboard shortcuts for tag nodes (Ctrl+V paste).
 let contextMenuPatched = false;
-const ERE_TAG_NODE_TYPES = ["ErePromptCloud", "ErePromptToggle", "ErePromptMultiSelect", "ErePromptRandomizer", "ErePromptGallery"];
+const ERE_TAG_NODE_TYPES = ["ErePromptCloud", "ErePromptToggle", "ErePromptMultiSelect", "ErePromptRandomizer", "ErePromptGallery", "ErePromptComposer"];
 
 export function applyContextMenuPatch() {
     if (contextMenuPatched) {
@@ -198,6 +198,8 @@ export function applyContextMenuPatch() {
                             } catch {} // not JSON → tag text
                         }
                         if (!isTagText) return comfyPaste();
+                        // A node with its own reading of a paste (the Composer builds a category).
+                        if (node.onClipboardPaste) return node.onClipboardPaste();
                         const pasteBehaviour = app.ui.settings.getSettingValue('EreNodes.Nodes.PasteAction', 'Replace tags');
                         if (pasteBehaviour === 'Append tags') {
                             node.onClipboardAppend();
@@ -234,18 +236,96 @@ export function convertMenuItem(node, convert = (type) => node.convertTo(type)) 
     };
 }
 
+/** Set a property and let the node's own handler react, as the Properties panel does. */
+function setNodeProperty(node, name, value) {
+    node.properties = node.properties || {};
+    node.properties[name] = value;
+    node.onPropertyChanged?.(name, value);
+}
+
+/**
+ * "Options" as one entry with a flyout: the two separators as live fields, plus whatever the
+ * node type adds (the Gallery's tile size and aspect).
+ * Values are shown as stored, with "\n" escaped — the same text the Properties panel edits.
+ */
+export function optionsMenuItem(node, extra = []) {
+    return {
+        name: "Options",
+        submenu: [
+            {
+                type: "input",
+                name: "Tag separator",
+                value: node.properties?._tagSeparator ?? ", ",
+                placeholder: ", ",
+                onInput: (value) => setNodeProperty(node, "_tagSeparator", value),
+            },
+            {
+                type: "input",
+                name: "Node separator",
+                value: node.properties?._prefixSeparator ?? ",\\n\\n",
+                placeholder: ",\\n\\n",
+                onInput: (value) => setNodeProperty(node, "_prefixSeparator", value),
+            },
+            ...extra,
+        ],
+    };
+}
+
+/**
+ * Tile size and shape from the ≡ menu, offering the sidebar's own presets.
+ * They still write `_tagImageWidth` / `_tagImageHeight`, so the Properties panel keeps editing
+ * the same two numbers and every saved workflow reads back unchanged.
+ */
+export function tileMenuItems(node) {
+    const apply = (sizeId, ratioId) => {
+        const { width, height } = tileBoxFor(sizeId, ratioId);
+        node.properties._tagImageWidth = width;
+        node.properties._tagImageHeight = height;
+        // One call: the renderer's handler re-renders and re-fits on either name.
+        node.onPropertyChanged?.("_tagImageHeight", height);
+    };
+
+    // Which preset the node sits on, or neither after a size typed into the Properties panel.
+    const w = node.properties?._tagImageWidth ?? 100;
+    const h = node.properties?._tagImageHeight ?? 100;
+    let current = { size: null, ratio: null };
+    for (const size of TILE_SIZES) {
+        for (const ratio of TILE_RATIOS) {
+            const fit = tileBoxFor(size.id, ratio.id);
+            if (fit.width === w && fit.height === h) current = { size: size.id, ratio: ratio.id };
+        }
+    }
+    const mark = (on, name) => `${on ? "✓ " : ""}${name}`;
+
+    // Flat rows rather than two more flyouts: five entries do not earn a second level.
+    return [
+        null,
+        ...TILE_SIZES.map(size => ({
+            name: mark(current.size === size.id, size.label),
+            callback: () => apply(size.id, current.ratio ?? TILE_RATIOS[0].id),
+        })),
+        null,
+        ...TILE_RATIOS.map(ratio => ({
+            name: mark(current.ratio === ratio.id, ratio.label),
+            callback: () => apply(current.size ?? TILE_SIZES[0].id, ratio.id),
+        })),
+    ];
+}
+
 export function initializeSharedPromptFunctions(node, textWidget) {
 
     node.properties = node.properties || {};
 
-    // Initialize _prefixSeparator if it's null or undefined
-    if (node.properties._prefixSeparator === null || node.properties._prefixSeparator === undefined) {
-        node.properties._prefixSeparator = ",\\n\\n"; // Default value
-    }
+    // Seeded from the settings, and only when the node has none of its own: a saved workflow
+    // carries its separators in its properties, so changing the defaults never rewrites one.
+    const defaultSeparator = (id, fallback) =>
+        app.ui?.settings?.getSettingValue?.(id, fallback) ?? fallback;
 
-    // Initialize _tagSeparator if it's null or undefined
+    if (node.properties._prefixSeparator === null || node.properties._prefixSeparator === undefined) {
+        node.properties._prefixSeparator = defaultSeparator("EreNodes.Nodes.PrefixSeparator", ",\\n\\n");
+    }
     if (node.properties._tagSeparator === null || node.properties._tagSeparator === undefined) {
-        node.properties._tagSeparator = ", "; // Default value
+        node.properties._tagSeparator = defaultSeparator("EreNodes.Nodes.TagSeparator", ", ");
     }
 
     // _prefixSeparator is edited in the Properties panel, but process() only sees widget values, so this hidden widget mirrors it.
@@ -408,6 +488,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             { name: "Export Tags (.json)", callback: () => node.onExportTags?.() },
             { name: "Import Tags (.json)", callback: () => node.onImportTags?.() },
             null,
+            optionsMenuItem(node, node.onExtraOptions?.() ?? []),
             convertMenuItem(node),
         ];
 
@@ -537,11 +618,9 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             // Empty clipboard must not wipe the node's tags
             if (!text || !text.trim()) return;
             if (node.type !== "ErePromptMultiline") {
-                const tagStrings = (text.replace(/\n/g, ',').split(/,(?![^()]*\))/g) || [])
-                    .map(s => s.trim())
-                    .filter(s => s);
-
-                const tagData = tagStrings.map(parseTag).filter(Boolean);
+                // The shared parser, so a pasted sentence arrives as a text pill rather than as
+                // the four tags its commas would make of it.
+                const tagData = parseTextToTagData(text);
                 const json = JSON.stringify(tagData, null, 2);
                 node.properties._tagDataJSON = json;
                 await node.onUpdateTextWidget(node);
@@ -558,16 +637,12 @@ export function initializeSharedPromptFunctions(node, textWidget) {
     node.onClipboardAppend = () => {
         navigator.clipboard.readText().then(async text => {
             if (node.type !== "ErePromptMultiline") {
-                const newTagStrings = (text.replace(/\n/g, ',').split(/,(?![^()]*\))/g) || [])
-                    .map(s => s.trim())
-                    .filter(s => s);
-                if (!newTagStrings.length) return;
+                const pasted = parseTextToTagData(text);
+                if (!pasted.length) return;
                 const existingTagData = parseTags(node.properties._tagDataJSON || "[]");
                 const existingTagNames = new Set(existingTagData.map(t => t.name));
 
-                const uniqueNewTags = newTagStrings
-                    .map(parseTag)
-                    .filter(Boolean)
+                const uniqueNewTags = pasted
                     .filter(tagObj => tagObj.name && !existingTagNames.has(tagObj.name));
 
                 if (!uniqueNewTags.length) return;
@@ -715,6 +790,20 @@ export function initializeSharedPromptFunctions(node, textWidget) {
     };
 
     node.onAddTag = (e, pos) => {
+        // Multiline has no tag list: the pick is written into the text at the caret, as a drop is.
+        if (node.type === "ErePromptMultiline") {
+            const area = textareaOf(node);
+            if (!area) return;
+            const existing = parseTextToTagData(area.value)
+                .map(tag => ({ name: tag.name, type: tag.type }));
+            new TagContextMenuInsert(e, async (tagObject) => {
+                if (!tagObject?.name) return;
+                await insertTagsAsText(area, [{ ...tagObject, active: true }],
+                    node.properties._tagSeparator);
+            }, existing);
+            return;
+        }
+
         const addTagObject = async (tagObject) => {
             if (!tagObject || !tagObject.name) return;
 
@@ -850,6 +939,15 @@ export function initializeSharedPromptFunctions(node, textWidget) {
                 } else if (!finalTag.hasOwnProperty('triggers')) {
                     finalTag.triggers = [];
                 }
+            } else if (clickedTag.type === 'text') {
+                // Prose is stored as typed: parseTag would read `(a sentence:1.2)` as weighting
+                // and hand back a plain tag, losing the type with it.
+                const name = editedTag.name.trim();
+                if (!name) {
+                    deleteCallback();
+                    return;
+                }
+                finalTag = { ...clickedTag, name, strength: editedTag.strength, active: clickedTag.active };
             } else {
                 // For normal tags, parse the full input value as it might have changed.
                 const parsed = parseTag(editedTag.name.trim());
@@ -897,105 +995,17 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         const textWidget = node.widgets.find(w => w.name === "text");
         if (!textWidget) return;
 
-        const tagData = parseTags(node.properties._tagDataJSON || "[]");
-        if (tagData.length === 0) {
-            textWidget.value = "";
-            return;
-        }
-        const activeTags = tagData.filter(t => (t.active && t.name) );
-
-        let tagSeparator = (node.properties._tagSeparator || ", ").replace(/\\n/g, "\n");
-
-        const parts = [];
-        let currentLineTags = [];
-
-        for (const tag of activeTags) {
-            if (tag.type === 'group') {
-                // If we have pending tags, join and add them before processing the group.
-                if (currentLineTags.length > 0) {
-                    const line = currentLineTags.join(tagSeparator);
-
-                    // A separator is only needed when the last part is content, not another one.
-                    if (parts.length > 0 && parts[parts.length - 1] !== tagSeparator && parts[parts.length - 1].trim() !== '') {
-                        parts.push(tagSeparator);
-                    }
-                    parts.push(line);
-                    currentLineTags = [];
-                }
-                try {
-                    const filename = tag.extension ? `${tag.name}${tag.extension}` : tag.name;
-                    const groupTagDataResult = getCache(`/erenodes/get_tag_group?filename=${encodeURIComponent(filename)}`, 'json');
-                    const groupTagData = groupTagDataResult instanceof Promise ? await groupTagDataResult : groupTagDataResult;
-                    if (groupTagData) {
-                        if (Array.isArray(groupTagData)) {
-                            const activeGroupTags = groupTagData.filter(t => t.active && t.name);
-                            if (activeGroupTags.length > 0) {
-                                if (parts.length > 0 && parts[parts.length - 1].trim() !== '') {
-                                    parts.push(tagSeparator);
-                                }
-                                
-                                const groupParts = [];
-                                activeGroupTags.forEach(gTag => {
-                                    groupParts.push(formatTag(gTag));
-                                    if (gTag.type === 'lora' && gTag.triggers && gTag.triggers.length > 0) {
-                                        groupParts.push(...gTag.triggers);
-                                    }
-                                });
-                                let groupPart = groupParts.join(tagSeparator);
-
-                                if (tag.strength && tag.strength !== 1.0) {
-                                    const strengthValue = parseFloat(tag.strength);
-                                    if (!isNaN(strengthValue) && strengthValue !== 1.0) {
-                                        groupPart = `(${groupPart}:${strengthValue.toFixed(2)})`;
-                                    }
-                                }
-                                parts.push(groupPart);
-                            }
-                        }
-                    }
-                } catch (error) {
-                    console.error(`[EreNodes] Failed to load and parse tag group: ${tag.name}`, error);
-                }
-            } else {
-                currentLineTags.push(formatTag(tag));
-                if (tag.type === 'lora' && tag.triggers && tag.triggers.length > 0) {
-                    currentLineTags.push(...tag.triggers);
-                }
-            }
-        }
-
-        if (currentLineTags.length > 0) {
-            const line = currentLineTags.join(tagSeparator);
-
-            // A separator is only needed when the last part is content, not another one.
-            if (parts.length > 0 && parts[parts.length - 1] !== tagSeparator && parts[parts.length - 1].trim() !== '') {
-                parts.push(tagSeparator);
-            }
-            parts.push(line);
-        }
-
-        // Remove trailing separator if 'parts' ends with it and has more than one element.
-        if (parts.length > 1 && parts[parts.length - 1] === tagSeparator) {
-            parts.pop();
-        }
-
-        // For multiline nodes, don't modify the text widget content when updating separators
+        // For multiline nodes, preserve the existing text content: it is the source of truth, not the tags.
         if (node.type !== "ErePromptMultiline") {
-            // Consecutive separators, or one at either end, leave empty strings behind.
-            let currentText = parts.filter(part => part.trim() !== '' || part === tagSeparator).join('');
-            // Just the separator and nothing else is nothing.
-            if (currentText === tagSeparator && activeTags.filter(t => t.type !== 'group').length === 0) {
-                currentText = '';
-            }
-
-            // Python will now handle prefix logic, so we just set the current text
-            textWidget.value = currentText;
+            textWidget.value = await tagsToText(
+                parseTags(node.properties._tagDataJSON || "[]"),
+                node.properties._tagSeparator);
         }
-        // For multiline nodes, preserve the existing text content
 
         // No-op when nothing changed (the tracker diffs state), so loading is safe.
         captureUndoState();
     };
 
 }
+
 

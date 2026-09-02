@@ -167,11 +167,17 @@ EreNodes provides flexible LoRA loading options to fit different workflow prefer
 - **Rearrange Fast**: Drag pills to reorder them, or straight into another prompt node — Ctrl+click first to move several at once
 - **Experiment**: Use the Randomizer node to discover new prompt combinations
 - **Convertible**: All tag nodes can be converted to another under ≡ menu
-- **Customize output**: Separators between nodes and individual tags can be set customized in node Properties
+- **Customize output**: Separators between nodes and individual tags are edited in ≡ → Options, or in node Properties
 
 ## 📋 Changelog
 
-### Version 3.5 - Latest
+### Version 3.6 - Latest
+- **Per-category layouts in the Composer**: each category draws as Cloud, Toggle, MultiSelect, Gallery or Multiline, from its ≡ menu — the "+ Category" button
+- **Drop tags into a prompt textarea**: pills and tag groups can be dragged into the Prompt Multiline node and into Composer multiline categorie
+- **New `text` tag type**: a pill holding a whole sentences, so tags and written description mix in one node
+- **Separators on the node**: tag and node separators are now editable from node ≡ → Options
+
+### Version 3.5
 - **New Node: Prompt Composer**: several tag clouds in one node as reorderable, collapsible categories
 
 ### Version 3.4

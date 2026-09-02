@@ -9,6 +9,19 @@ export const parseTags = value => {
     return [];
 };
 
+/**
+ * Prose rather than a tag list: capitalised and ending in a terminator. Splitting a sentence on
+ * its commas produces tags nobody wrote, so it becomes `text` tags instead.
+ */
+export const looksLikeProse = (text) => /^\p{Lu}/u.test(text) && /[.!?]$/.test(text);
+
+/**
+ * One sentence per entry. The boundary is a terminator followed by whitespace and a capital, so
+ * `0.8 strength` and `e.g. this` are left alone — neither is followed by one.
+ */
+export const splitSentences = (text) =>
+    text.split(/(?<=[.!?])\s+(?=\p{Lu})/u).map(s => s.trim()).filter(Boolean);
+
 /** One prompt fragment -> a tag object, or null if it is empty. */
 export function parseTag(tagString) {
     const original = (tagString || "").trim();
@@ -32,6 +45,11 @@ export function parseTag(tagString) {
         strength = parseFloat(strengthMatch[2]);
         if (isNaN(strength) || strength === 1.0) strength = undefined;
     }
+
+    // A capitalised fragment ending in a terminator is a sentence, not a tag. The line-level split
+    // catches prose written on its own line; this catches what a comma left behind
+    // ("1girl, A quiet street at dusk.") and a weighted one, `(A quiet street.:1.20)`.
+    if (looksLikeProse(name)) return { name, type: "text", strength, active: true };
 
     let type = "tag";
     if (name.startsWith("embedding:")) {
@@ -76,18 +94,27 @@ export function dedupeTags(tags) {
     return out;
 }
 
-/** Split prompt text into tag objects, carrying over active states by name. */
+/**
+ * Split prompt text into tag objects, carrying over active states by name.
+ * Lines first, and a line that reads as prose becomes `text` tags rather than being cut up on its
+ * commas — which is what makes a sentence survive the trip out to prompt text and back.
+ */
 export function parseTextToTagData(text, oldTagData = []) {
     const oldTagsByName = new Map(oldTagData.map(t => [t.name, t]));
     const tagData = [];
 
     for (const line of (text || "").split("\n")) {
-        const newTags = line.trim()
-            .split(/,(?![^()]*\))/g)
-            .map(s => s.trim())
-            .filter(Boolean)
-            .map(parseTag)
-            .filter(Boolean);
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        const newTags = looksLikeProse(trimmed)
+            ? splitSentences(trimmed).map(name => ({ name, type: "text", active: true }))
+            : trimmed
+                .split(/,(?![^()]*\))/g)
+                .map(s => s.trim())
+                .filter(Boolean)
+                .map(parseTag)
+                .filter(Boolean);
 
         for (const tag of newTags) {
             tag.active = oldTagsByName.get(tag.name)?.active ?? true;
@@ -98,6 +125,41 @@ export function parseTextToTagData(text, oldTagData = []) {
     // Nameless entries go too: a bare "embedding:" parses to an empty name.
     return dedupeTags(tagData);
 }
+
+// Punctuation a part can already end with, which the separator must then not repeat.
+// Closing brackets are deliberately not in it: `(masterpiece:1.2)` does want a comma after it.
+const TERMINATORS = ",.;:!?";
+
+/**
+ * The separator to put after `previous`, with its own leading punctuation dropped when that part
+ * already ends in some: `",\n\n"` after a sentence would otherwise read `".,"`.
+ * Mirrors `separator_after` in py/prompt.py.
+ */
+export function separatorAfter(separator, previous) {
+    const last = previous.replace(/\s+$/, "").slice(-1);
+    return last && TERMINATORS.includes(last)
+        ? separator.replace(/^[,.;:!?]+/, "")
+        : separator;
+}
+
+/** Join non-empty parts, never repeating punctuation the part before already ended with. */
+export function joinParts(parts, separator) {
+    let out = "";
+    for (const part of parts) {
+        if (!part) continue;
+        if (out) out += separatorAfter(separator, out);
+        out += part;
+    }
+    return out;
+}
+
+/**
+ * The same, for a separator as stored (with "\n" escaped).
+ * Mirrors `join_parts` in py/prompt.py, which is what actually runs at execution time; this keeps
+ * the text shown on the node honest about it.
+ */
+export const joinPrompt = (parts, separator) =>
+    joinParts(parts, String(separator ?? ",\\n\\n").replace(/\\n/g, "\n"));
 
 /** Groups cannot nest, so drop any that made it into a list being saved. */
 export function stripNestedGroups(tags, { warn = true } = {}) {

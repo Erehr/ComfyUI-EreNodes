@@ -1,5 +1,5 @@
 import { app } from "../../scripts/app.js";
-import { initializeSharedPromptFunctions, applyContextMenuPatch, convertMenuItem } from "./prompt.js";
+import { initializeSharedPromptFunctions, applyContextMenuPatch, convertMenuItem, optionsMenuItem } from "./prompt.js";
 import { attachTagDomWidget } from "./js/renderer.js";
 import { parseTags } from "./js/parser.js";
 import { ActionContextMenu } from "./js/contextmenu.js";
@@ -198,6 +198,7 @@ function attachExtractorBehaviour(node) {
               disabled: tagData.filter(t => t.type !== 'group').length < 2 },
             { name: "Export Tags (.json)", callback: () => node.onExportTags?.() },
             null,
+            optionsMenuItem(node),
             convertMenuItem(node),
         ]);
     };
