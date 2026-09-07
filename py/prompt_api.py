@@ -225,8 +225,21 @@ async def save_tag_group_handler(request):
 
 # Tag Group Location
 
+# The location the server actually resolved, so the settings combo can seed itself from it rather
+# than from its own default and immediately overwrite the answer.
+@server.PromptServer.instance.routes.get("/erenodes/tag_groups_location")
+async def get_tag_groups_location_handler(request):
+    location = paths.get_location()
+    return web.json_response({
+        "location": location,
+        "resolved": paths.dir_for_location(location),
+        # The node folder is offered only to installs already using it.
+        "legacy": location == paths.LOCATION_NODE,
+    })
+
+
 # Current location plus both resolved paths, so the settings UI can show where things actually are.
-# Switch between the two allowed roots. Keywords only: a different disk goes in extra_model_paths.yaml.
+# Switch between the allowed roots. Keywords only: a different disk goes in extra_model_paths.yaml.
 @server.PromptServer.instance.routes.post("/erenodes/set_tag_groups_location")
 async def set_tag_groups_location_handler(request):
     try:

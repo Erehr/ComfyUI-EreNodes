@@ -4,45 +4,55 @@ import csv
 import threading
 from collections import OrderedDict
 import server
-import folder_paths
 from aiohttp import web
 
+from .paths import user_data_dir
 from .settings import get_erenodes_settings
 
 # Define constants for export
 CSV_FILES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "__autocomplete__")
 
+# Resolved once: this sits on the autocomplete path, which runs per keystroke.
+_USER_CSV_PATH = None
+
+
 # Return the update-safe user autocomplete directory.
 def get_user_csv_files_path():
-    try:
-        user_path = folder_paths.get_user_directory()
-    except AttributeError:  # Older ComfyUI versions have no user directory helper.
-        user_path = os.path.join(
-            getattr(folder_paths, "base_path", os.path.dirname(CSV_FILES_PATH)),
-            "user",
-        )
+    global _USER_CSV_PATH
+    if _USER_CSV_PATH is not None:
+        return _USER_CSV_PATH
 
-    path = os.path.join(user_path, "__erenodes", "autocomplete")
+    path = os.path.join(user_data_dir(), "autocomplete")
     try:
         os.makedirs(path, exist_ok=True)
     except OSError as e:
         print(f"[EreNodes] Could not create autocomplete folder '{path}': {e}")
+    _USER_CSV_PATH = path
     return path
 
 
 # Create the user folder during node startup, before the first CSV lookup.
 get_user_csv_files_path()
 
-# Resolve a selectable CSV, preferring the bundled file on name collision.
+# Names already reported as overriding a bundled file, so the notice prints once each.
+_SHADOWED_WARNED = set()
+
+
+# Resolve a selectable CSV. The user folder wins: a file put there deliberately is meant to replace
+# the bundled one of that name, and losing to it silently reads as the file being ignored.
 def get_csv_path(csv_file):
     if not isinstance(csv_file, str) or csv_file != os.path.basename(csv_file) or not csv_file.lower().endswith(".csv"):
         return None
 
-    for directory in (CSV_FILES_PATH, get_user_csv_files_path()):
-        path = os.path.join(directory, csv_file)
-        if os.path.isfile(path):
-            return path
-    return None
+    user_path = os.path.join(get_user_csv_files_path(), csv_file)
+    bundled_path = os.path.join(CSV_FILES_PATH, csv_file)
+
+    if os.path.isfile(user_path):
+        if os.path.isfile(bundled_path) and csv_file not in _SHADOWED_WARNED:
+            _SHADOWED_WARNED.add(csv_file)
+            print(f"[EreNodes] '{csv_file}' in the user autocomplete folder overrides the bundled file of the same name.")
+        return user_path
+    return bundled_path if os.path.isfile(bundled_path) else None
 
 # List bundled and user CSVs as one stable filename namespace.
 def list_csv_files():
@@ -66,7 +76,7 @@ TAG_TYPES = {
     5: "Meta"
 }
 
-# csv_file -> tags, keyed by name so /erenodes/set_setting can drop one entry.
+# csv_file -> (mtime, tags), keyed by name so /erenodes/set_setting can drop one entry and stamped with mtime so an edited CSV is noticed.
 TAG_DATA_CACHE = {}
 
 # Parsing 320k rows takes a couple of seconds, and without this two searches arriving together on a cold cache both pay for it.
@@ -191,9 +201,8 @@ def load_tags_from_csv(csv_path):
 
     return tags
 
-# The active CSV, parsed and cached. Cache invalidation is driven by the
-# autocomplete setting and process restart; Prompt Filter has its own mtime
-# based cache because it accepts a CSV per node execution.
+# The active CSV, parsed and cached against its mtime, so editing the file is picked up without a
+# restart — which is the whole point of the user folder being somewhere people curate.
 # Blocking: the merged danbooru+e621 file is ~320k rows and a couple of seconds, so call it from a thread, never on the event loop.
 def get_tag_data(active_csv=None):
     if active_csv is None:
@@ -203,22 +212,26 @@ def get_tag_data(active_csv=None):
     if not active_csv:
         return []
 
-    cached = TAG_DATA_CACHE.get(active_csv)
-    if cached is not None:
-        return cached
-
     csv_path = get_csv_path(active_csv)
     if csv_path is None:
         # Missing or unreadable: nothing to search, and nothing worth caching.
         return []
+    try:
+        mtime = os.path.getmtime(csv_path)
+    except OSError:
+        return []
+
+    cached = TAG_DATA_CACHE.get(active_csv)
+    if cached and cached[0] == mtime:
+        return cached[1]
 
     with _TAG_DATA_LOCK:
         # Another thread may have loaded it while this one waited.
         cached = TAG_DATA_CACHE.get(active_csv)
-        if cached is not None:
-            return cached
+        if cached and cached[0] == mtime:
+            return cached[1]
         tags = load_tags_from_csv(csv_path)
-        TAG_DATA_CACHE[active_csv] = tags
+        TAG_DATA_CACHE[active_csv] = (mtime, tags)
         _clear_search_cache(active_csv)
     return tags
 
@@ -229,14 +242,16 @@ def _search_tags(query, limit):
     if not active_csv:
         return []
 
+    # Loaded before the search cache is read: a reload drops that cache, and checking it first would
+    # keep serving rows from the previous version of an edited file.
+    all_tags = get_tag_data(active_csv)
+
     cache_key = (active_csv, query, limit)
     with _SEARCH_CACHE_LOCK:
         cached = _SEARCH_CACHE.get(cache_key)
         if cached is not None:
             _SEARCH_CACHE.move_to_end(cache_key)
             return list(cached)
-
-    all_tags = get_tag_data(active_csv)
 
     results = []
     seen_tags = set()

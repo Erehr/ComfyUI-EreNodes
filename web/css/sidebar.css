@@ -1,10 +1,22 @@
 /* Only what ComfyUI's own Tailwind classes do not already provide: drag and selection affordances, grid view, inline naming. */
 
 /* Drag, selection and grid view — no upstream equivalent. */
-.ere-sidebar .ere-sb-body {
-    overflow-y: auto;
+.ere-sidebar .ere-sb-body-inner {
     overflow-x: hidden;
     scrollbar-width: thin;
+    scrollbar-color: var(--dialog-surface, rgba(255, 255, 255, .2)) transparent;
+}
+/* Desktop builds have no overlay scrollbars; a transparent track with a floating thumb is what the
+   app's own `scrollbar-custom` panels use to look like one. */
+.ere-sidebar .ere-sb-body-inner::-webkit-scrollbar {
+    width: 10px;
+    background-color: transparent;
+}
+.ere-sidebar .ere-sb-body-inner::-webkit-scrollbar-thumb {
+    background: var(--dialog-surface, rgba(255, 255, 255, .2));
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
 }
 .ere-sidebar .ere-sb-selected {
     background: rgba(var(--ere-drag-accent-rgb, 74, 158, 255), .18);

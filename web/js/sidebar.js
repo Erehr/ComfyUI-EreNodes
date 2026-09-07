@@ -1186,7 +1186,7 @@ function flatten(node, out = { folders: [], files: [] }) {
 /** The frontend's own empty state, class for class (see the Workflows tab). Also the shell for the index's progress and error states. */
 function statusMessage(iconName, heading, body) {
     const wrap = el("div", "no-results-placeholder h-full p-8");
-    const card = el("div", "p-card p-component", wrap);
+    const card = el("div", "p-component", wrap);
     const content = el("div", "p-card-content", el("div", "p-card-body", card));
     const inner = el("div", "flex flex-col items-center", content);
 

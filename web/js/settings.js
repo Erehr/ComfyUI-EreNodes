@@ -14,6 +14,21 @@ try {
     console.warn("[EreNodes] Could not fetch autocomplete CSV list.", e);
 }
 
+// The server decides the location (fresh installs get the user folder, ones with groups already in
+// the node folder stay there), so the combo seeds from it instead of asserting its own default.
+let tagGroupsLocation = "user";
+let tagGroupsLegacy = false;
+try {
+    const response = await fetch("/erenodes/tag_groups_location", { signal: AbortSignal.timeout(5000) });
+    if (response.ok) {
+        const state = await response.json();
+        if (state?.location) tagGroupsLocation = state.location;
+        tagGroupsLegacy = !!state?.legacy;
+    }
+} catch (e) {
+    console.warn("[EreNodes] Could not fetch tag groups location.", e);
+}
+
 /**
  * Push the tag-group location to the server and offer to migrate existing groups.
  * The server is the source of truth here, so the combo only *requests* a location — the response says what actually happened.
@@ -142,12 +157,14 @@ app.registerExtension({
         {
             id: "EreNodes.TagGroups.Location",
             name: "Tag Groups Folder",
-            tooltip: "Where tag groups are stored. The node folder is wiped by a reinstall or a ComfyUI Manager update; the models folder survives both. To put them elsewhere, add 'tag_groups:' to extra_model_paths.yaml.",
+            tooltip: "Where tag groups are stored. The user folder survives updates and reinstalls. Use the models folder to share one set across installs — it is the one 'tag_groups:' in extra_model_paths.yaml can redirect.",
             type: "combo",
-            defaultValue: "node",
+            defaultValue: tagGroupsLocation,
             options: [
-                { text: "Node folder (__prompts__)", value: "node" },
+                { text: "ComfyUI user folder (recommended)", value: "user" },
                 { text: "ComfyUI models/tag_groups", value: "models" },
+                // Offered only while it is the folder in use: a reinstall or Manager update wipes it, so it is not somewhere to move to.
+                ...(tagGroupsLegacy ? [{ text: "Node folder (__prompts__, legacy)", value: "node" }] : []),
             ],
             onChange: (newVal, oldVal) => {
                 // Fires once on page load with oldVal undefined, which keeps the server's settings.json in sync with the settings store.
