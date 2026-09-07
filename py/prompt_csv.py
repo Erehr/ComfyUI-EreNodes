@@ -2,13 +2,70 @@ import asyncio
 import os
 import csv
 import threading
+from collections import OrderedDict
 import server
 from aiohttp import web
 
+from .paths import user_data_dir
 from .settings import get_erenodes_settings
 
 # Define constants for export
 CSV_FILES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "__autocomplete__")
+
+# Resolved once: this sits on the autocomplete path, which runs per keystroke.
+_USER_CSV_PATH = None
+
+
+# Return the update-safe user autocomplete directory.
+def get_user_csv_files_path():
+    global _USER_CSV_PATH
+    if _USER_CSV_PATH is not None:
+        return _USER_CSV_PATH
+
+    path = os.path.join(user_data_dir(), "autocomplete")
+    try:
+        os.makedirs(path, exist_ok=True)
+    except OSError as e:
+        print(f"[EreNodes] Could not create autocomplete folder '{path}': {e}")
+    _USER_CSV_PATH = path
+    return path
+
+
+# Create the user folder during node startup, before the first CSV lookup.
+get_user_csv_files_path()
+
+# Names already reported as overriding a bundled file, so the notice prints once each.
+_SHADOWED_WARNED = set()
+
+
+# Resolve a selectable CSV. The user folder wins: a file put there deliberately is meant to replace
+# the bundled one of that name, and losing to it silently reads as the file being ignored.
+def get_csv_path(csv_file):
+    if not isinstance(csv_file, str) or csv_file != os.path.basename(csv_file) or not csv_file.lower().endswith(".csv"):
+        return None
+
+    user_path = os.path.join(get_user_csv_files_path(), csv_file)
+    bundled_path = os.path.join(CSV_FILES_PATH, csv_file)
+
+    if os.path.isfile(user_path):
+        if os.path.isfile(bundled_path) and csv_file not in _SHADOWED_WARNED:
+            _SHADOWED_WARNED.add(csv_file)
+            print(f"[EreNodes] '{csv_file}' in the user autocomplete folder overrides the bundled file of the same name.")
+        return user_path
+    return bundled_path if os.path.isfile(bundled_path) else None
+
+# List bundled and user CSVs as one stable filename namespace.
+def list_csv_files():
+    files = []
+    for directory in (CSV_FILES_PATH, get_user_csv_files_path()):
+        if os.path.isdir(directory):
+            files.extend(
+                filename for filename in os.listdir(directory)
+                if filename.lower().endswith(".csv")
+            )
+    return sorted(set(files), key=str.casefold)
+
+
 # utf-8-sig: several community tag files carry a BOM, which would make the first row's tag read as "\ufeff1girl" — unmatchable, and always the highest-count one.
 DEFAULT_ENCODING = 'utf-8-sig'
 TAG_TYPES = {
@@ -27,6 +84,23 @@ _TAG_DATA_LOCK = threading.Lock()
 
 # (csv_file -> (mtime, (tag_set, alias_map))) used by the Prompt Filter node
 FILTER_MAP_CACHE = {}
+
+# Short-lived cache for repeated autocomplete queries, such as typing a
+# character and then deleting it again.
+_SEARCH_CACHE_MAX = 32
+_SEARCH_CACHE = OrderedDict()
+_SEARCH_CACHE_LOCK = threading.Lock()
+
+
+def _clear_search_cache(csv_file=None):
+    with _SEARCH_CACHE_LOCK:
+        if csv_file is None:
+            _SEARCH_CACHE.clear()
+            return
+
+        for key in list(_SEARCH_CACHE):
+            if key[0] == csv_file:
+                _SEARCH_CACHE.pop(key, None)
 
 
 # Yield data rows, skipping a header line if the file has one.
@@ -56,8 +130,8 @@ def _is_header(row):
 def get_filter_maps(csv_file):
     if not csv_file:
         return None
-    csv_path = os.path.join(CSV_FILES_PATH, csv_file)
-    if not os.path.isfile(csv_path):
+    csv_path = get_csv_path(csv_file)
+    if csv_path is None:
         return None
     try:
         mtime = os.path.getmtime(csv_path)
@@ -91,6 +165,17 @@ def get_filter_maps(csv_file):
     FILTER_MAP_CACHE[csv_file] = (mtime, result)
     return result
 
+
+# Drop cached data for one CSV so the next use reloads it.
+def invalidate_csv_caches(csv_file):
+    if not csv_file:
+        return
+
+    with _TAG_DATA_LOCK:
+        TAG_DATA_CACHE.pop(csv_file, None)
+    _clear_search_cache(csv_file)
+    FILTER_MAP_CACHE.pop(csv_file, None)
+
 def load_tags_from_csv(csv_path):
     tags = []
     if csv_path and os.path.isfile(csv_path):
@@ -107,11 +192,8 @@ def load_tags_from_csv(csv_path):
                         if len(row) >= 4 and row[3]:
                             aliases = [a.strip().lower().replace('_', ' ') for a in row[3].split(',') if a.strip()]
 
-                        tags.append({
-                            'name': name,
-                            'count': count,
-                            'aliases': aliases
-                        })
+                        # Append as simple
+                        tags.append((name, count, aliases))
                     except (ValueError, IndexError):
                         continue
         except Exception:
@@ -119,20 +201,24 @@ def load_tags_from_csv(csv_path):
 
     return tags
 
-# The active CSV, parsed and cached.
+# The active CSV, parsed and cached against its mtime, so editing the file is picked up without a
+# restart — which is the whole point of the user folder being somewhere people curate.
 # Blocking: the merged danbooru+e621 file is ~320k rows and a couple of seconds, so call it from a thread, never on the event loop.
-def get_tag_data():
-    settings = get_erenodes_settings()
-    active_csv = settings.get('autocomplete.csv')
+def get_tag_data(active_csv=None):
+    if active_csv is None:
+        settings = get_erenodes_settings()
+        active_csv = settings.get('autocomplete.csv')
 
     if not active_csv:
         return []
 
-    csv_path = os.path.join(CSV_FILES_PATH, active_csv)
+    csv_path = get_csv_path(active_csv)
+    if csv_path is None:
+        # Missing or unreadable: nothing to search, and nothing worth caching.
+        return []
     try:
         mtime = os.path.getmtime(csv_path)
     except OSError:
-        # Missing or unreadable: nothing to search, and nothing worth caching.
         return []
 
     cached = TAG_DATA_CACHE.get(active_csv)
@@ -146,21 +232,34 @@ def get_tag_data():
             return cached[1]
         tags = load_tags_from_csv(csv_path)
         TAG_DATA_CACHE[active_csv] = (mtime, tags)
+        _clear_search_cache(active_csv)
     return tags
 
 # Substring match over tag names and their aliases, in file order, so that "eyes" finds `blue eyes`.
 # The CSVs are sorted by post count descending, so breaking at `limit` stops early and hands back the highest-count matches; input that matches little or nothing walks the whole file for ~50ms.
 def _search_tags(query, limit):
-    all_tags = get_tag_data()
+    active_csv = get_erenodes_settings().get('autocomplete.csv')
+    if not active_csv:
+        return []
+
+    # Loaded before the search cache is read: a reload drops that cache, and checking it first would
+    # keep serving rows from the previous version of an edited file.
+    all_tags = get_tag_data(active_csv)
+
+    cache_key = (active_csv, query, limit)
+    with _SEARCH_CACHE_LOCK:
+        cached = _SEARCH_CACHE.get(cache_key)
+        if cached is not None:
+            _SEARCH_CACHE.move_to_end(cache_key)
+            return list(cached)
 
     results = []
     seen_tags = set()
 
-    for tag in all_tags:
+    for tag_name, count, aliases in all_tags:
         if len(results) >= limit:
             break
 
-        tag_name = tag.get('name')
         if not tag_name or tag_name in seen_tags:
             continue
 
@@ -170,14 +269,25 @@ def _search_tags(query, limit):
             match_found = True
         
         if not match_found:
-            for alias in tag.get('aliases', []):
+            for alias in aliases:
                 if query in alias:
                     match_found = True
                     break
         
         if match_found:
-            results.append(tag)
+            # Convert only matched results as dict
+            results.append({
+                'name': tag_name,
+                'count': count,
+                'aliases': aliases,
+            })
             seen_tags.add(tag_name)
+
+    with _SEARCH_CACHE_LOCK:
+        _SEARCH_CACHE[cache_key] = results
+        _SEARCH_CACHE.move_to_end(cache_key)
+        while len(_SEARCH_CACHE) > _SEARCH_CACHE_MAX:
+            _SEARCH_CACHE.popitem(last=False)
 
     return results
 

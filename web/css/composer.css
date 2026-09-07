@@ -118,6 +118,18 @@
     color: var(--input-text, #ddd);
     font: 12px monospace;
     resize: vertical;
+    scrollbar-width: thin;
+    scrollbar-color: var(--dialog-surface, rgba(255, 255, 255, .2)) transparent;
+}
+.ere-surface .ere-composer-body > .ere-textarea::-webkit-scrollbar {
+    width: 10px;
+    background-color: transparent;
+}
+.ere-surface .ere-composer-body > .ere-textarea::-webkit-scrollbar-thumb {
+    background: var(--dialog-surface, rgba(255, 255, 255, .2));
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
 }
 .ere-surface .ere-composer-body > .ere-textarea:focus {
     outline: none;

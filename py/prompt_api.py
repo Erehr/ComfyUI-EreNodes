@@ -8,7 +8,7 @@ import server
 import folder_paths
 from aiohttp import web
 from safetensors import safe_open
-from .prompt_csv import CSV_FILES_PATH, TAG_DATA_CACHE
+from .prompt_csv import get_csv_path, invalidate_csv_caches, list_csv_files
 from .settings import get_erenodes_settings, save_erenodes_settings
 from . import paths
 from . import images
@@ -40,10 +40,7 @@ ALLOWED_SETTINGS = {"autocomplete.csv"}
 
 # The value must name a file list_csv_files would have offered.
 def _is_available_csv(value):
-    return (isinstance(value, str)
-            and value == os.path.basename(value)
-            and value.lower().endswith(".csv")
-            and os.path.isfile(os.path.join(CSV_FILES_PATH, value)))
+    return get_csv_path(value) is not None
 
 
 @server.PromptServer.instance.routes.post("/erenodes/set_setting")
@@ -59,22 +56,20 @@ async def set_setting_handler(request):
         return web.json_response({"status": "error", "message": "Not an available CSV file"}, status=400)
 
     settings = get_erenodes_settings()
+    previous_value = settings.get(key)
     settings[key] = value
     save_erenodes_settings(settings)
 
-    # Invalidate the tag cache so it lazy-reloads on the next search.
+    # Invalidate both the previous and selected CSV so it lazy-reloads on the next search.
     if key == "autocomplete.csv":
-        TAG_DATA_CACHE.pop(value, None)
+        invalidate_csv_caches(previous_value)
+        invalidate_csv_caches(value)
 
     return web.json_response({"status": "ok"})
 
 @server.PromptServer.instance.routes.get("/erenodes/list_csv_files")
 async def list_csv_files_handler(request):
-    if not os.path.isdir(CSV_FILES_PATH):
-        return web.json_response([])
-    
-    files = [f for f in os.listdir(CSV_FILES_PATH) if f.endswith(".csv")]
-    return web.json_response(files)
+    return web.json_response(list_csv_files())
 
 # Report which of the given tags point at a file on disk.
 # Takes {"items": [{"name", "type", "extension"}]} and returns {"exists": {"<type>:<name>": bool}}, keyed as sent.
@@ -230,8 +225,21 @@ async def save_tag_group_handler(request):
 
 # Tag Group Location
 
+# The location the server actually resolved, so the settings combo can seed itself from it rather
+# than from its own default and immediately overwrite the answer.
+@server.PromptServer.instance.routes.get("/erenodes/tag_groups_location")
+async def get_tag_groups_location_handler(request):
+    location = paths.get_location()
+    return web.json_response({
+        "location": location,
+        "resolved": paths.dir_for_location(location),
+        # The node folder is offered only to installs already using it.
+        "legacy": location == paths.LOCATION_NODE,
+    })
+
+
 # Current location plus both resolved paths, so the settings UI can show where things actually are.
-# Switch between the two allowed roots. Keywords only: a different disk goes in extra_model_paths.yaml.
+# Switch between the allowed roots. Keywords only: a different disk goes in extra_model_paths.yaml.
 @server.PromptServer.instance.routes.post("/erenodes/set_tag_groups_location")
 async def set_tag_groups_location_handler(request):
     try:

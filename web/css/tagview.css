@@ -38,6 +38,19 @@
     overflow-x: hidden;
     overflow-y: hidden;
     scrollbar-width: thin;
+    scrollbar-color: var(--dialog-surface, rgba(255, 255, 255, .2)) transparent;
+}
+/* Desktop builds have no overlay scrollbars; a transparent track with a floating thumb is what the
+   app's own `scrollbar-custom` panels use to look like one. */
+.erenodes-dom .ere-scroll::-webkit-scrollbar {
+    width: 10px;
+    background-color: transparent;
+}
+.erenodes-dom .ere-scroll::-webkit-scrollbar-thumb {
+    background: var(--dialog-surface, rgba(255, 255, 255, .2));
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
 }
 .erenodes-dom-content {
     box-sizing: border-box;

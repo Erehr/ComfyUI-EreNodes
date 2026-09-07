@@ -9,7 +9,8 @@ import folder_paths
 FOLDER_NAME = "tag_groups"
 LOCATION_NODE = "node"
 LOCATION_MODELS = "models"
-VALID_LOCATIONS = (LOCATION_NODE, LOCATION_MODELS)
+LOCATION_USER = "user"
+VALID_LOCATIONS = (LOCATION_NODE, LOCATION_MODELS, LOCATION_USER)
 
 # Preview images that travel with a tag group when it is copied or renamed.
 # Re-exported from the module that owns image formats, since every caller of sibling_images() already imports from paths.
@@ -49,16 +50,50 @@ def models_prompts_dir():
     return os.path.join(folder_paths.models_dir, FOLDER_NAME)
 
 
+# Everything of the user's that must outlive an update lives under here: settings, custom
+# autocomplete CSVs, and tag groups. Resolved once, since callers sit on the autocomplete path.
+_USER_DATA_DIR = None
+
+
+def user_data_dir():
+    global _USER_DATA_DIR
+    if _USER_DATA_DIR is None:
+        try:
+            user_path = folder_paths.get_user_directory()
+        except AttributeError:  # Older ComfyUI versions have no user directory helper.
+            user_path = os.path.join(getattr(folder_paths, "base_path", _PROJECT_ROOT), "user")
+        _USER_DATA_DIR = os.path.join(user_path, "__erenodes")
+    return _USER_DATA_DIR
+
+
+# The update-safe user folder, alongside the autocomplete one.
+def user_prompts_dir():
+    return os.path.join(user_data_dir(), FOLDER_NAME)
+
+
 def dir_for_location(location):
-    return models_prompts_dir() if location == LOCATION_MODELS else node_prompts_dir()
+    if location == LOCATION_MODELS:
+        return models_prompts_dir()
+    if location == LOCATION_NODE:
+        return node_prompts_dir()
+    return user_prompts_dir()
 
 
-# Active location setting, normalised, defaulting to the legacy folder.
+# Active location setting, normalised.
+# Unset means a fresh install, which gets the user folder; an install that already has groups in the
+# node folder is pinned to it instead, so changing the default never strands someone's files.
 def get_location():
     # Imported lazily: settings imports nothing from us, but keeping the import local avoids a cycle if that ever changes.
-    from .settings import get_erenodes_settings
-    value = get_erenodes_settings().get("tag_groups.location", LOCATION_NODE)
-    return value if value in VALID_LOCATIONS else LOCATION_NODE
+    from .settings import get_erenodes_settings, save_erenodes_settings
+    settings = get_erenodes_settings()
+    value = settings.get("tag_groups.location")
+    if value in VALID_LOCATIONS:
+        return value
+
+    resolved = LOCATION_NODE if count_tag_groups(node_prompts_dir()) else LOCATION_USER
+    settings["tag_groups.location"] = resolved
+    save_erenodes_settings(settings)
+    return resolved
 
 
 # Active tag-group root, created on demand.

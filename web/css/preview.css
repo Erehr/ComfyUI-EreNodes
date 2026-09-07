@@ -55,8 +55,19 @@
     max-height: 260px;
     min-height: 28px;
     scrollbar-width: thin;
+    scrollbar-color: var(--dialog-surface, rgba(255, 255, 255, .2)) transparent;
     padding: var(--ere-preview-inset);
     align-content: flex-start;
+}
+#erenodes-hover-preview .ere-cloud::-webkit-scrollbar {
+    width: 10px;
+    background-color: transparent;
+}
+#erenodes-hover-preview .ere-cloud::-webkit-scrollbar-thumb {
+    background: var(--dialog-surface, rgba(255, 255, 255, .2));
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
 }
 #erenodes-hover-preview .ere-preview-empty {
     font-size: 11px;
