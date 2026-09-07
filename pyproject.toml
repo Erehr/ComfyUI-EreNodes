@@ -1,6 +1,6 @@
 [project]
 name = "comfyui-erenodes"
-description = "A collection of prompt management nodes with advanced tag parsing. Prompt tag cloud, multiselect, toggle list, randomizer, filter, autocomplete."
+description = "Prompt management nodes with build in prompt library and tag autocomplete. Prompt tag cloud, multiselect, randomizer, gallery, composer, extractor. Drag and drop across nodes and sidebar library.  In prompt lora loader with trigger words. And more."
 version = "3.6.3"
 license = { file = "LICENSE" }
 requires-python = ">=3.9"
