@@ -295,18 +295,21 @@ export function tileMenuItems(node) {
             if (fit.width === w && fit.height === h) current = { size: size.id, ratio: ratio.id };
         }
     }
-    const mark = (on, name) => `${on ? "✓ " : ""}${name}`;
-
-    // Flat rows rather than two more flyouts: five entries do not earn a second level.
+    // Flat rows rather than two more flyouts: five entries do not earn a second level. The one in
+    // force is ticked and greyed — it is the only entry in the set that would do nothing.
     return [
         null,
         ...TILE_SIZES.map(size => ({
-            name: mark(current.size === size.id, size.label),
+            name: size.label,
+            checked: current.size === size.id,
+            disabled: current.size === size.id,
             callback: () => apply(size.id, current.ratio ?? TILE_RATIOS[0].id),
         })),
         null,
         ...TILE_RATIOS.map(ratio => ({
-            name: mark(current.ratio === ratio.id, ratio.label),
+            name: ratio.label,
+            checked: current.ratio === ratio.id,
+            disabled: current.ratio === ratio.id,
             callback: () => apply(current.size ?? TILE_SIZES[0].id, ratio.id),
         })),
     ];

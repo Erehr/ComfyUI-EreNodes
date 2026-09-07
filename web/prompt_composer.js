@@ -20,10 +20,8 @@ function openComposerMenu(node, e) {
     // Converting flattens for good: the target reads the same property as a plain tag list, and keeping the categories beside it would be dead weight in the workflow.
     const convert = (type) => { flattenRows(node); node.convertTo(type); };
     new ActionContextMenu({ clientX: e.clientX, clientY: e.clientY }, node.title, [
-        { name: "Add Category", callback: () => addRow(node) },
-        { name: "Add Category as", submenu: ROW_LAYOUTS.map(layout => ({
-            name: layout.label, callback: () => addRow(node, layout.id) })) },
-        null,
+        // No "Add Category" / "Add Category as" here: the split button sits next to this menu and
+        // is both of them.
         { name: "Create Category from Clipboard", callback: () => addRowFromClipboard(node) },
         null,
         { name: "Expand All", callback: () => setAllRows(node, "open", true) },

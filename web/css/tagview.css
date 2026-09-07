@@ -207,7 +207,7 @@
 }
 .ere-surface .ere-tile.inactive img {
     filter: grayscale(0.75);
-    opacity: .25;
+    opacity: 0.5;
 }
 .ere-surface .ere-tile .ere-name {
     position: absolute;
@@ -330,6 +330,21 @@
 .litemenu-entry.ere-menu-dropzone .ere-extract-pane {
     aspect-ratio: 16 / 9;
     max-height: 120px;
+}
+
+/* The current choice in a menu: name at the left, tick at the far right. */
+.litemenu-entry.ere-menu-checked {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.litemenu-entry.ere-menu-checked > div {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.litemenu-entry .ere-menu-tick {
+    flex: 0 0 auto;
+    opacity: .8;
 }
 
 /* A live field in a menu (the separator options). Label above, field below, and no hover

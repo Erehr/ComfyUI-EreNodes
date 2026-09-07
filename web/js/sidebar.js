@@ -988,7 +988,7 @@ function collectRows(node, out, container, searching, level = 1) {
     for (const file of node.files || []) {
         const row = {
             type: "file", name: file.name, path: file.path,
-            extension: file.extension, tab: state.tab, level,
+            extension: file.extension, image: !!file.image, tab: state.tab, level,
         };
         out.push(row);
         container.appendChild(makeTreeRow(row));
@@ -1145,7 +1145,7 @@ function render() {
             for (const file of level.files) {
                 const row = {
                     type: "file", name: file.name, path: file.path,
-                    extension: file.extension, tab: state.tab,
+                    extension: file.extension, image: !!file.image, tab: state.tab,
                 };
                 state.rows.push(row);
                 files.appendChild(makeTile(row, { width, height }));
@@ -1162,7 +1162,7 @@ function render() {
             for (const file of flatten(filtered).files) {
                 const row = {
                     type: "file", name: file.name, path: file.path,
-                    extension: file.extension, tab: state.tab, level: 1,
+                    extension: file.extension, image: !!file.image, tab: state.tab, level: 1,
                 };
                 state.rows.push(row);
                 list.appendChild(makeTreeRow(row));
@@ -1335,6 +1335,16 @@ function openRowMenu(row, e) {
     // Expanded, like click-to-add — see onRowActivate.
     const actions = [addAsMenuItem("Add as", () => tagsForRow(row, { unpack: true }))];
 
+    // A preview image is ours to write for every type — the node quick edit already sets them for
+    // loras and embeddings. The name says which of the two things it will do.
+    if (row.type === "file") {
+        actions.push(null);
+        actions.push({
+            name: row.image ? "Replace Image" : "Set Image",
+            callback: () => setFileImage(row),
+        });
+    }
+
     // Only tag groups are ours to rewrite; model files belong to ComfyUI.
     if (row.tab === "group") {
         actions.push(null);   // separator
@@ -1344,9 +1354,6 @@ function openRowMenu(row, e) {
         actions.push({ name: "New tag group here", callback: () => newTagGroup(folderOf(row)) });
         actions.push({ name: "New folder here", callback: () => createFolder(folderOf(row)) });
         actions.push({ name: "Rename", callback: () => renameRow(row) });
-        if (row.type === "file") {
-            actions.push({ name: "Set thumbnail", callback: () => setThumbnail(row) });
-        }
         actions.push({ name: "Delete", callback: () => deleteRow(row) });
     }
 
@@ -1499,7 +1506,7 @@ async function deleteRow(row) {
     await refresh();
 }
 
-function setThumbnail(row) {
+function setFileImage(row) {
     const input = document.createElement("input");
     input.type = "file";
     input.accept = "image/*";
@@ -1525,13 +1532,13 @@ function setThumbnail(row) {
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || result.message);
             app.extensionManager?.toast?.add({
-                severity: "success", summary: "Thumbnail set", detail: result.message, life: 4000,
+                severity: "success", summary: "Image saved", detail: result.message, life: 4000,
             });
             bumpPreview(row.tab, row.path);
             render();
         } catch (err) {
             app.extensionManager?.toast?.add({
-                severity: "error", summary: "Thumbnail failed", detail: err.message, life: 5000,
+                severity: "error", summary: "Image failed", detail: err.message, life: 5000,
             });
         }
     });
@@ -1708,7 +1715,9 @@ function buildSearchRow(header) {
     // A toggle rather than a prefix: the mode is sticky, and an invisible mode is forgotten.
     if (state.tab === "group") {
         const on = state.tagSearch;
-        const tagBtn = el("button", `${BUTTON_CLASS} ${on ? BUTTON_ACTIVE : ""}`, actions);
+        // Lit rather than filled: a background pill next to the view/size toggles read as a third
+        // one of those, when this is a mode that is simply on or off.
+        const tagBtn = el("button", `${BUTTON_CLASS} ${on ? "text-base-foreground" : ""}`, actions);
         tagBtn.type = "button";
         tagBtn.title = on
             ? "Searching tags inside groups — click to search names again"

@@ -1,10 +1,28 @@
 import { app } from "../../../scripts/app.js";
 import { getCache, clearCache, beginUndoTransaction, endUndoTransaction } from "./util.js";
-import { renderTagPill, SURFACE_CLASS, injectTagStyles } from "./tagview.js";
+import { renderTagPill, SURFACE_CLASS, injectTagStyles, previewUrl } from "./tagview.js";
 import { showPreviewFor, hidePreviewPanel } from "./preview.js";
 
 // Class on preview <img> elements so cleanup can target them precisely.
 const PREVIEW_CLASS = "ere-menu-preview";
+
+/**
+ * Does this file already have a preview image? Only the wording of one menu entry depends on it
+ * ("Set" vs "Replace"), so the answer is memoised per file for the session — the sidebar gets the
+ * same fact for free from the tree walk, which is why only the node menus ask.
+ * `bumpPreview` moves the URL when a cover is written, so a stale "Set Image" cannot survive one.
+ */
+const previewProbes = new Map();
+async function hasPreviewImage(tag) {
+    if (!tag?.name || !['lora', 'embedding', 'group'].includes(tag.type)) return false;
+    const url = previewUrl(tag.type, tag.name);
+    if (!previewProbes.has(url)) {
+        previewProbes.set(url, fetch(url, { method: "HEAD" })
+            .then(r => r.ok && r.status !== 204)
+            .catch(() => false));
+    }
+    return previewProbes.get(url);
+}
 
 // Menus size to their content between these bounds.
 const MENU_MIN_WIDTH = 160;
@@ -398,6 +416,16 @@ export class DynamicContextMenu { // Added export
                     item.innerHTML = `<div>${displayHTML}</div>`;
                 } else {
                     item.innerHTML = "Error: Invalid option";
+                }
+
+                // The current value of a set of choices: marked at the far end, and not selectable
+                // — picking what is already picked is the one thing an entry cannot do.
+                if (option.checked) {
+                    item.classList.add("ere-menu-checked");
+                    const tick = document.createElement("span");
+                    tick.className = "ere-menu-tick";
+                    tick.textContent = "✓";
+                    item.appendChild(tick);
                 }
 
                 item.addEventListener("click", (e) => {
@@ -1232,7 +1260,7 @@ export class TagEditContextMenu extends DynamicContextMenu {
 
         if (this.isSpecialType) {
             this.options.push({
-                name: "Set Image",
+                name: await hasPreviewImage(this.tag) ? "Replace Image" : "Set Image",
                 callback: () => this.setPreview()
             });
         }
@@ -1835,6 +1863,7 @@ export class ActionContextMenu extends DynamicContextMenu {
             this.options.push({
                 name: action.name,
                 disabled: !!action.disabled,
+                checked: !!action.checked,
                 submenu: action.submenu,
                 callback: () => {
                     this.close();

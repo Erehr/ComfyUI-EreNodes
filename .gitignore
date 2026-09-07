@@ -38,6 +38,7 @@ Thumbs.db
 
 # Project specific
 __prompts__/
+references/
 *.log 
 __autocomplete__/booru_complete.csv
 py/settings.json

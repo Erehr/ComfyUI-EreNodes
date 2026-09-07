@@ -34,14 +34,29 @@ def sanitize_filename(filename):
     return filename.strip()
 
 
+# The only key this route writes; tag_groups.location has its own route, which validates it there.
+ALLOWED_SETTINGS = {"autocomplete.csv"}
+
+
+# The value must name a file list_csv_files would have offered.
+def _is_available_csv(value):
+    return (isinstance(value, str)
+            and value == os.path.basename(value)
+            and value.lower().endswith(".csv")
+            and os.path.isfile(os.path.join(CSV_FILES_PATH, value)))
+
+
 @server.PromptServer.instance.routes.post("/erenodes/set_setting")
 async def set_setting_handler(request):
     data = await request.json()
     key = data.get("key")
     value = data.get("value")
 
-    if key is None:
-        return web.json_response({"status": "error", "message": "Setting 'key' not provided"}, status=400)
+    if key not in ALLOWED_SETTINGS:
+        return web.json_response({"status": "error", "message": f"Unknown setting: {key}"}, status=400)
+
+    if not _is_available_csv(value):
+        return web.json_response({"status": "error", "message": "Not an available CSV file"}, status=400)
 
     settings = get_erenodes_settings()
     settings[key] = value
@@ -711,6 +726,14 @@ def _build_tree(root, extensions, rel="", depth=0):
     except OSError:
         return {"folders": folders, "files": files}
 
+    # Which stems have a preview image beside them. The walk already has every entry in hand, so
+    # this costs a set build per directory and saves the client asking per file.
+    image_stems = set()
+    for entry in entries:
+        stem, ext = os.path.splitext(entry.name)
+        if ext.lower() in IMAGE_EXTENSIONS:
+            image_stems.add(stem[:-8] if stem.endswith(".preview") else stem)
+
     for entry in entries:
         name = entry.name
         child_rel = f"{rel}/{name}" if rel else name
@@ -734,6 +757,7 @@ def _build_tree(root, extensions, rel="", depth=0):
                 "path": os.path.splitext(child_rel)[0].replace(os.sep, '/'),
                 "extension": ext,
                 "type": "file",
+                "image": stem in image_stems,
             })
     return {"folders": folders, "files": files}
 
