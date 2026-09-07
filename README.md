@@ -92,7 +92,7 @@ ComfyUI-EreNodes provides an intuitive and feature-rich solution for handling pr
 - **Works Everywhere**: Cloud, Toggle, MultiSelect, Randomizer and Gallery nodes all share the same behaviour
 
 ### 🔍 Smart Autocomplete
-- **Comprehensive Dictionaries**: Built-in tag lists from Danbooru and e621, plus support for custom CSV files in the `__autocomplete__` folder
+- **Comprehensive Dictionaries**: Built-in tag lists from Danbooru and e621, plus support for custom CSV files in the `__autocomplete__` folder or the update-safe user folder
 - **Intelligent Aliases**: Automatic tag alias detection and replacement with canonical terms
 - **Flexible Search**: Partial matching support, including multi-word tag recognition
 - **Visual Highlighting**: Clear highlighting of filtered terms for enhanced clarity
@@ -133,7 +133,7 @@ git clone https://github.com/erehr/ComfyUI-EreNodes.git
 
 ### Quick Setup
 
-1. **Custom Autocomplete**: Place your custom CSV tag files in the `__autocomplete__` folder within the EreNodes directory or choose existing one from Settings
+1. **Custom Autocomplete**: Place bundled CSV files in the `__autocomplete__` folder within the EreNodes directory. For custom CSVs, place them in `ComfyUI/user/__erenodes/autocomplete` and choose the file in Settings; this folder is created automatically.
 2. **Preview Images**: Add preview images to enhance your tag browsing experience
 3. **Create Your First Tag Group**: Use any EreNodes prompt node to save your favorite tag combinations
 

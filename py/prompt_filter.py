@@ -1,13 +1,11 @@
-import os
 import re
 
-from .prompt_csv import CSV_FILES_PATH, get_filter_maps
+from .prompt_csv import get_filter_maps, list_csv_files as get_csv_files
 
 
+# Legacy compatibility
 def list_csv_files():
-    if not os.path.isdir(CSV_FILES_PATH):
-        return []
-    return sorted(f for f in os.listdir(CSV_FILES_PATH) if f.endswith(".csv"))
+    return get_csv_files()
 
 
 # Strip lora/embedding syntax, weights and wrapping brackets from a token.

@@ -906,6 +906,8 @@ export class TagContextMenu extends DynamicContextMenu {
         this.existingTags = existingTags;
         this.currentWord = ""; 
         this.filterBox = null;
+        this.searchGeneration = 0;
+        this.searchAbortController = null;
         
         // Determine how to position the menu
         if (event instanceof MouseEvent) {
@@ -915,20 +917,46 @@ export class TagContextMenu extends DynamicContextMenu {
         }
     }
 
+    beginSearch() {
+        this.searchAbortController?.abort();
+        const controller = new AbortController();
+        this.searchAbortController = controller;
+        return {
+            generation: ++this.searchGeneration,
+            signal: controller.signal,
+        };
+    }
+
+    isCurrentSearch(generation) {
+        return generation === this.searchGeneration;
+    }
+
+    close(e = null, ignoreParent = false) {
+        this.searchGeneration++;
+        this.searchAbortController?.abort();
+        this.searchAbortController = null;
+        super.close(e, ignoreParent);
+    }
+
     async searchTags(query) {
         this.currentWord = query;
+        const { generation, signal } = this.beginSearch();
         let suggestions = [];
         try {
             // Per search, not cached: the menu outlives a settings change.
             const limit = app.ui?.settings?.getSettingValue?.("EreNodes.Autocomplete.Limit", 20) ?? 20;
             const response = await fetch(
-                `/erenodes/search_tags?query=${encodeURIComponent(query)}&limit=${limit}`);
+                `/erenodes/search_tags?query=${encodeURIComponent(query)}&limit=${limit}`,
+                { signal });
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
             const tags = await response.json();
             suggestions = tags.filter(tag => !this.existingTags.some(existingTag => existingTag.name === tag.name && existingTag.type === 'tag'));
         } catch (error) {
+            if (error.name === "AbortError" || !this.isCurrentSearch(generation)) return;
             console.error("[EreNodes] Error searching tags:", error);
         }
+
+        if (!this.isCurrentSearch(generation)) return;
         this.updateOptions(suggestions);
     }
     
@@ -1031,18 +1059,22 @@ export class TagIndexContextMenu extends TagContextMenu {
 
     async searchTags(query) {
         this.currentWord = query;
+        const { generation, signal } = this.beginSearch();
         let suggestions = [];
         try {
             const limit = app.ui?.settings?.getSettingValue?.("EreNodes.Autocomplete.Limit", 20) ?? 20;
             const params = new URLSearchParams({ query, limit: String(limit) });
             if (this.contextTerms?.length) params.set("context", this.contextTerms.join(","));
-            const response = await fetch(`/erenodes/tag_index/suggest?${params}`);
+            const response = await fetch(`/erenodes/tag_index/suggest?${params}`, { signal });
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
             const tags = await response.json();
             if (Array.isArray(tags)) suggestions = tags;
         } catch (error) {
+            if (error.name === "AbortError" || !this.isCurrentSearch(generation)) return;
             console.error("[EreNodes] Error suggesting tags:", error);
         }
+
+        if (!this.isCurrentSearch(generation)) return;
         this.updateOptions(suggestions);
     }
 }
