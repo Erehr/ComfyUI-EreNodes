@@ -75,9 +75,10 @@ def get_prompts_dir():
 # True if `target` is `root` or lives inside it.
 # commonpath, not startswith: a sibling like "__prompts__backup" would pass a prefix check, and mismatched Windows drives raise ValueError.
 def is_within(root, target):
+    # realpath, not abspath: a symlink inside the root would otherwise pass while pointing outside it.
     try:
-        abs_root = os.path.abspath(root)
-        return os.path.commonpath([abs_root, os.path.abspath(target)]) == abs_root
+        abs_root = os.path.realpath(root)
+        return os.path.commonpath([abs_root, os.path.realpath(target)]) == abs_root
     except ValueError:
         return False
 

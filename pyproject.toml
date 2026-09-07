@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-erenodes"
 description = "A collection of prompt management nodes with advanced tag parsing. Prompt tag cloud, multiselect, toggle list, randomizer, filter, autocomplete."
-version = "3.6.1"
+version = "3.6.2"
 license = { file = "LICENSE" }
 requires-python = ">=3.9"
 # safetensors ships with ComfyUI; declared for standalone tooling
