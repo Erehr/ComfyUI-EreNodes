@@ -2,7 +2,7 @@
 
 > A powerful collection of custom nodes for ComfyUI that improve prompt management and organization
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![ComfyUI](https://img.shields.io/badge/ComfyUI-Compatible-brightgreen)](https://github.com/comfyanonymous/ComfyUI)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![ComfyUI](https://img.shields.io/badge/ComfyUI-Compatible-brightgreen)](https://github.com/comfyanonymous/ComfyUI) [![Ko-fi](https://img.shields.io/badge/Ko--fi-tip-F16061?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/erehr)
 
 ComfyUI-EreNodes provides an intuitive and feature-rich solution for handling prompts in your ComfyUI workflows. These nodes are designed to work seamlessly together, offering everything from intelligent autocomplete to visual tag management.
 
@@ -33,6 +33,7 @@ ComfyUI-EreNodes provides an intuitive and feature-rich solution for handling pr
 | **Prompt Multiline** | Enhanced text input with EreNodes features | Full autocomplete, tag management |
 | **Prompt Filter** | CSV-based prompt validation | Tag filtering, validation |
 | **Prompt Extractor** | Recovers the prompt from a generated image as tag pills | Reads ComfyUI + A1111 metadata, positive-only, restores inactive tags |
+| **Prompt Lora Loader** | Applies LoRAs to MODEL/CLIP with the same tag UI, from its own list and from the prompt | Toggle layout, trigger words, no external nodes |
 | **Prompt to Lora Stack** | Extracts and converts loras from prompt into  lora_stack
 
 ## ✨ Key Features
@@ -92,7 +93,7 @@ ComfyUI-EreNodes provides an intuitive and feature-rich solution for handling pr
 - **Works Everywhere**: Cloud, Toggle, MultiSelect, Randomizer and Gallery nodes all share the same behaviour
 
 ### 🔍 Smart Autocomplete
-- **Comprehensive Dictionaries**: Built-in tag lists from Danbooru and e621, plus support for custom CSV files in the `__autocomplete__` folder or the update-safe user folder
+- **Comprehensive Dictionaries**: Built-in tag lists from Danbooru and e621, plus support for custom CSV files in `ComfyUI/user/__erenodes/autocomplete`
 - **Intelligent Aliases**: Automatic tag alias detection and replacement with canonical terms
 - **Flexible Search**: Partial matching support, including multi-word tag recognition
 - **Visual Highlighting**: Clear highlighting of filtered terms for enhanced clarity
@@ -132,18 +133,10 @@ git clone https://github.com/erehr/ComfyUI-EreNodes.git
 ## 🚀 Getting Started
 
 ### Quick Setup
-
-1. **Custom Autocomplete**: Place bundled CSV files in the `__autocomplete__` folder within the EreNodes directory. For custom CSVs, place them in `ComfyUI/user/__erenodes/autocomplete` and choose the file in Settings; this folder is created automatically.
 2. **Preview Images**: Add preview images to enhance your tag browsing experience
 3. **Create Your First Tag Group**: Use any EreNodes prompt node to save your favorite tag combinations
 
 ### 🎮 Basic Usage
-
-**Using Autocomplete:**
-- Start typing in any EreNodes text or add tag field
-- Use Tab or arrow keys to navigate suggestions
-- Press Enter to select
-- Enjoy intelligent tag completion with aliases
 
 **Managing Tag Groups:**
 - Click on any tag nodes ≡ menu button to "Save as Tag Group". Select (or create) folder, type filename and select optional image. 
@@ -156,8 +149,11 @@ EreNodes provides flexible LoRA loading options to fit different workflow prefer
 
 | Method | Description | Compatible Nodes | Use Case |
 |--------|-------------|------------------|----------|
+| **Prompt Lora Loader** | Built in. Takes MODEL and CLIP, applies its own LoRAs plus any `<lora:...>` found in the incoming prompt, and passes the prompt on with trigger words. No other pack needed. | — | Best for most workflows |
 | **LoRA Stack** | Use "Prompt to LoRA Stack" node to extract `<lora:name:strength>` tags and connect to stack-compatible nodes | • [Efficiency Nodes](https://github.com/jags111/efficiency-nodes-comfyui)<br>• [ComfyRoll Custom Nodes](https://github.com/Suzie1/ComfyUI_Comfyroll_CustomNodes)<br>• [LoRA Manager](https://github.com/willmiao/ComfyUI-Lora-Manager) | Best for mixing multiple sources of LoRAs |
 | **Direct Loading** | Use nodes that load LoRAs directly from prompt text in place of standard LoRA loaders. | • [LoRA Tag Loader](https://github.com/badjeff/comfyui_lora_tag_loader)<br>• [Impact Wildcard Encode](https://github.com/ltdrdata/ComfyUI-Impact-Pack)<br>• [PCLazyLoRALoader](https://github.com/asagi4/comfyui-prompt-control) | Best for simple workflows or when using wildcards |
+
+The Prompt Lora Loader uses the same pills, drag and drop and right-click menus as every other node. `+ Lora` opens the LoRA picker directly, and `≡ → Layout` switches between Toggle (default), Cloud, MultiSelect and Gallery. Only LoRAs can be dropped on it.
 
 ### 💡 Pro Tips
 
@@ -171,7 +167,13 @@ EreNodes provides flexible LoRA loading options to fit different workflow prefer
 
 ## 📋 Changelog
 
-### Version 3.6 - Latest
+<details>
+<summary><b>Version 3.7</b> — Prompt Lora Loader, update-safe storage, custom autocomplete CSVs</summary>
+
+### Version 3.7 - Latest
+- **New Node: Prompt Lora Loader**: applies LoRAs to MODEL/CLIP with the familiar pill interface, from its own list and from the incoming prompt — no other pack needed
+
+### Version 3.6
 - **Per-category layouts in the Composer**: each category draws as Cloud, Toggle, MultiSelect, Gallery or Multiline, from its ≡ menu —> Layout
 - **Drop tags into a prompt textarea**: pills and tag groups can be dragged into the Prompt Multiline node and Composer multiline category
 - **New `text` tag type**: a pill holding a whole sentences, so tags and natural language prompts can mix in one node
@@ -231,6 +233,8 @@ EreNodes provides flexible LoRA loading options to fit different workflow prefer
 
 ### Version 1.1 - Initial Release
 - **Launch**: Published to ComfyUI Registry and Manager
+
+</details>
 
 ---
 

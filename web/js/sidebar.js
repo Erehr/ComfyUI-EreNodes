@@ -1,5 +1,5 @@
 import { app } from "../../../scripts/app.js";
-import { getCache, isNotFound, loadStyle, clearMissingCache, isAcceptedImage, extractFromImage, tagsFromResult, forgetVerdicts } from "./util.js";
+import { getCache, isNotFound, loadStyle, clearMissingCache, isAcceptedImage, extractFromImage, tagsFromResult, forgetVerdicts, installTooltips } from "./util.js";
 import { SURFACE_CLASS, injectTagStyles, renderTagTile, previewUrl, bumpPreview,
          TILE_SIZE, TILE_GAP, TILE_SIZES, TILE_RATIOS, tileBoxFor } from "./tagview.js";
 import { showPreviewFor, hidePreviewPanel, setPreviewHandlers } from "./preview.js";
@@ -935,7 +935,6 @@ function makeTreeRow(row, { open = false } = {}) {
     item.dataset.indent = String(row.level);
     item.dataset.ereKey = rowKey(row);
     item.tabIndex = -1;
-    item.title = row.path;
     item.style.paddingLeft = `${8 + (row.level - 1) * 24}px`;
 
     if (isFolder) {
@@ -1003,7 +1002,6 @@ function tileBox() {
 function makeTile(row, box = null) {
     const wrap = el("div", "ere-sb-tile");
     wrap.dataset.ereKey = rowKey(row);
-    wrap.title = row.path;
 
     if (row.type === "folder") {
         // Size comes from the grid, so folder and file tiles occupy identical cells.
@@ -1595,7 +1593,6 @@ function buildChrome(host) {
     const start = el("div", "p-toolbar-start min-w-0 flex-1 overflow-hidden", toolbar);
     const title = el("span", "truncate font-bold", start);
     title.textContent = editing ? state.editor.title : "EreNodes";
-    title.title = title.textContent;
 
     el("div", "p-toolbar-center", toolbar);
     const end = el("div", "p-toolbar-end", toolbar);
@@ -1942,4 +1939,4 @@ export function unmountSidebar() {
     state.host = null;
 }
 
-function injectSidebarStyles() { loadStyle("sidebar"); }
+function injectSidebarStyles() { loadStyle("sidebar"); installTooltips(); }

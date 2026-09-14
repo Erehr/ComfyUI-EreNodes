@@ -360,10 +360,19 @@ export class DynamicContextMenu { // Added export
                 input.addEventListener("input", () => option.onInput?.(input.value));
                 input.addEventListener("keydown", (e) => {
                     // Shift+Enter types a newline; a plain Enter is the commit.
-                    if (e.key !== "Enter" || e.shiftKey || !option.onEnter) return;
+                    if (e.key !== "Enter" || e.shiftKey) return;
+                    if (!option.onEnter && option.multiline) return;
                     e.preventDefault();
                     e.stopPropagation();
-                    option.onEnter(input.value);
+                    if (option.onEnter) {
+                        option.onEnter(input.value);
+                        return;
+                    }
+                    // onInput applied the value already, so Enter runs the highlighted entry.
+                    const at = this.highlighted;
+                    const highlighted = at === -1 ? null : this.options[at];
+                    if (highlighted?.callback && !highlighted.disabled) this.onItemSelected(highlighted, e, at);
+                    else this.close();
                 });
                 // Anywhere on the row belongs to the field, and no click here picks an option.
                 item.addEventListener("click", (e) => { e.stopPropagation(); input.focus(); });
@@ -468,20 +477,19 @@ export class DynamicContextMenu { // Added export
                 return;
             }
             if (this.filterBox && e.target === this.filterBox) {
-                // Shift+Enter belongs to the field: it is how a newline is typed into one.
-                const isNavKey = ['ArrowUp', 'ArrowDown', 'Enter', 'Escape', 'Tab'].includes(e.key)
-                    && !(e.key === "Enter" && e.shiftKey);
+                // Shift+Enter is a nav key here: the box is single-line, so it cannot be a newline.
+                const isNavKey = ['ArrowUp', 'ArrowDown', 'Enter', 'Escape', 'Tab'].includes(e.key);
                 const isOverridden = this.filterBoxOverrides && this.filterBoxOverrides.includes(e.key);
 
                 if (!isNavKey && !isOverridden) {
                     return;
                 }
             }
-            // A plain field (type 'input') owns everything but Escape — including Enter, which is
-            // its own commit, and Shift+Enter, which is its newline. This handler is on `document`
-            // in the capture phase, so without it the menu would swallow the key before the field
-            // ever saw it.
-            if (e.key !== "Escape" && isEditableTarget(e.target) && e.target !== this.filterBox
+            // A type 'input' field owns its text; the keys that walk the menu still belong here.
+            // A textarea keeps its own up and down to move the caret between lines.
+            const walksMenu = e.key === "Escape" || e.key === "Tab"
+                || ((e.key === "ArrowUp" || e.key === "ArrowDown") && e.target?.tagName !== "TEXTAREA");
+            if (!walksMenu && isEditableTarget(e.target) && e.target !== this.filterBox
                 && this.root?.contains(e.target)) {
                 return;
             }
@@ -940,6 +948,8 @@ export class TagContextMenu extends DynamicContextMenu {
 
     async searchTags(query) {
         this.currentWord = query;
+        // renderItems leaves a focused box alone, so a reset to empty has to clear it here.
+        if (!query && this.filterBox) this.filterBox.value = "";
         const { generation, signal } = this.beginSearch();
         let suggestions = [];
         try {
@@ -1059,6 +1069,8 @@ export class TagIndexContextMenu extends TagContextMenu {
 
     async searchTags(query) {
         this.currentWord = query;
+        // renderItems leaves a focused box alone, so a reset to empty has to clear it here.
+        if (!query && this.filterBox) this.filterBox.value = "";
         const { generation, signal } = this.beginSearch();
         let suggestions = [];
         try {

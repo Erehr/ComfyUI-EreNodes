@@ -108,6 +108,12 @@
     font: inherit;
     line-height: 18px;
 }
+/* A button whose label is a word rather than a glyph: the 20px box is sized for one character. */
+.ere-surface .ere-btn.ere-btn-text {
+    width: auto;
+    padding: 0 8px;
+    white-space: nowrap;
+}
 /* Pressed state for a toolbar toggle (currently the eye). Reuses the hover treatment plus a brighter border, so "on" reads without inventing a colour the theme does not have. */
 .ere-surface .ere-btn.ere-btn-on {
     background: var(--component-node-widget-background-hovered, #2a2a2a);
@@ -117,6 +123,26 @@
 .ere-surface .ere-btn:hover {
     background: var(--component-node-widget-background-hovered, #2a2a2a);
     color: var(--component-node-foreground, #ddd);
+}
+/* Replaces the browser tooltip on our elements. Not scoped to .ere-surface: it is on body. */
+.ere-tip {
+    position: fixed;
+    z-index: 2001;
+    display: none;
+    width: fit-content;
+    max-width: 320px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: var(--p-tooltip-background, #2a2a2a);
+    color: var(--p-tooltip-color, #fff);
+    font-size: 12px;
+    line-height: 1.35;
+    white-space: pre-line;
+    pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, .35);
+}
+.ere-tip.ere-tip-on {
+    display: block;
 }
 .ere-surface .ere-pill {
     height: 20px;
@@ -181,8 +207,20 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     color: #FFF;
+    /* Takes the slack so the name truncates and the numbers keep the right edge. */
+    flex: 1 1 auto;
+    min-width: 0;
 }
-.ere-surface .ere-toggle-row.inactive .ere-label {
+.ere-surface .ere-toggle-row .ere-meta {
+    flex: 0 0 auto;
+    display: flex;
+    gap: 6px;
+    padding: 0 8px 0 6px;
+    white-space: nowrap;
+    color: #FFF;
+}
+.ere-surface .ere-toggle-row.inactive .ere-label,
+.ere-surface .ere-toggle-row.inactive .ere-meta {
     color: inherit;
 }
 .ere-surface .ere-switch {

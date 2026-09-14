@@ -4,7 +4,7 @@ import { attachPillDrag, markDropZone, markTextDropZone, injectDragStyles, insta
 import { SURFACE_CLASS, injectTagStyles, fallbackColors, renderTagPill, renderToggleRowEl, renderTagTile } from "./tagview.js";
 import { parseTags, byTagName } from "./parser.js";
 import { ActionContextMenu } from "./contextmenu.js";
-import { isKnownMissing, ensureChecked, textareaOf } from "./util.js";
+import { isKnownMissing, ensureChecked, textareaOf, installTooltips } from "./util.js";
 
 // Undo/redo restores graph state and fires "graphChanged", but Vue keeps the existing DOM widget instances, so nothing repaints on its own.
 let graphChangedHooked = false;
@@ -27,6 +27,7 @@ export const MODE_BY_TYPE = {
     ErePromptRandomizer: "randomizer",
     ErePromptGallery: "gallery",
     ErePromptMultiline: "multiline",
+    ErePromptLoraLoader: "loraloader",
 };
 
 /** Hide transport widgets from both renderers. Composer row widgets use it too. */
@@ -61,6 +62,11 @@ function nativeWidgetsToHide(node, mode) {
         // Transport only: the filename is shown as the image preview itself.
         const image = node.widgets?.find(w => w.name === "image");
         if (image) list.push(image);
+    }
+    if (mode === "loraloader") {
+        // Edited from the Options flyout, like the separators.
+        const remove = node.widgets?.find(w => w.name === "remove_lora_tags");
+        if (remove) list.push(remove);
     }
     return list;
 }
@@ -307,6 +313,10 @@ function renderButtons(node, container, mode) {
         group.appendChild(add);
         group.appendChild(caret);
         container.appendChild(group);
+    } else if (mode === "loraloader") {
+        const add = makeButton(node, "button_add_lora", "+ Lora", "Add a LoRA");
+        add.classList.add("ere-btn-text");
+        container.appendChild(add);
     } else {
         // Multiline has one too: it inserts the tag as text at the caret.
         container.appendChild(makeButton(node, "button_add_tag", "+", "Add tag"));
@@ -405,11 +415,15 @@ export function renderTagBody(node, container, mode, colors, tagData) {
     return flow;
 }
 
-/** Attach the DOM tag UI to a node. Call after initializeSharedPromptFunctions. */
-export function attachTagDomWidget(node, mode) {
+/**
+ * Attach the DOM tag UI to a node. Call after initializeSharedPromptFunctions.
+ * `layoutOf` draws the tags as a mode other than the node's own, for a switchable layout.
+ */
+export function attachTagDomWidget(node, mode, layoutOf = null) {
     if (node._ereDom) return node._ereDom.widget;
 
     injectStyles();
+    installTooltips();
     installWheelGuard();
     installResizeDragTracking();
     const colors = fallbackColors();
@@ -432,7 +446,8 @@ export function attachTagDomWidget(node, mode) {
     bindRootListeners(el);
     // Cross-node drops resolve the node from the element under the pointer.
     el._ereNode = node;
-    el._ereMode = mode;
+    // The drawn mode, not the identity: the drag layer sizes placeholders by it, as Composer rows do.
+    el._ereMode = layoutOf?.() || mode;
     installDragGlobals();
 
     let lastRenderedState = null;
@@ -492,7 +507,9 @@ export function attachTagDomWidget(node, mode) {
             return;
         }
 
-        renderTagBody(node, content, mode, colors, tagData);
+        const drawn = layoutOf?.() || mode;
+        el._ereMode = drawn;
+        renderTagBody(node, content, drawn, colors, tagData);
     };
 
     if (typeof node.addDOMWidget !== "function") {

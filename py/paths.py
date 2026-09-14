@@ -50,8 +50,8 @@ def models_prompts_dir():
     return os.path.join(folder_paths.models_dir, FOLDER_NAME)
 
 
-# Everything of the user's that must outlive an update lives under here: settings, custom
-# autocomplete CSVs, and tag groups. Resolved once, since callers sit on the autocomplete path.
+# Settings, custom autocomplete CSVs and tag groups, none of which an update may take with it.
+# Resolved once, since callers sit on the autocomplete path.
 _USER_DATA_DIR = None
 
 
@@ -79,9 +79,8 @@ def dir_for_location(location):
     return user_prompts_dir()
 
 
-# Active location setting, normalised.
-# Unset means a fresh install, which gets the user folder; an install that already has groups in the
-# node folder is pinned to it instead, so changing the default never strands someone's files.
+# Active location setting, normalised and written back once.
+# An install with groups already in the node folder is pinned there, not moved off them.
 def get_location():
     # Imported lazily: settings imports nothing from us, but keeping the import local avoids a cycle if that ever changes.
     from .settings import get_erenodes_settings, save_erenodes_settings

@@ -197,6 +197,8 @@ export function displayNameFor(tag, stripFolders) {
             name = name.substring(Math.max(name.lastIndexOf("\\"), name.lastIndexOf("/")) + 1);
         }
         name = name.replace(KNOWN_EXTENSIONS, "");
+        // Windows hands subfolders back with backslashes, the file picker with forward ones.
+        name = name.replace(/\\/g, "/");
     } else if (tag.type === "embedding") {
         name = name.replace(/^embedding:/, "");
     }

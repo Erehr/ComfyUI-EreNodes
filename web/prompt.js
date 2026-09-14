@@ -166,7 +166,8 @@ const getTextInput = async (title, promptMessage, defaultValue = "") => {
 
 // Global keyboard shortcuts for tag nodes (Ctrl+V paste).
 let contextMenuPatched = false;
-const ERE_TAG_NODE_TYPES = ["ErePromptCloud", "ErePromptToggle", "ErePromptMultiSelect", "ErePromptRandomizer", "ErePromptGallery", "ErePromptComposer"];
+// The Lora Loader is here too: pasting a prompt into it keeps the loras it names and drops the rest.
+const ERE_TAG_NODE_TYPES = ["ErePromptCloud", "ErePromptToggle", "ErePromptMultiSelect", "ErePromptRandomizer", "ErePromptGallery", "ErePromptComposer", "ErePromptLoraLoader"];
 
 export function applyContextMenuPatch() {
     if (contextMenuPatched) {
