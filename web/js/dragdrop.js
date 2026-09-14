@@ -169,8 +169,8 @@ export function handlePillSelectClick(node, index, e) {
         return true;
     }
 
-    // Any plain click drops the selection and toggles just that one tag.
-    clearSelectionState(node);
+    // Every selection, not just this node's: a stale one elsewhere is what the next drag carries.
+    clearAllSelections();
     return false;
 }
 
@@ -688,7 +688,11 @@ function updateDrag(x, y) {
     const container = root?.querySelector(".ere-drop-zone");
     const mode = root?._ereMode;
 
-    if (!targetNode || !container || !DND_MODES.has(mode)) {
+    // Refused here, not after the drop, which would already have removed them from the source.
+    const refused = !!targetNode && targetNode.onAcceptTags
+        && !targetNode.onAcceptTags(draggedTags(d));
+
+    if (!targetNode || !container || !DND_MODES.has(mode) || refused) {
         if (d.placeholder.parentNode) d.placeholder.remove();
         // Bare canvas takes an external payload (it makes a node), so no "no drop" cue there.
         const canvasDrop = !d.sourceNode && d.externalTags?.length
@@ -1096,6 +1100,7 @@ async function finishDrag() {
     }
 
     if (!d.target || d.dropIndex == null) return;
+    if (d.target.onAcceptTags && !d.target.onAcceptTags(draggedTags(d))) return;
 
     // A null sourceNode came from outside the graph: nothing to remove from, always an insert.
     if (!d.sourceNode) await dropExternal(d);

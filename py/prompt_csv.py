@@ -38,8 +38,7 @@ get_user_csv_files_path()
 _SHADOWED_WARNED = set()
 
 
-# Resolve a selectable CSV. The user folder wins: a file put there deliberately is meant to replace
-# the bundled one of that name, and losing to it silently reads as the file being ignored.
+# The user folder wins: a file put there deliberately is meant to replace the bundled one.
 def get_csv_path(csv_file):
     if not isinstance(csv_file, str) or csv_file != os.path.basename(csv_file) or not csv_file.lower().endswith(".csv"):
         return None
@@ -201,8 +200,7 @@ def load_tags_from_csv(csv_path):
 
     return tags
 
-# The active CSV, parsed and cached against its mtime, so editing the file is picked up without a
-# restart — which is the whole point of the user folder being somewhere people curate.
+# Cached against mtime, so an edited CSV is picked up without a restart.
 # Blocking: the merged danbooru+e621 file is ~320k rows and a couple of seconds, so call it from a thread, never on the event loop.
 def get_tag_data(active_csv=None):
     if active_csv is None:
@@ -242,8 +240,7 @@ def _search_tags(query, limit):
     if not active_csv:
         return []
 
-    # Loaded before the search cache is read: a reload drops that cache, and checking it first would
-    # keep serving rows from the previous version of an edited file.
+    # Loaded first: a reload drops the search cache, which would otherwise still answer.
     all_tags = get_tag_data(active_csv)
 
     cache_key = (active_csv, query, limit)

@@ -162,7 +162,6 @@ export function renderTagPill(tag, opts = {}) {
         span.textContent = st;
         pill.appendChild(span);
     }
-    pill.title = name + st;
     return pill;
 }
 
@@ -195,17 +194,29 @@ export function renderToggleRowEl(tag, opts = {}) {
 
     const label = document.createElement("span");
     label.className = "ere-label";
-    let name = displayNameFor(tag, false);
-    if (tag.type === 'lora' && tag.triggers?.length > 0) name += ` [+${tag.triggers.length}]`;
-    label.textContent = name;
-    const st = strengthText(tag);
-    if (st) {
-        const span = document.createElement("span");
-        span.className = "ere-strength";
-        span.textContent = st;
-        label.appendChild(span);
-    }
+    label.textContent = displayNameFor(tag, false);
     row.appendChild(label);
+
+    // Its own element rather than more label text: a row is name-left / numbers-right, and text
+    // inside the ellipsised label cannot be pushed to the far edge.
+    const badge = tag.type === 'lora' && tag.triggers?.length > 0 ? `[+${tag.triggers.length}]` : "";
+    const st = strengthText(tag);
+    if (badge || st) {
+        const meta = document.createElement("span");
+        meta.className = "ere-meta";
+        if (badge) {
+            const span = document.createElement("span");
+            span.textContent = badge;
+            meta.appendChild(span);
+        }
+        if (st) {
+            const span = document.createElement("span");
+            span.className = "ere-strength";
+            span.textContent = st;
+            meta.appendChild(span);
+        }
+        row.appendChild(meta);
+    }
     return row;
 }
 

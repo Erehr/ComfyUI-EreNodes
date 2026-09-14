@@ -117,6 +117,76 @@ export function loadStyle(name) {
     document.head.appendChild(link);
 }
 
+// Tooltips
+
+// PrimeVue's tooltip is a Vue directive and unreachable from plain DOM, so this rebuilds it.
+const TIP_ROOTS = ".erenodes-dom, .ere-surface, .ere-sidebar, .litecontextmenu, #erenodes-hover-preview";
+const TIP_DELAY = 300;
+
+let tipEl = null;
+let tipTimer = null;
+let tipFor = null;
+
+function tipElement() {
+    if (!tipEl) {
+        tipEl = document.createElement("div");
+        tipEl.className = "ere-tip";
+        document.body.appendChild(tipEl);
+    }
+    return tipEl;
+}
+
+function showTip(target, value) {
+    const el = tipElement();
+    el.textContent = value;
+    el.classList.add("ere-tip-on");
+    // Measured after it is shown, since the box has no width until then.
+    const box = target.getBoundingClientRect();
+    const own = el.getBoundingClientRect();
+    const left = box.left + box.width / 2 - own.width / 2;
+    el.style.left = `${Math.max(4, Math.min(left, window.innerWidth - own.width - 4))}px`;
+    el.style.top = `${box.bottom + 8}px`;
+}
+
+function hideTip() {
+    clearTimeout(tipTimer);
+    tipTimer = null;
+    if (tipFor) {
+        tipFor.setAttribute("title", tipFor.dataset.ereTip ?? "");
+        delete tipFor.dataset.ereTip;
+        tipFor = null;
+    }
+    tipEl?.classList.remove("ere-tip-on");
+}
+
+function onTipOver(e) {
+    const target = e.target?.closest?.("[title]");
+    if (!target || target === tipFor || !target.closest(TIP_ROOTS)) return;
+    const value = target.getAttribute("title");
+    if (!value) return;
+
+    hideTip();
+    tipFor = target;
+    // Moved aside, not read: left in place the browser would draw its own on top.
+    target.dataset.ereTip = value;
+    target.removeAttribute("title");
+    tipTimer = setTimeout(() => showTip(target, value), TIP_DELAY);
+}
+
+let tipsInstalled = false;
+export function installTooltips() {
+    if (tipsInstalled) return;
+    tipsInstalled = true;
+    loadStyle("tagview");
+    document.addEventListener("mouseover", onTipOver, true);
+    document.addEventListener("mouseout", (e) => {
+        if (tipFor && !tipFor.contains(e.relatedTarget)) hideTip();
+    }, true);
+    document.addEventListener("pointerdown", hideTip, true);
+    window.addEventListener("scroll", hideTip, true);
+    window.addEventListener("blur", hideTip);
+}
+
 // Extraction
 // Segments come in execution order, one per node in the chain: ours contribute `tags`, everything else `text`.
 
@@ -282,12 +352,8 @@ export function clearMissingCache() {
 
 /**
  * The character index nearest a point in a textarea.
- * `document.caretRangeFromPoint` does not answer this for a textarea — it hands back the control
- * itself, or a node inside its shadow — so this binary-searches the caret positions the mirror
- * below already measures. Positions run in reading order, which is what makes the search valid.
- * It rounds up: any boundary left of the point counts as before it, so a pointer inside a
- * character lands after it rather than at the nearer side. Half a character, and callers snap
- * the result to a word gap anyway; testing the midpoint would double the measurements.
+ * caretRangeFromPoint returns the control itself for a textarea, so this searches the mirror instead.
+ * Rounds up, landing after the character under the pointer; callers snap to a word gap anyway.
  * ponytail: ~8 mirror builds per call, so callers throttle it; cache the mirror if it ever drags.
  */
 export function caretIndexFromPoint(element, x, y) {
