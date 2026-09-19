@@ -1,6 +1,4 @@
 import json
-import os
-import re
 
 # The formats a dropped image may be in, from py/images.py, which owns the list.
 from .images import IMAGE_EXTENSIONS
@@ -31,6 +29,7 @@ TEXT_NODE_TYPES = {
     "ErePromptMultiline",
     "ErePromptExtractor",
     "ErePromptComposer",
+    "ErePromptLoraLoader",
 }
 
 ERE_NODE_TYPES = {t for t in TEXT_NODE_TYPES if t.startswith("ErePrompt")}
@@ -66,13 +65,6 @@ def clean_a1111_text(text):
     if not text:
         return ""
 
-    # Some tools stash a whole ComfyUI graph in `parameters`; if it parses as one, its result is final, since falling through returns the raw JSON as a prompt.
-    if text.startswith("{"):
-        try:
-            return extract_from_prompt_graph(json.loads(text))
-        except (json.JSONDecodeError, TypeError, ValueError):
-            pass
-
     index = text.find("Negative prompt:")
     if index != -1:
         text = text[:index]
@@ -81,6 +73,25 @@ def clean_a1111_text(text):
     while lines and _looks_like_settings(lines[-1]):
         lines.pop()
     return "\n".join(lines).strip()
+
+
+# Some tools stash a whole ComfyUI graph in the A1111 `parameters` field, where its segments are the better answer than the raw JSON.
+def graph_segments(text):
+    if not text.strip().startswith("{"):
+        return []
+    try:
+        return extract_from_prompt_graph(json.loads(text))
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return []
+
+
+# A1111 writes this field big-endian through piexif and other tools little-endian, neither with a BOM.
+# ASCII text keeps its NUL in the byte the order decides, which is what tells the two apart.
+def decode_utf16(raw):
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return raw.decode("utf-16", errors="replace")
+    order = "utf-16-be" if raw[0::2].count(0) > raw[1::2].count(0) else "utf-16-le"
+    return raw.decode(order, errors="replace")
 
 
 # EXIF UserComment carries an 8-byte encoding prefix.
@@ -93,7 +104,7 @@ def decode_user_comment(data):
     if data.startswith(b"ASCII\x00\x00\x00"):
         return data[8:].decode("latin-1", errors="replace")
     if data.startswith(b"UNICODE\x00"):
-        return data[8:].decode("utf-16", errors="replace")
+        return decode_utf16(data[8:])
     if data.startswith(b"JIS\x00\x00\x00\x00\x00"):
         return data[8:].decode("shift_jis", errors="replace")
 
@@ -441,11 +452,17 @@ def extract_from_image(path):
     for key in A1111_KEYS:
         value = info.get(key)
         if isinstance(value, str) and value.strip():
+            segments = graph_segments(value)
+            if segments:
+                return _segments_result(segments, "comfy-prompt")
             text = clean_a1111_text(value)
             if text:
                 return _segments_result([{"text": text}], f"a1111:{key}")
 
     if exif_text:
+        segments = graph_segments(exif_text)
+        if segments:
+            return _segments_result(segments, "comfy-prompt")
         text = clean_a1111_text(exif_text)
         if text:
             return _segments_result([{"text": text}], "exif")

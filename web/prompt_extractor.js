@@ -1,18 +1,13 @@
 import { app } from "../../scripts/app.js";
-import { initializeSharedPromptFunctions, applyContextMenuPatch, convertMenuItem, optionsMenuItem } from "./prompt.js";
+import { initializeSharedPromptFunctions, convertMenuItem, optionsMenuItem } from "./prompt.js";
 import { attachTagDomWidget } from "./js/renderer.js";
 import { parseTags } from "./js/parser.js";
 import { ActionContextMenu } from "./js/contextmenu.js";
-import { ACCEPTED_IMAGE_TYPES, isAcceptedImage, tagsFromResult, segmentCount, extractFromImage, reExtractByFilename, forgetVerdicts } from "./js/util.js";
+import { ACCEPTED_IMAGE_TYPES, isAcceptedImage, tagsFromResult, segmentCount, extractFromImage, reExtractByFilename, forgetVerdicts, getTags, setTags, toast, pickFile } from "./js/util.js";
 
 const NODE_TYPE = "ErePromptExtractor";
 
 
-const toast = (severity, summary, detail, life = 5000) => {
-    try {
-        app.extensionManager?.toast?.add({ severity, summary, detail, life });
-    } catch {}
-};
 
 /** Mirror a value into a hidden transport widget so Python can read it. */
 function setWidget(node, name, value) {
@@ -22,7 +17,7 @@ function setWidget(node, name, value) {
 
 /** Apply an extraction result to the node (merging lives in js/util.js). */
 function applyResult(node, result) {
-    const existing = parseTags(node.properties?._tagDataJSON || "[]");
+    const existing = getTags(node);
     const tags = tagsFromResult(result, existing);
 
     if (!tags.length) {
@@ -37,7 +32,7 @@ function applyResult(node, result) {
         return false;
     }
 
-    node.properties._tagDataJSON = JSON.stringify(tags, null, 2);
+    node.properties._tagDataJSON = JSON.stringify(tags);
     // New pills, so re-check against disk rather than trust a verdict cached for the name.
     forgetVerdicts(tags);
     // Set before the update, so the change watcher does not fire on this one.
@@ -133,8 +128,7 @@ function attachExtractorBehaviour(node) {
     // Wrapped before attachTagDomWidget wraps them, so the renderer repaints after the image is cleared.
     const origUpdate = node.onUpdateTextWidget;
     node.onUpdateTextWidget = async function (...args) {
-        const result = origUpdate?.apply(this, args);
-        if (result instanceof Promise) await result;
+        const result = await origUpdate?.apply(this, args);
         checkExtractDirty(node);
         return result;
     };
@@ -146,28 +140,12 @@ function attachExtractorBehaviour(node) {
         return result;
     };
 
-    node.onExtractPick = () => {
-        const input = document.createElement("input");
-        input.type = "file";
-        input.accept = ACCEPTED_IMAGE_TYPES.join(",");
-        input.style.display = "none";
-        document.body.appendChild(input);
-
-        let settled = false;
-        const cleanup = () => { if (input.isConnected) input.remove(); };
-        input.addEventListener("change", () => {
-            if (settled) return;
-            settled = true;
-            const file = input.files?.[0];
-            cleanup();
-            if (file) extractFromFile(node, file);
-        });
-        input.addEventListener("cancel", () => { settled = true; cleanup(); });
-        input.click();
+    node.onExtractPick = async () => {
+        const file = await pickFile(ACCEPTED_IMAGE_TYPES.join(","));
+        if (file) extractFromFile(node, file);
     };
 
-    node.onExtractDrop = (e) => {
-        const file = e.dataTransfer?.files?.[0];
+    node.onExtractDrop = (file, e) => {
         if (file) {
             extractFromFile(node, file);
             return;
@@ -183,7 +161,7 @@ function attachExtractorBehaviour(node) {
 
     /** A reduced action menu: no clipboard/import/convert-from-text entries, because */
     node.onActionMenu = (e) => {
-        const tagData = parseTags(node.properties?._tagDataJSON || "[]");
+        const tagData = getTags(node);
         new ActionContextMenu({ clientX: e.clientX, clientY: e.clientY }, node.title, [
             // Cleared once the tags are edited: the image no longer describes them.
             { name: "Extract Again", callback: () => reExtract(node),
@@ -206,10 +184,6 @@ function attachExtractorBehaviour(node) {
 
 app.registerExtension({
     name: NODE_TYPE,
-
-    async setup() {
-        applyContextMenuPatch();
-    },
 
     beforeRegisterNodeDef(nodeType, nodeData) {
         if (nodeData.name !== NODE_TYPE) return;

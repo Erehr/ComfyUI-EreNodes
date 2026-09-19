@@ -1,8 +1,8 @@
 import { app } from "../../scripts/app.js";
 import { TagContextMenuInsert, TagEditContextMenu, TagGroupContextMenu, ActionContextMenu } from "./js/contextmenu.js";
-import { getCache, clearCache, captureUndoState, tagsToText, textareaOf, insertTagsAsText } from "./js/util.js";
+import { getCache, clearCache, captureUndoState, tagsToText, textareaOf, insertTagsAsText, getSetting, requestJson, apiFetch, toast, confirmDialog, promptDialog, pickFile, getTags, setTags, expandGroup, loadGroupTags } from "./js/util.js";
 import { bumpPreview, TILE_SIZES, TILE_RATIOS, tileBoxFor } from "./js/tagview.js";
-import { parseTags, parseTag, formatTag, parseTextToTagData, stripNestedGroups, dedupeTags } from "./js/parser.js";
+import { parseTags, parseTag, formatTag, parseTextToTagData, stripNestedGroups, dedupeTags, DEFAULT_SEPARATOR } from "./js/parser.js";
 
 // The dice button's range. ComfyUI's seed goes to 2^64, which a JS number cannot hold exactly and nothing here needs.
 const DICE_SEED_MAX = 0xFFFFFFFF;
@@ -97,13 +97,9 @@ export async function saveTagGroup({ path = "", filename, tags, imageFile, overw
 
     try {
         if (!overwriteSilently) {
-            const checkResponse = await fetch(`/erenodes/get_tag_group?filename=${encodeURIComponent(fullPath)}`);
-            if (checkResponse.ok) {
-                // app.ui.dialog.show() returns nothing, so it cannot ask a question.
-                const message = `Tag group '${name}' already exists. Do you want to overwrite it?`;
-                const confirmed = app.extensionManager?.dialog?.confirm
-                    ? await app.extensionManager.dialog.confirm({ title: "File Exists", message })
-                    : window.confirm(message);
+            const existing = await apiFetch(`/erenodes/get_tag_group?filename=${encodeURIComponent(fullPath)}`);
+            if (existing.ok) {
+                const confirmed = await confirmDialog("File Exists", `Tag group '${name}' already exists. Do you want to overwrite it?`);
                 if (!confirmed) return { ok: false, cancelled: true, fullPath };
             }
         }
@@ -118,100 +114,27 @@ export async function saveTagGroup({ path = "", filename, tags, imageFile, overw
         formData.append('tags_json', JSON.stringify(tags, null, 2));
         if (imageFile) formData.append('image_file', imageFile, imageFile.name);
 
-        const response = await fetch('/erenodes/save_tag_group', { method: 'POST', body: formData });
-        const result = await response.json();
-
-        if (!response.ok) {
-            const errorMessage = result.error || result.message || "Unknown error saving tag group.";
-            console.error('[EreNodes] Error saving tag group:', errorMessage);
-            app.extensionManager?.toast?.add({
-                severity: "error", summary: "Save Error", detail: errorMessage, life: 5000,
-            });
-            return { ok: false, message: errorMessage, fullPath };
-        }
-
-        const successMessage = result.message || `Tag group '${name}' saved successfully.`;
-        app.extensionManager?.toast?.add({
-            severity: "success", summary: "Saved", detail: successMessage, life: 4000,
-        });
+        const result = await requestJson("/erenodes/save_tag_group", { form: formData });
+        const successMessage = result?.message || `Tag group '${name}' saved successfully.`;
+        toast("success", "Saved", successMessage);
         app.ereSidebar?.refresh?.();
         return { ok: true, message: successMessage, fullPath };
     } catch (error) {
         console.error('[EreNodes] Error saving tag group:', error);
-        app.extensionManager?.toast?.add({
-            severity: "error", summary: "Save Operation Error", detail: error.message, life: 5000,
-        });
+        toast("error", "Save Error", error.message, 5000);
         return { ok: false, message: error.message, fullPath };
     }
 }
 
+/** false when it was cancelled, so an empty string stays a legitimate answer. */
 const getTextInput = async (title, promptMessage, defaultValue = "") => {
-    // Prefer the ComfyUI dialog API (window.prompt is blocked in some desktop/embedded contexts)
-    if (app.extensionManager?.dialog?.prompt) {
-        try {
-            const value = await app.extensionManager.dialog.prompt({
-                title,
-                message: promptMessage,
-                defaultValue,
-            });
-            return (value === null || value === undefined) ? false : value;
-        } catch (e) {
-            // fall through to window.prompt
-        }
-    }
-    const value = window.prompt(promptMessage, defaultValue);
-    if (value === null) return false;
-    return value;
+    const value = await promptDialog(title, promptMessage, defaultValue);
+    return value === null ? false : value;
 };
 
-// Global keyboard shortcuts for tag nodes (Ctrl+V paste).
-let contextMenuPatched = false;
-// The Lora Loader is here too: pasting a prompt into it keeps the loras it names and drops the rest.
-const ERE_TAG_NODE_TYPES = ["ErePromptCloud", "ErePromptToggle", "ErePromptMultiSelect", "ErePromptRandomizer", "ErePromptGallery", "ErePromptComposer", "ErePromptLoraLoader"];
-
-export function applyContextMenuPatch() {
-    if (contextMenuPatched) {
-        return;
-    }
-    contextMenuPatched = true;
-
-    document.addEventListener("keydown", (e) => {
-        if (e.ctrlKey && (e.key === 'v' || e.key === 'V')) {
-            const activeElement = document.activeElement;
-            if (activeElement && (activeElement.nodeName === 'INPUT' || activeElement.nodeName === 'TEXTAREA' || activeElement.hasAttribute('contenteditable'))) {
-                return;
-            }
-
-            const selectedNodes = Object.values(app.canvas.selected_nodes || {});
-            if (selectedNodes.length === 1) {
-                const node = selectedNodes[0];
-                if (node && ERE_TAG_NODE_TYPES.includes(node.type)) {
-                    // Block ComfyUI's handler first — it pastes its node clipboard whatever the system clipboard holds — then decide: tag text pastes tags, JSON hands it back.
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const comfyPaste = () => app.canvas?.pasteFromClipboard?.();
-                    navigator.clipboard.readText().then(text => {
-                        const trimmed = (text || "").trim();
-                        let isTagText = !!trimmed;
-                        if (isTagText) {
-                            try {
-                                if (typeof JSON.parse(trimmed) === "object") isTagText = false; // copied node / workflow
-                            } catch {} // not JSON → tag text
-                        }
-                        if (!isTagText) return comfyPaste();
-                        // A node with its own reading of a paste (the Composer builds a category).
-                        if (node.onClipboardPaste) return node.onClipboardPaste();
-                        const pasteBehaviour = app.ui.settings.getSettingValue('EreNodes.Nodes.PasteAction', 'Replace tags');
-                        if (pasteBehaviour === 'Append tags') {
-                            node.onClipboardAppend();
-                        } else {
-                            node.onClipboardReplace();
-                        }
-                    }).catch(() => comfyPaste());
-                }
-            }
-        }
-    });
+/** Links are a Map in current frontends and a plain object in older ones. */
+function graphLink(graph, id) {
+    return graph.links?.get ? graph.links.get(id) : graph.links?.[id];
 }
 
 const CONVERT_TARGETS = [
@@ -263,8 +186,8 @@ export function optionsMenuItem(node, extra = []) {
             {
                 type: "input",
                 name: "Node separator",
-                value: node.properties?._prefixSeparator ?? ",\\n\\n",
-                placeholder: ",\\n\\n",
+                value: node.properties?._prefixSeparator ?? DEFAULT_SEPARATOR,
+                placeholder: DEFAULT_SEPARATOR,
                 onInput: (value) => setNodeProperty(node, "_prefixSeparator", value),
             },
             ...extra,
@@ -322,14 +245,11 @@ export function initializeSharedPromptFunctions(node, textWidget) {
 
     // Seeded from the settings, and only when the node has none of its own: a saved workflow
     // carries its separators in its properties, so changing the defaults never rewrites one.
-    const defaultSeparator = (id, fallback) =>
-        app.ui?.settings?.getSettingValue?.(id, fallback) ?? fallback;
-
     if (node.properties._prefixSeparator === null || node.properties._prefixSeparator === undefined) {
-        node.properties._prefixSeparator = defaultSeparator("EreNodes.Nodes.PrefixSeparator", ",\\n\\n");
+        node.properties._prefixSeparator = getSetting("EreNodes.Nodes.PrefixSeparator", DEFAULT_SEPARATOR);
     }
     if (node.properties._tagSeparator === null || node.properties._tagSeparator === undefined) {
-        node.properties._tagSeparator = defaultSeparator("EreNodes.Nodes.TagSeparator", ", ");
+        node.properties._tagSeparator = getSetting("EreNodes.Nodes.TagSeparator", ", ");
     }
 
     // _prefixSeparator is edited in the Properties panel, but process() only sees widget values, so this hidden widget mirrors it.
@@ -337,7 +257,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
     if (sepWidget) {
         sepWidget.computeSize = () => [0, 0];
         sepWidget.hidden = true;
-        sepWidget.value = node.properties._prefixSeparator ?? sepWidget.value ?? ",\\n\\n";
+        sepWidget.value = node.properties._prefixSeparator ?? sepWidget.value ?? DEFAULT_SEPARATOR;
     }
 
     // Capture existing onPropertyChanged to allow chaining
@@ -395,7 +315,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             if (this.properties?._prefixSeparator != null) {
                 sep.value = this.properties._prefixSeparator;
             } else if (sep.value == null || sep.value === "") {
-                sep.value = ",\\n\\n";
+                sep.value = DEFAULT_SEPARATOR;
             }
         }
 
@@ -408,7 +328,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             const textWidget = this.widgets.find(w => w.name === "text");
             if (textWidget) {
                 const tagData = parseTextToTagData(textWidget.value);
-                this.properties._tagDataJSON = JSON.stringify(tagData, null, 2);
+                this.properties._tagDataJSON = JSON.stringify(tagData);
             }
         }
 
@@ -422,7 +342,8 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             newNode.properties = JSON.parse(JSON.stringify(this.properties));
         }
     
-        app.graph.add(newNode);
+        const graph = this.graph ?? app.graph;
+        graph.add(newNode);
     
         const sourceTextWidget = this.widgets.find(w => w.name === "text");
         const targetTextWidget = newNode.widgets.find(w => w.name === "text");
@@ -442,10 +363,12 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         if (this.inputs) {
             for (let i = 0; i < this.inputs.length; i++) {
                 if (this.inputs[i] && this.inputs[i].link !== null) {
-                    const link = app.graph.links[this.inputs[i].link];
+                    const link = graphLink(graph, this.inputs[i].link);
                     if (link) {
-                        const originNode = app.graph.getNodeById(link.origin_id);
-                        if (originNode) originNode.connect(link.origin_slot, newNode, i);
+                        const originNode = graph.getNodeById(link.origin_id);
+                        // By name: the Lora Loader's inputs start with MODEL where every other node starts with prefix.
+                        const target = newNode.inputs?.findIndex(input => input.name === this.inputs[i].name);
+                        if (originNode && target >= 0) originNode.connect(link.origin_slot, newNode, target);
                     }
                 }
             }
@@ -457,9 +380,9 @@ export function initializeSharedPromptFunctions(node, textWidget) {
                 if (output.links && output.links.length) {
                     const linksToReconnect = [...output.links];
                     for (const linkId of linksToReconnect) {
-                        const link = app.graph.links[linkId];
+                        const link = graphLink(graph, linkId);
                         if (link) {
-                            const targetNode = app.graph.getNodeById(link.target_id);
+                            const targetNode = graph.getNodeById(link.target_id);
                             if (targetNode) newNode.connect(i, targetNode, link.target_slot);
                         }
                     }
@@ -467,12 +390,12 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             }
         }
     
-        app.graph.remove(this);
-        app.graph.setDirtyCanvas(true, true);
+        graph.remove(this);
+        graph.setDirtyCanvas(true, true);
     };
 
     node.onActionMenu = (e, node) => { 
-        const tagData = parseTags(node.properties._tagDataJSON || "[]");
+        const tagData = getTags(node);
 
         let actions = [
             { name: "Replace Tags from Clipboard", callback: () => node.onClipboardReplace?.() },
@@ -506,39 +429,21 @@ export function initializeSharedPromptFunctions(node, textWidget) {
     node.onLoadTagGroup = (e) => {
         
         const addTagObject = async (tagObject) => {
-            if (!tagObject || !tagObject.name) return;
-
-            let resolvedGroupTags;
-            try {
-                let url;
-                url = `/erenodes/get_tag_group?filename=${encodeURIComponent(tagObject.name + tagObject.extension)}`;
-                const groupTags = getCache(url, 'json');
-                resolvedGroupTags = groupTags instanceof Promise ? await groupTags : groupTags;
-            } catch (error) {
-                console.error("[EreNodes] Error loading tag group.", error);
-                app.extensionManager?.toast?.add({
-                    severity: "error",
-                    summary: "Load Error",
-                    detail: `Could not read tag group '${tagObject.name}'.`,
-                    life: 5000
-                });
+            // "Load all from folder" hands over the whole list at once.
+            if (Array.isArray(tagObject)) {
+                for (const one of tagObject) await addTagObject(one);
                 return;
             }
+            if (!tagObject || !tagObject.name) return;
 
-            if (!Array.isArray(resolvedGroupTags)) {
-                console.error("[EreNodes] Tag group is not an array:", tagObject.name, resolvedGroupTags);
-                app.extensionManager?.toast?.add({
-                    severity: "error",
-                    summary: "Invalid Tag Group",
-                    detail: `'${tagObject.name}' does not contain a list of tags.`,
-                    life: 5000
-                });
+            const resolvedGroupTags = await loadGroupTags(tagObject.name, tagObject.extension);
+            if (!resolvedGroupTags) {
+                toast("error", "Load Error", `Could not read tag group '${tagObject.name}'.`, 5000);
                 return;
             }
 
             if (node.type !== "ErePromptMultiline") {
-                const existingTagData = parseTags(node.properties._tagDataJSON || "[]");
-                const existingTagNames = new Set(existingTagData.map(t => t.name));
+                const existingTagData = getTags(node);
 
                 // Check if tag group already exists by name and type
                 const existingTagSet = new Set(existingTagData.map(t => `${t.name}_${t.type || 'tag'}`));
@@ -549,8 +454,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
                 if (!uniqueNewTagObjects.length) return;
 
                 const combinedTagData = existingTagData.concat(uniqueNewTagObjects);
-                node.properties._tagDataJSON = JSON.stringify(combinedTagData, null, 2);
-                node.onUpdateTextWidget(node);
+                await setTags(node, combinedTagData);
             } else { // Handles ErePromptMultiline
                 const textWidget = node.widgets.find(w => w.name === "text");
                 if (textWidget) {
@@ -588,13 +492,13 @@ export function initializeSharedPromptFunctions(node, textWidget) {
                 if (subset) {
                     tagDataToSave = subset.tags.map(t => ({ ...t }));
                 } else if (node.properties._tagDataJSON !== undefined) {
-                    tagDataToSave = parseTags(node.properties._tagDataJSON || "[]");
+                    tagDataToSave = getTags(node);
                 } else {
                     const textWidget = node.widgets.find(w => w.name === "text");
                     tagDataToSave = parseTextToTagData(textWidget ? textWidget.value : "");
                 }
 
-                tagDataToSave = stripNestedGroups(tagDataToSave);
+                tagDataToSave = stripNestedGroups(tagDataToSave, (count) => toast("warn", "Nested tag groups not allowed.", `${count} tag group(s) skipped in saving.`, 6000));
 
                 await saveTagGroup({
                     path: tagObject.path,
@@ -604,12 +508,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
                 });
             } catch (error) {
                 console.error('[EreNodes] Error saving tag group:', error);
-                app.extensionManager.toast.add({
-                    severity: "error",
-                    summary: "Save Operation Error",
-                    detail: error.message,
-                    life: 5000
-                });
+                toast("error", "Save Error", error.message, 5000);
             }
         }
 
@@ -643,7 +542,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             if (node.type !== "ErePromptMultiline") {
                 const pasted = parseTextToTagData(text);
                 if (!pasted.length) return;
-                const existingTagData = parseTags(node.properties._tagDataJSON || "[]");
+                const existingTagData = getTags(node);
                 const existingTagNames = new Set(existingTagData.map(t => t.name));
 
                 const uniqueNewTags = pasted
@@ -652,9 +551,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
                 if (!uniqueNewTags.length) return;
                 
                 const combinedTagData = existingTagData.concat(uniqueNewTags);
-                node.properties._tagDataJSON = JSON.stringify(combinedTagData, null, 2);
-                await node.onUpdateTextWidget(node);
-                app.graph.setDirtyCanvas(true);
+                await setTags(node, combinedTagData);
             } else {
                 const textWidget = node.widgets.find(w => w.name === "text");
                 if (textWidget) {
@@ -665,7 +562,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
     };
 
     node.onToggleTags = async () => {
-        const tagData = parseTags(node.properties._tagDataJSON || "[]");
+        const tagData = getTags(node);
         if (!tagData.length) return;
 
         const anyActive = tagData.some(tag => tag.active && tag.name);
@@ -673,9 +570,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
 
         const updatedTagData = tagData.map(tag => ({ ...tag, active: tag.name ? allTargetState : tag.active }));
 
-        node.properties._tagDataJSON = JSON.stringify(updatedTagData, null, 2);
-        await node.onUpdateTextWidget(node);
-        app.graph.setDirtyCanvas(true);
+        await setTags(node, updatedTagData);
     };
     
     node.onRemoveTags = (mode = 'all') => {
@@ -683,7 +578,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             if (mode === 'all') {
                 node.properties._tagDataJSON = "[]"; 
             } else if (mode === 'inactive') {
-                const tagData = parseTags(node.properties._tagDataJSON || "[]");
+                const tagData = getTags(node);
                 const activeTags = tagData.filter(t => t.active);
                 node.properties._tagDataJSON = JSON.stringify(activeTags);
             }
@@ -726,53 +621,36 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         URL.revokeObjectURL(url);
     };
 
-    node.onImportTags = () => {
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = '.json,application/json';
-        input.onchange = e => {
-            const file = e.target.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = readerEvent => {
-                try {
-                    const content = readerEvent.target.result;
-                    const importedData = JSON.parse(content);
-                    if (Array.isArray(importedData)) {
-                        const uniqueValidTags = dedupeTags(importedData.filter(
-                            tag => typeof tag.name === 'string' && typeof tag.active === 'boolean'));
+    node.onImportTags = async () => {
+        const file = await pickFile(".json,application/json");
+        if (!file) return;
+        try {
+            const importedData = JSON.parse(await file.text());
+            if (!Array.isArray(importedData)) throw new Error("The file does not hold a tag list.");
 
-                        if (uniqueValidTags.length === 0 && importedData.length > 0) return;
+            const uniqueValidTags = dedupeTags(importedData.filter(
+                tag => tag && typeof tag.name === 'string' && typeof tag.active === 'boolean'));
+            if (!uniqueValidTags.length) throw new Error("No tags in the file could be read.");
 
-                        if (node.type !== "ErePromptMultiline") {
-                            node.properties._tagDataJSON = JSON.stringify(uniqueValidTags, null, 2);
-                            node.onUpdateTextWidget(node);
-                        } else {
-                            const textWidget = node.widgets.find(w => w.name === "text");
-                            if(textWidget) {
-                                const lines = uniqueValidTags.map(formatTag).join("\n");
-                                textWidget.value = lines;
-                            }
-                        }
-                        app.graph.setDirtyCanvas(true);
-                    }
-                } catch (err) {
-                     console.error('[EreNodes] Error importing tags:', err);
-                }
-            };
-            reader.readAsText(file);
-        };
-        input.click();
+            if (node.type !== "ErePromptMultiline") {
+                await setTags(node, uniqueValidTags);
+                return;
+            }
+            const textWidget = node.widgets.find(w => w.name === "text");
+            if (textWidget) textWidget.value = uniqueValidTags.map(formatTag).join("\n");
+            app.graph.setDirtyCanvas(true);
+        } catch (err) {
+            console.error('[EreNodes] Error importing tags:', err);
+            toast("error", "Import failed", err.message, 5000);
+        }
     };
 
     /** Lay the tags out for a seed: same seed, same tags, same result. */
     node.onApplySeed = async (seed) => {
-        const tagData = parseTags(node.properties._tagDataJSON || "[]");
+        const tagData = getTags(node);
         if (tagData.length < 2) return;
         node._seedApplied = normalizeSeed(seed);
-        node.properties._tagDataJSON = JSON.stringify(arrangementForSeed(tagData, seed), null, 2);
-        await node.onUpdateTextWidget(node);
-        app.graph.setDirtyCanvas(true);
+        await setTags(node, arrangementForSeed(tagData, seed));
     };
 
     /** Re-lay the tags if the seed has moved. Idempotent by design, which is what lets the widget callback, `afterQueued` and the `execution_success` net all call it. */
@@ -811,7 +689,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         const addTagObject = async (tagObject) => {
             if (!tagObject || !tagObject.name) return;
 
-            const existingTagData = parseTags(node.properties._tagDataJSON || "[]");
+            const existingTagData = getTags(node);
             const existingTagNames = new Set(existingTagData.map(t => t.name));
 
             if (existingTagNames.has(tagObject.name)) {
@@ -821,12 +699,10 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             const newTag = { ...tagObject, active: true };
             
             const combinedTagData = existingTagData.concat(newTag);
-            node.properties._tagDataJSON = JSON.stringify(combinedTagData, null, 2);
-            await node.onUpdateTextWidget(node);
-            app.graph.setDirtyCanvas(true);
+            await setTags(node, combinedTagData);
         };
         
-        const existingTags = parseTags(node.properties._tagDataJSON || "[]")
+        const existingTags = getTags(node)
             .map(tag => ({ name: tag.name, type: tag.type }));
         
         new TagContextMenuInsert(e, addTagObject, existingTags);
@@ -855,7 +731,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             return;
         }
 
-        const tagData = parseTags(node.properties._tagDataJSON || "[]");
+        const tagData = getTags(node);
         // Index first: a name lookup collides when two tags share a name.
         const clickedTag = (clickedPill.index != null)
             ? tagData[clickedPill.index]
@@ -863,15 +739,13 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         if (!clickedTag) return;
 
         clickedTag.active = !clickedTag.active;
-        node.properties._tagDataJSON = JSON.stringify(tagData, null, 2);
-        await node.onUpdateTextWidget(node);
-        app.graph.setDirtyCanvas(true);
+        await setTags(node, tagData);
     };
     
     node.onTagQuickEdit = async function(event, nodeInstance, clickedPill) {
         if (!clickedPill) return;
 
-        const tagData = parseTags(nodeInstance.properties._tagDataJSON || "[]");
+        const tagData = getTags(nodeInstance);
         let tagIndex = (clickedPill.index != null)
             ? clickedPill.index
             : tagData.findIndex(t => t.name === clickedPill.label);
@@ -880,32 +754,15 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         let clickedTag = tagData[tagIndex];
 
         const unpackCallback = async () => {
-            const currentTagData = parseTags(nodeInstance.properties._tagDataJSON || "[]");
+            const currentTagData = getTags(nodeInstance);
             const groupTag = currentTagData[tagIndex];
             if (!groupTag || groupTag.type !== 'group') return;
 
             try {
-                const filename = groupTag.extension ? `${groupTag.name}${groupTag.extension}` : groupTag.name;
-                const groupContentResult = getCache(`/erenodes/get_tag_group?filename=${encodeURIComponent(filename)}`, 'json');
-                const originalGroupTags = await (groupContentResult instanceof Promise ? groupContentResult : Promise.resolve(groupContentResult));
-
-                if (originalGroupTags && Array.isArray(originalGroupTags)) {
-                    const unpackedTags = JSON.parse(JSON.stringify(originalGroupTags));
-                    if (groupTag.modified) {
-                        unpackedTags.forEach(t => {
-                            if (groupTag.modified.hasOwnProperty(t.name)) {
-                                t.active = groupTag.modified[t.name];
-                            }
-                        });
-                    }
-                    
-                    // Replace the group tag with its unpacked contents
+                const unpackedTags = await expandGroup(groupTag);
+                if (unpackedTags) {
                     currentTagData.splice(tagIndex, 1, ...unpackedTags);
-                    
-                    nodeInstance.properties._tagDataJSON =
-                        JSON.stringify(dedupeTags(currentTagData), null, 2);
-                    await nodeInstance.onUpdateTextWidget(nodeInstance);
-                    app.graph.setDirtyCanvas(true);
+                    await setTags(nodeInstance, dedupeTags(currentTagData));
                 }
             } catch (error) {
                 console.error(`[EreNodes] Failed to unpack tag group: ${groupTag.name}`, error);
@@ -913,7 +770,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         };
 
         const saveCallback = async (editedTag) => {
-            const currentTagData = parseTags(nodeInstance.properties._tagDataJSON || "[]");
+            const currentTagData = getTags(nodeInstance);
             
             // Use the stored index instead of searching by name
             if (tagIndex < 0 || tagIndex >= currentTagData.length) {
@@ -964,21 +821,17 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             }
 
             currentTagData[tagIndex] = finalTag;
-            nodeInstance.properties._tagDataJSON = JSON.stringify(currentTagData, null, 2);
-            await nodeInstance.onUpdateTextWidget(nodeInstance);
-            app.graph.setDirtyCanvas(true);
+            await setTags(nodeInstance, currentTagData);
 
             // After a successful save, update the reference for the next save operation from the same menu.
             clickedTag = JSON.parse(JSON.stringify(finalTag));
         };
 
         const deleteCallback = async () => {
-            const currentTagData = parseTags(nodeInstance.properties._tagDataJSON || "[]");
+            const currentTagData = getTags(nodeInstance);
             if (tagIndex >= 0 && tagIndex < currentTagData.length) {
                 currentTagData.splice(tagIndex, 1);
-                nodeInstance.properties._tagDataJSON = JSON.stringify(currentTagData, null, 2);
-                await nodeInstance.onUpdateTextWidget(nodeInstance);
-                app.graph.setDirtyCanvas(true);
+                await setTags(nodeInstance, currentTagData);
             }
         };
 
@@ -1001,9 +854,13 @@ export function initializeSharedPromptFunctions(node, textWidget) {
 
         // For multiline nodes, preserve the existing text content: it is the source of truth, not the tags.
         if (node.type !== "ErePromptMultiline") {
-            textWidget.value = await tagsToText(
-                parseTags(node.properties._tagDataJSON || "[]"),
+            const gen = node._textGen = (node._textGen || 0) + 1;
+            const text = await tagsToText(
+                getTags(node),
                 node.properties._tagSeparator);
+            // An uncached group resolves after a newer pass has already written; the newer one is what the pills show.
+            if (gen !== node._textGen) return;
+            textWidget.value = text;
         }
 
         // No-op when nothing changed (the tracker diffs state), so loading is safe.

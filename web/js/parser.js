@@ -1,4 +1,5 @@
-import { app } from "../../../scripts/app.js";
+/** Escaped the way the node property stores it ("\n" as two characters); joinPrompt unescapes it. Mirrors DEFAULT_PREFIX_SEPARATOR in py/prompt.py. */
+export const DEFAULT_SEPARATOR = ",\\n\\n";
 
 /** Tag data is stored as a JSON string on the node; anything else reads as empty. */
 export const parseTags = value => {
@@ -30,7 +31,8 @@ export function parseTag(tagString) {
     const groupMatch = original.match(/^group:(.+)$/);
     if (groupMatch) return { name: groupMatch[1], type: "group", active: true };
 
-    const loraMatch = original.match(/^<lora:([^:]+)(?::([\d.-]+))?>$/);
+    // The clip strength is read and discarded: a pasted two-strength tag has to come back as a valid lora pill rather than plain text.
+    const loraMatch = original.match(/^<lora:([^:]+)(?::([\d.-]+))?(?::[\d.-]+)?>$/);
     if (loraMatch) {
         let strength = loraMatch[2] ? parseFloat(loraMatch[2]) : undefined;
         if (strength === 1.0 || isNaN(strength)) strength = undefined;
@@ -159,20 +161,13 @@ export function joinParts(parts, separator) {
  * the text shown on the node honest about it.
  */
 export const joinPrompt = (parts, separator) =>
-    joinParts(parts, String(separator ?? ",\\n\\n").replace(/\\n/g, "\n"));
+    joinParts(parts, String(separator ?? DEFAULT_SEPARATOR).replace(/\\n/g, "\n"));
 
-/** Groups cannot nest, so drop any that made it into a list being saved. */
-export function stripNestedGroups(tags, { warn = true } = {}) {
+/** Groups cannot nest, so drop any that made it into a list being saved. `onSkipped` is told how many went. */
+export function stripNestedGroups(tags, onSkipped) {
     const groups = tags.filter(tag => tag.type === "group");
     if (!groups.length) return tags;
-    if (warn) {
-        app.extensionManager?.toast?.add({
-            severity: "warn",
-            summary: "Nested tag groups not allowed.",
-            detail: `${groups.length} tag group(s) skipped in saving.`,
-            life: 6000,
-        });
-    }
+    onSkipped?.(groups.length);
     return tags.filter(tag => tag.type !== "group");
 }
 

@@ -40,8 +40,7 @@
     scrollbar-width: thin;
     scrollbar-color: var(--dialog-surface, rgba(255, 255, 255, .2)) transparent;
 }
-/* Desktop builds have no overlay scrollbars; a transparent track with a floating thumb is what the
-   app's own `scrollbar-custom` panels use to look like one. */
+/* The frontend's `scrollbar-custom` utility cannot be used here: it forces `overflow-y: auto`, and this element's overflow is toggled from the renderer (fit vs scroll). Same look, written out. */
 .erenodes-dom .ere-scroll::-webkit-scrollbar {
     width: 10px;
     background-color: transparent;
@@ -131,15 +130,15 @@
     display: none;
     width: fit-content;
     max-width: 320px;
-    padding: 6px 10px;
-    border-radius: 6px;
-    background: var(--p-tooltip-background, #2a2a2a);
+    padding: var(--p-tooltip-padding, .5rem .75rem);
+    border-radius: var(--p-tooltip-border-radius, var(--p-border-radius-md, 6px));
+    background: var(--p-tooltip-background, #4b5563);
     color: var(--p-tooltip-color, #fff);
-    font-size: 12px;
+    box-shadow: var(--p-tooltip-shadow, 0 4px 12px rgba(0, 0, 0, .35));
+    font-size: .875rem;
     line-height: 1.35;
     white-space: pre-line;
     pointer-events: none;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, .35);
 }
 .ere-tip.ere-tip-on {
     display: block;
@@ -241,6 +240,8 @@
 }
 .ere-surface .ere-tile {
     position: relative;
+    display: flex;
+    flex-direction: column;
     flex: 0 0 auto;
     overflow: hidden;
     border-radius: 5px;
@@ -250,10 +251,9 @@
     user-select: none;
 }
 .ere-surface .ere-tile img {
-    position: absolute;
-    inset: 0;
+    flex: 1;
+    min-height: 0;
     width: 100%;
-    height: 100%;
     object-fit: cover;
 }
 .ere-surface .ere-tile.inactive img {
@@ -261,10 +261,8 @@
     opacity: 0.5;
 }
 .ere-surface .ere-tile .ere-name {
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 0;
+    margin-top: auto;
+    flex: 0 0 auto;
     height: 20px;
     line-height: 20px;
     padding: 0 5px;
@@ -272,7 +270,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     color: #FFF;
-    border-radius: 0 0 5px 5px;
 }
 .ere-surface .ere-tile.inactive .ere-name {
     opacity: .5;

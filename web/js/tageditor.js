@@ -1,14 +1,10 @@
 import { app } from "../../../scripts/app.js";
 import { initializeSharedPromptFunctions, saveTagGroup } from "../prompt.js";
-import { getCache, isNotFound, loadStyle, isAcceptedImage, ACCEPTED_IMAGE_TYPES, isKnownMissing, ensureChecked } from "./util.js";
+import { loadStyle, isAcceptedImage, ACCEPTED_IMAGE_TYPES, isKnownMissing, ensureChecked, getTags, setTags, expandGroup, requestJson, toast, pickFile, bindImageDrop } from "./util.js";
 import { SURFACE_CLASS, injectTagStyles, renderTagPill, bumpPreview } from "./tagview.js";
 import { parseTags, dedupeTags } from "./parser.js";
 import { injectDragStyles, markDropZone, attachPillDrag, pruneSelection, handlePillSelectClick, handlePillContextMenu, consumeDragClick, clearAllSelections } from "./dragdrop.js";
 import { ActionContextMenu } from "./contextmenu.js";
-
-const toast = (severity, summary, detail, life = 4000) => {
-    try { app.extensionManager?.toast?.add({ severity, summary, detail, life }); } catch {}
-};
 
 function el(tag, className, parent) {
     const node = document.createElement(tag);
@@ -19,48 +15,28 @@ function el(tag, className, parent) {
 
 // Tag Data
 
-async function loadGroupTags(name, extension = ".json") {
-    const filename = extension ? `${name}${extension}` : name;
-    try {
-        const value = getCache(
-            `/erenodes/get_tag_group?filename=${encodeURIComponent(filename)}`, "json");
-        const resolved = value instanceof Promise ? await value : value;
-        return isNotFound(resolved) || !Array.isArray(resolved) ? null : resolved;
-    } catch { return null; }
-}
-
 /**
  * Replace every tag group pill with its contents, in place.
  * @returns {boolean} whether anything changed.
  */
 async function unpackGroups(host) {
-    const tags = parseTags(host.properties._tagDataJSON || "[]");
+    const tags = getTags(host);
     if (!tags.some(t => t.type === "group")) return false;
 
     const expanded = [];
     for (const tag of tags) {
         if (tag.type !== "group") { expanded.push(tag); continue; }
-        const contents = await loadGroupTags(tag.name, tag.extension);
+        const contents = await expandGroup({ ...tag, extension: tag.extension || ".json" });
         if (!contents) {
             // A group pill pointing at a file that no longer exists.
             // Dropping it is the only option — it cannot be kept and cannot be expanded.
-            toast("warn", "Tag group missing",
-                `"${tag.name}" could not be read, so it was not added.`, 5000);
+            toast("warn", "Tag group missing", `"${tag.name}" could not be read, so it was not added.`, 5000);
             continue;
         }
-        const copy = JSON.parse(JSON.stringify(contents));
-        /** A group pill can carry per-tag toggles made after it was loaded; the unpacked pills should reflect what the pill showed, not the file. */
-        if (tag.modified) {
-            for (const t of copy) {
-                if (Object.prototype.hasOwnProperty.call(tag.modified, t.name)) {
-                    t.active = tag.modified[t.name];
-                }
-            }
-        }
-        expanded.push(...copy);
+        expanded.push(...contents);
     }
 
-    host.properties._tagDataJSON = JSON.stringify(dedupeTags(expanded), null, 2);
+    host.properties._tagDataJSON = JSON.stringify(dedupeTags(expanded));
     return true;
 }
 
@@ -90,9 +66,9 @@ function makeHost(onChange) {
 
     /** Replaces prompt.js's version rather than wrapping it: that one writes an undo checkpoint for the *graph*, and clearing pills in a panel that has not been saved yet has nothing to do with the graph's history. */
     host.onRemoveTags = (mode = "all") => {
-        const tags = parseTags(host.properties._tagDataJSON || "[]");
+        const tags = getTags(host);
         host.properties._tagDataJSON = mode === "inactive"
-            ? JSON.stringify(tags.filter(t => t.active), null, 2)
+            ? JSON.stringify(tags.filter(t => t.active))
             : "[]";
         clearAllSelections();
         onChange();
@@ -142,12 +118,13 @@ export function createTagEditor(opts) {
     const coverRow = el("div", `border-b border-comfy-input p-2 2xl:px-4 ${SURFACE_CLASS} ere-editor-cover`);
     const pane = el("div", "ere-extract-pane", coverRow);
 
-    const body = el("div", `ere-editor ${SURFACE_CLASS}`);
+    // Same padding scale as the name and cover rows above it, so pills and buttons line up with the inputs.
+    const body = el("div", `ere-editor p-2 2xl:px-4 ${SURFACE_CLASS}`);
 
     // What the drag layer looks for: `erenodes-dom` (rootOf), then `_ereNode` / `_ereMode`.
     const dom = el("div", `erenodes-dom ${SURFACE_CLASS} ere-editor-dom`, body);
     const host = makeHost(() => renderTags());
-    host.properties._tagDataJSON = JSON.stringify(tags || [], null, 2);
+    host.properties._tagDataJSON = JSON.stringify(tags || []);
     dom._ereNode = host;
     dom._ereMode = "cloud";
 
@@ -195,23 +172,9 @@ export function createTagEditor(opts) {
         renderCover();
     }
 
-    function pickCover() {
-        const input = document.createElement("input");
-        input.type = "file";
-        input.accept = ACCEPTED_IMAGE_TYPES.join(",");
-        input.style.display = "none";
-        document.body.appendChild(input);
-        let settled = false;
-        const cleanup = () => { if (input.isConnected) input.remove(); };
-        input.addEventListener("change", () => {
-            if (settled) return;
-            settled = true;
-            const file = input.files?.[0];
-            cleanup();
-            if (file) setCoverFile(file);
-        });
-        input.addEventListener("cancel", () => { settled = true; cleanup(); });
-        input.click();
+    async function pickCover() {
+        const file = await pickFile(ACCEPTED_IMAGE_TYPES.join(","));
+        if (file) setCoverFile(file);
     }
 
     function renderCover() {
@@ -247,19 +210,7 @@ export function createTagEditor(opts) {
     }
 
     pane.addEventListener("click", (e) => { e.stopPropagation(); pickCover(); });
-    pane.addEventListener("dragover", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        pane.classList.add("ere-extract-over");
-    });
-    pane.addEventListener("dragleave", () => pane.classList.remove("ere-extract-over"));
-    pane.addEventListener("drop", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        pane.classList.remove("ere-extract-over");
-        const file = e.dataTransfer?.files?.[0];
-        if (file) setCoverFile(file);
-    });
+    bindImageDrop(pane, setCoverFile);
 
     // Pills
 
@@ -288,7 +239,7 @@ export function createTagEditor(opts) {
     }
 
     function renderTags() {
-        const tagData = parseTags(host.properties._tagDataJSON || "[]");
+        const tagData = getTags(host);
         pruneSelection(host, tagData);
 
         toolbar.textContent = "";
@@ -341,7 +292,7 @@ export function createTagEditor(opts) {
             nameInput.focus();
             return;
         }
-        const tagData = parseTags(host.properties._tagDataJSON || "[]");
+        const tagData = getTags(host);
         if (!tagData.length) {
             toast("warn", "No tags", "A tag group needs at least one tag.");
             return;
@@ -369,7 +320,7 @@ export function createTagEditor(opts) {
             onSaved?.(result.fullPath);
         } finally {
             saving = false;
-            setSaveEnabled(parseTags(host.properties._tagDataJSON || "[]").length > 0);
+            setSaveEnabled(getTags(host).length > 0);
         }
     }
 
@@ -408,13 +359,7 @@ export function createTagEditor(opts) {
 async function renameGroup(folder, from, to) {
     const path = folder ? `${folder}/${from}.json` : `${from}.json`;
     try {
-        const response = await fetch("/erenodes/rename_path", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ path, newName: to }),
-        });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+        await requestJson("/erenodes/rename_path", { body: { path, newName: to } });
         return true;
     } catch (e) {
         toast("error", "Rename failed", e.message, 5000);
@@ -427,18 +372,12 @@ async function removeCover(folder, filename) {
     const base = filename.replace(/\.json$/i, "");
     const path = folder ? `${folder}/${base}` : base;
     try {
-        await fetch("/erenodes/delete_file_image", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ type: "group", name: path }),
-        });
+        await requestJson("/erenodes/delete_file_image", { body: { type: "group", name: path } });
     } catch (e) {
         console.warn("[EreNodes] Could not remove cover image.", e);
     }
     // Whether or not the delete reached the server, this cover is no longer what the browser has cached for it.
     bumpPreview("group", path);
 }
-
-export { loadGroupTags };
 
 function injectEditorStyles() { loadStyle("editor"); }

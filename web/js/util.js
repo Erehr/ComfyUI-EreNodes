@@ -1,5 +1,38 @@
 import { app } from "../../../scripts/app.js";
-import { parseTextToTagData, dedupeTags, formatTag, joinParts, separatorAfter } from "./parser.js";
+import { api } from "../../../scripts/api.js";
+import { parseTags, parseTextToTagData, dedupeTags, formatTag, joinParts, separatorAfter } from "./parser.js";
+
+// Server
+
+/** Our routes, reached the way ComfyUI reaches its own: `api.fetchApi` carries the install's sub-path and the user header, which a bare fetch does not. */
+export function apiFetch(path, { method, body, form, signal } = {}) {
+    const init = { method: method ?? (body !== undefined || form ? "POST" : "GET"), signal };
+    if (form) init.body = form;
+    else if (body !== undefined) {
+        init.body = JSON.stringify(body);
+        init.headers = { "Content-Type": "application/json" };
+    }
+    return api.fetchApi(path, init);
+}
+
+/** The same, parsed, with the server's own error message when it fails. */
+export async function requestJson(path, opts = {}) {
+    const response = await apiFetch(path, opts);
+    const text = await response.text();
+    let result = null;
+    try { result = text ? JSON.parse(text) : null; } catch { /* an error page, reported below */ }
+    if (!response.ok) throw new Error(result?.error || result?.message || `HTTP ${response.status}`);
+    return result;
+}
+
+/** An address for `<img src>` and the like, where a fetch is not what loads it. */
+export const apiUrl = (path) => api.apiURL(path);
+
+/** A setting, with our own fallback. ComfyUI's own default argument is deprecated and warns on every call, and these run per frame. */
+export function getSetting(id, fallback) {
+    const value = app.ui?.settings?.getSettingValue?.(id);
+    return value === undefined || value === null ? fallback : value;
+}
 
 // Fetch Cache
 
@@ -20,37 +53,26 @@ export function getCache(url, type = "json") {
     if (cached instanceof Promise) return cached;
     if (cached !== undefined) return cached;
 
-    const promise = new Promise(async (resolve, reject) => {
+    if (type !== "json") throw new Error(`Unsupported cache type: ${type}`);
+
+    const promise = (async () => {
         try {
-            const response = await fetch(url);
-            if (response.status === 204) {
+            const response = await apiFetch(url);
+            // The sentinel rather than a rejection: a missing preview would spam the console on every render.
+            if (response.status === 204 || response.status === 404) {
                 cache.set(cacheKey, notFound);
-                resolve(notFound);
-                return;
+                return notFound;
             }
-            if (response.ok) {
-                let data;
-                if (type === "json") {
-                    const text = await response.text();
-                    data = text ? JSON.parse(text) : null;
-                } else {
-                    throw new Error(`Unsupported cache type: ${type}`);
-                }
-                cache.set(cacheKey, data);
-                resolve(data);
-            } else if (response.status === 404) {
-                // Resolve to the sentinel rather than reject: a missing preview would spam the console on every render.
-                cache.set(cacheKey, notFound);
-                resolve(notFound);
-            } else {
-                cache.delete(cacheKey);
-                reject(new Error(`Failed to fetch content: ${response.status} ${response.statusText}`));
-            }
+            if (!response.ok) throw new Error(`Failed to fetch content: ${response.status} ${response.statusText}`);
+            const text = await response.text();
+            const data = text ? JSON.parse(text) : null;
+            cache.set(cacheKey, data);
+            return data;
         } catch (error) {
             cache.delete(cacheKey);
-            reject(error);
+            throw error;
         }
-    });
+    })();
 
     cache.set(cacheKey, promise);
     return promise;
@@ -61,6 +83,202 @@ export function clearCache(url) {
     for (const key of [...cache.keys()]) {
         if (key.endsWith(`:${url}`)) cache.delete(key);
     }
+}
+
+// Tag data on a node
+
+/** The node's tag list. */
+export const getTags = (node) => parseTags(node?.properties?._tagDataJSON);
+
+/** Write it back and let the node redraw. Not pretty-printed: this string is stored in every workflow, undo snapshot and embedded image. */
+export async function setTags(node, tags) {
+    node.properties = node.properties || {};
+    node.properties._tagDataJSON = JSON.stringify(tags);
+    // The renderer's wrapper re-renders, resizes and records the undo checkpoint.
+    if (node.onUpdateTextWidget) await node.onUpdateTextWidget(node);
+    else node._ereDom?.render?.();
+    app.graph?.setDirtyCanvas?.(true, true);
+}
+
+/** A tag group's contents, or null when there is no such group. */
+export async function loadGroupTags(name, extension = "") {
+    try {
+        const data = await getCache(`/erenodes/get_tag_group?filename=${encodeURIComponent(name + (extension || ""))}`);
+        return Array.isArray(data) ? data : null;
+    } catch { return null; }
+}
+
+/** The same, with the pill's own on/off overrides applied, which is what a group contributes when it is unpacked. */
+export async function expandGroup(tag) {
+    const contents = await loadGroupTags(tag?.name, tag?.extension);
+    if (!contents) return null;
+    return contents
+        .filter(t => t && t.name)
+        .map(t => (tag.modified && Object.hasOwn(tag.modified, t.name) ? { ...t, active: tag.modified[t.name] } : { ...t }));
+}
+
+// Dialogs and pickers
+// ComfyUI's own, with the browser's as the fallback: the desktop build blocks window.prompt.
+
+export const toast = (severity, summary, detail, life = 4000) =>
+    app.extensionManager?.toast?.add({ severity, summary, detail, life });
+
+export async function confirmDialog(title, message) {
+    if (app.extensionManager?.dialog?.confirm) {
+        return !!(await app.extensionManager.dialog.confirm({ title, message }));
+    }
+    return window.confirm(message);
+}
+
+/** The typed value, or null when it was cancelled. */
+export async function promptDialog(title, message, defaultValue = "") {
+    if (app.extensionManager?.dialog?.prompt) {
+        const value = await app.extensionManager.dialog.prompt({ title, message, defaultValue });
+        return value ?? null;
+    }
+    return window.prompt(message, defaultValue);
+}
+
+/** One file from the system picker, or null. */
+export function pickFile(accept = "image/*") {
+    return new Promise((resolve) => {
+        const input = Object.assign(document.createElement("input"), { type: "file", accept });
+        input.addEventListener("change", () => resolve(input.files?.[0] ?? null), { once: true });
+        input.addEventListener("cancel", () => resolve(null), { once: true });
+        input.click();
+    });
+}
+
+/** Make an element take an image dropped on it, with the same highlight everywhere. `onFile` also sees the event, since a drag from another tab carries a URL rather than a file. */
+export function bindImageDrop(pane, onFile) {
+    pane.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        pane.classList.add("ere-extract-over");
+    });
+    pane.addEventListener("dragleave", () => pane.classList.remove("ere-extract-over"));
+    pane.addEventListener("drop", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        pane.classList.remove("ere-extract-over");
+        onFile(e.dataTransfer?.files?.[0] ?? null, e);
+    });
+}
+
+// Gestures
+// One rubber band and one press-or-drag, so a pill, a row, a tile and a preview all answer the pointer the same way.
+
+export const HOLD_MS = 200;
+export const MOVE_THRESHOLD = 5;
+
+/**
+ * A press that becomes a rubber band once it moves.
+ * @param {object} opts
+ *  items    () => [{key, el}], measured once when the band opens, since the band is the only thing that moves after that
+ *  base     keys the band starts from; it XORs against them, so sweeping back over one removes it
+ *  onChange (keys) as the band sweeps
+ *  onClick  the press ended without ever opening a band
+ *  onMove   extra work per move (the canvas gesture abort)
+ */
+export function trackMarquee(e, { items, base = [], onChange, onClick, onMove, bandClass = "", markBody = true } = {}) {
+    const start = { x: e.clientX, y: e.clientY };
+    const baseKeys = [...base];
+    let band = null;
+    let measured = null;
+
+    const update = (x, y) => {
+        const left = Math.min(start.x, x), top = Math.min(start.y, y);
+        const width = Math.abs(x - start.x), height = Math.abs(y - start.y);
+        Object.assign(band.style, { left: `${left}px`, top: `${top}px`, width: `${width}px`, height: `${height}px` });
+
+        const next = new Set(baseKeys);
+        for (const { key, rect } of measured) {
+            if (rect.left < left + width && rect.right > left && rect.top < top + height && rect.bottom > top) {
+                if (next.has(key)) next.delete(key);
+                else next.add(key);
+            }
+        }
+        onChange?.(next);
+    };
+
+    const onPointerMove = (ev) => {
+        onMove?.(ev);
+        if (!band && Math.hypot(ev.clientX - start.x, ev.clientY - start.y) > MOVE_THRESHOLD) {
+            measured = (items?.() ?? []).map(({ key, el }) => ({ key, rect: el.getBoundingClientRect() }));
+            band = document.createElement("div");
+            band.className = `ere-marquee ${bandClass}`.trim();
+            document.body.appendChild(band);
+            if (markBody) document.body.classList.add("ere-marquee-active");
+        }
+        if (band) { ev.preventDefault(); update(ev.clientX, ev.clientY); }
+    };
+    const finish = () => {
+        window.removeEventListener("pointermove", onPointerMove, true);
+        window.removeEventListener("pointerup", onUp, true);
+        window.removeEventListener("pointercancel", finish, true);
+        window.removeEventListener("keydown", onKey, true);
+        band?.remove();
+        band = null;
+        if (markBody) document.body.classList.remove("ere-marquee-active");
+    };
+    const onKey = (ev) => {
+        if (ev.key !== "Escape" || !band) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        onChange?.(new Set(baseKeys));
+        finish();
+    };
+    const onUp = () => {
+        const banded = !!band;
+        finish();
+        if (!banded) onClick?.();
+    };
+
+    window.addEventListener("pointermove", onPointerMove, true);
+    window.addEventListener("pointerup", onUp, true);
+    window.addEventListener("pointercancel", finish, true);
+    window.addEventListener("keydown", onKey, true);
+}
+
+/**
+ * A press that becomes a drag on hold or on movement, and a click otherwise.
+ * `onDrag` receives the session; check `session.released` after every await, since a press can end while the payload is still being read.
+ */
+export function trackPress(e, { onDrag, onClick, holdMs = HOLD_MS } = {}) {
+    const start = { x: e.clientX, y: e.clientY };
+    const session = { x: start.x, y: start.y, started: false, released: false };
+
+    const begin = () => {
+        if (session.started || session.released) return;
+        session.started = true;
+        clearTimeout(timer);
+        onDrag?.(session);
+    };
+    const timer = setTimeout(begin, holdMs);
+
+    const onPointerMove = (ev) => {
+        session.x = ev.clientX;
+        session.y = ev.clientY;
+        if (session.started) return;
+        if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) > MOVE_THRESHOLD) begin();
+    };
+    const detach = () => {
+        clearTimeout(timer);
+        session.released = true;
+        window.removeEventListener("pointermove", onPointerMove, true);
+        window.removeEventListener("pointerup", onUp, true);
+        window.removeEventListener("pointercancel", detach, true);
+    };
+    const onUp = (ev) => {
+        const dragging = session.started;
+        detach();
+        if (!dragging) onClick?.(ev);
+    };
+
+    window.addEventListener("pointermove", onPointerMove, true);
+    window.addEventListener("pointerup", onUp, true);
+    window.addEventListener("pointercancel", detach, true);
+    return session;
 }
 
 // Undo tracker
@@ -220,22 +438,15 @@ export const segmentCount = (result) =>
     Array.isArray(result?.segments) ? result.segments.length : 0;
 
 /** Upload an image and read its prompt metadata. */
-export async function extractFromImage(file) {
+export function extractFromImage(file) {
     const form = new FormData();
     form.append("image", file, file.name);
-    const response = await fetch("/erenodes/extract_prompt", { method: "POST", body: form });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result?.error || `HTTP ${response.status}`);
-    return result;
+    return requestJson("/erenodes/extract_prompt", { form });
 }
 
 /** Re-read an image already sitting in ComfyUI's input directory. */
-export async function reExtractByFilename(filename) {
-    const response = await fetch(
-        `/erenodes/extract_prompt?filename=${encodeURIComponent(filename)}`);
-    const result = await response.json();
-    if (!response.ok) throw new Error(result?.error || `HTTP ${response.status}`);
-    return result;
+export function reExtractByFilename(filename) {
+    return requestJson(`/erenodes/extract_prompt?filename=${encodeURIComponent(filename)}`);
 }
 
 
@@ -307,13 +518,7 @@ function scheduleFlush() {
 async function request(items, era) {
     const stale = () => era !== generation;
     try {
-        const response = await fetch("/erenodes/check_files", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ items }),
-        });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result?.error || `HTTP ${response.status}`);
+        const result = await requestJson("/erenodes/check_files", { body: { items } });
         if (stale()) return;
         for (const [key, exists] of Object.entries(result.exists || {})) {
             verdicts.set(key, !!exists);
@@ -416,7 +621,6 @@ export function getElementOrCursorCoords(element, position) {
         }
         return numericLineHeight;
     };
-    const finalLineHeight = getLineHeightPx();
 
     const text = element.value;
     const selectionEnd = position ?? element.selectionEnd;
@@ -440,18 +644,18 @@ export function getElementOrCursorCoords(element, position) {
     dummy.style.width = `${element.clientWidth}px`;
     dummy.style.height = 'auto';
     
-    // Use a unique ID for the marker span to avoid conflicts.
-    const markerId = `cursor-marker-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
-    dummy.innerHTML = before.replace(/\n/g, '<br />') + `<span id="${markerId}"></span>`;
+    // The text goes in as a text node: prompt text is untrusted and must never be parsed as markup. pre-wrap renders its newlines, which is what the marker needs to land on the right line.
+    dummy.style.whiteSpace = 'pre-wrap';
+    dummy.appendChild(document.createTextNode(before));
+    const cursorMarker = document.createElement("span");
+    dummy.appendChild(cursorMarker);
 
     document.body.appendChild(dummy);
 
-    const cursorMarker = dummy.querySelector(`#${markerId}`);
-    
     const internalX = cursorMarker.offsetLeft;
     const internalY = cursorMarker.offsetTop;
     // The marker's offsetHeight is the line's rendered height inside the mirror.
-    const internalLineHeight = cursorMarker.offsetHeight || finalLineHeight;
+    const internalLineHeight = cursorMarker.offsetHeight || getLineHeightPx();
 
     document.body.removeChild(dummy);
 
@@ -539,11 +743,8 @@ export async function tagsToText(tagData, tagSeparator) {
         // A group expands to its contents, in place.
         flush();
         try {
-            const filename = tag.extension ? `${tag.name}${tag.extension}` : tag.name;
-            const result = getCache(
-                `/erenodes/get_tag_group?filename=${encodeURIComponent(filename)}`, 'json');
-            const groupTagData = result instanceof Promise ? await result : result;
-            if (!Array.isArray(groupTagData)) continue;
+            const groupTagData = await loadGroupTags(tag.name, tag.extension);
+            if (!groupTagData) continue;
 
             const groupParts = [];
             for (const gTag of groupTagData.filter(t => t.active && t.name)) {

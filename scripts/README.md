@@ -110,3 +110,40 @@ in the sidebar like any other.
   recently may not have a thumbnail yet.
 - Filenames are sanitised for Windows, including its reserved device names, and
   two characters that would land on the same filename are kept apart.
+
+## animadex_artists_to_tag_groups.py
+
+The same thing for the artist catalogue: one tag group per artist, with the
+artist's thumbnail as the cover.
+
+```bash
+python animadex_artists_to_tag_groups.py --token YOUR_TOKEN \
+    --out "C:/ComfyUI/models/tag_groups" --dry-run --limit 20
+```
+
+Same token, same manifest, and the same flags as the character script, so
+everything above about `--dry-run`, `--overwrite` and re-running applies here
+too. Two differences:
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--top NAME` | `Artists` | Folder created under `--out`. |
+| `--group-by initial\|none` | `initial` | A subfolder per first letter, or everything in one folder. Digits and symbols share `#`. |
+| `--min-count N` | `0` | Skip artists below this popularity count. |
+
+### What you get
+
+```
+<out>/Artists/<A>/<Artist>.json     the tag
+<out>/Artists/<A>/<Artist>.webp     the cover
+```
+
+An artist row in the catalogue carries no tag list of its own — unlike a
+character, which has `core_tags` — so each group holds a single pill: the
+artist's `trigger`, or its slug with underscores turned into spaces. That is the
+tag you prompt with; the value of the import is having every artist named,
+filed and thumbnailed in the sidebar.
+
+`--group-by initial` is the default because a flat folder of several thousand
+tag groups is unpleasant to browse. `--min-count` is the other way to keep it
+small: the catalogue has a long tail of artists with very few posts.

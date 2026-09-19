@@ -1,12 +1,6 @@
 import re
 
-from .prompt_csv import get_filter_maps, list_csv_files as get_csv_files
-
-
-# Legacy compatibility
-def list_csv_files():
-    return get_csv_files()
-
+from .prompt_csv import get_filter_maps, list_csv_files
 
 # Strip lora/embedding syntax, weights and wrapping brackets from a token.
 def _clean_token(token):

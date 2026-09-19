@@ -1,5 +1,5 @@
 import { displayNameFor, strengthText } from "./parser.js";
-import { loadStyle } from "./util.js";
+import { loadStyle, apiUrl, requestJson } from "./util.js";
 
 // Colours
 
@@ -110,13 +110,23 @@ export function previewKey(type, name) {
     return `/erenodes/view/${type}/${encoded}`;
 }
 
-export function previewUrl(type, name, w, h) {
+export function previewUrl(type, name) {
     const key = previewKey(type, name);
-    const params = (w && h) ? [`w=${w}`, `h=${h}`, "fit=cover"] : [];
     // Only once a cover has been replaced, so ordinary URLs stay stable and stay cached.
     const version = previewVersions.get(key);
-    if (version) params.push(`v=${version}`);
-    return params.length ? `${key}?${params.join("&")}` : key;
+    const url = apiUrl(key);
+    return version ? `${url}?v=${version}` : url;
+}
+
+/** Store a cover for a lora, embedding or tag group, and move its URL so the new bytes are fetched. */
+export async function saveCover(type, name, file) {
+    const form = new FormData();
+    form.append("type", type);
+    form.append("name", name);
+    form.append("image_file", file, file.name);
+    const result = await requestJson("/erenodes/save_file_image", { form });
+    bumpPreview(type, name);
+    return result;
 }
 
 /** A cover was written or deleted: forget it was missing, and move the URL so the browser fetches the new bytes. */
@@ -223,13 +233,12 @@ export function renderToggleRowEl(tag, opts = {}) {
 /** A gallery tile (Prompt Gallery node, and the sidebar's grid view). */
 export function renderTagTile(tag, opts = {}) {
     const colors = opts.colors ?? fallbackColors();
-    const w = opts.width ?? 100;
-    const h = opts.height ?? 100;
 
     const tile = document.createElement("div");
     tile.className = "ere-tile" + (tag.active === false ? " inactive" : "");
-    tile.style.width = `${w}px`;
-    tile.style.height = `${h}px`;
+    // Sized by the caller's layout when it does not say: the sidebar grid gives the cell a width and an aspect ratio.
+    if (opts.width) tile.style.width = `${opts.width}px`;
+    if (opts.height) tile.style.height = `${opts.height}px`;
 
     if (tag.type === 'lora' || tag.type === 'group' || tag.type === 'embedding') {
         const key = previewKey(tag.type, tag.name);
@@ -238,7 +247,7 @@ export function renderTagTile(tag, opts = {}) {
             const img = document.createElement("img");
             img.loading = "lazy";
             img.draggable = false;
-            img.src = previewUrl(tag.type, tag.name, w, h);
+            img.src = previewUrl(tag.type, tag.name);
             img.addEventListener("error", () => {
                 missingPreviews.add(key);
                 img.style.display = "none";

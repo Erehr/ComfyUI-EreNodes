@@ -1,6 +1,6 @@
 import { app } from "../../../scripts/app.js";
-import { getCache, clearCache, beginUndoTransaction, endUndoTransaction } from "./util.js";
-import { renderTagPill, SURFACE_CLASS, injectTagStyles, previewUrl } from "./tagview.js";
+import { getCache, beginUndoTransaction, endUndoTransaction, getSetting, apiFetch, requestJson, toast, promptDialog, pickFile, loadGroupTags } from "./util.js";
+import { renderTagPill, SURFACE_CLASS, injectTagStyles, previewUrl, previewKey, saveCover } from "./tagview.js";
 import { showPreviewFor, hidePreviewPanel } from "./preview.js";
 
 // Class on preview <img> elements so cleanup can target them precisely.
@@ -17,7 +17,7 @@ async function hasPreviewImage(tag) {
     if (!tag?.name || !['lora', 'embedding', 'group'].includes(tag.type)) return false;
     const url = previewUrl(tag.type, tag.name);
     if (!previewProbes.has(url)) {
-        previewProbes.set(url, fetch(url, { method: "HEAD" })
+        previewProbes.set(url, apiFetch(previewKey(tag.type, tag.name), { method: "HEAD" })
             .then(r => r.ok && r.status !== 204)
             .catch(() => false));
     }
@@ -38,7 +38,7 @@ const isEditableTarget = (el) =>
     !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
 
 // Base class for dynamic context menus
-export class DynamicContextMenu { // Added export
+export class DynamicContextMenu {
     /** Widen (or release) the menu for a mode that needs the room — the text field. */
     setWidth(px) {
         if (!this.root) return;
@@ -338,10 +338,14 @@ export class DynamicContextMenu { // Added export
             case 'separator':
                 item.className = "litemenu-entry submenu separator";
                 break;
-            case 'title':
+            case 'title': {
                 item.className = "litemenu-title";
-                item.innerHTML = `<div>${option.name}</div>`;
+                // Titles carry node titles, file names and tag types, none of which are ours; text node, never markup.
+                const titleText = document.createElement("div");
+                titleText.textContent = option.name ?? "";
+                item.appendChild(titleText);
                 break;
+            }
             case 'input': {
                 // A labelled field that applies as it is typed. Not `filter`: that one is the menu's
                 // search box, singular by construction and rebuilt on every keystroke.
@@ -657,111 +661,37 @@ export class DynamicContextMenu { // Added export
     }
 
     async setPreview() {
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = 'image/*';
-        input.style.display = 'none';
-        document.body.appendChild(input);
+        const file = await pickFile();
+        if (!file) return null;
 
-        // One idempotent teardown, so the promise settles exactly once.
-        let settled = false;
-        const cleanup = () => { if (input.isConnected) input.remove(); };
+        // A tag group being created has nowhere to store the cover yet, so it travels with the save instead.
+        if (!this.tag) {
+            // Not this.previewImage: showPreview() reassigns that to the <img>.
+            this.saveImageFile = file;
+            const reader = new FileReader();
+            reader.onload = (e) => this.showPreview(e.target.result);
+            reader.readAsDataURL(file);
+            return file;
+        }
 
-        return new Promise((resolve) => {
-            const finish = (value) => {
-                if (settled) return;
-                settled = true;
-                cleanup();
-                resolve(value);
-            };
-
-            input.addEventListener('change', async (event) => {
-                const file = event.target.files[0];
-                if (file) {
-                    const formData = new FormData();
-                    // Check if this context has tag (TagEditContextMenu) or use generic approach
-                    if (this.tag) {
-                        formData.append('type', this.tag.type);
-                        formData.append('name', this.tag.name);
-                        formData.append('image_file', file, file.name);
-                    } else {
-                         // For TagGroupContextMenu - store the image for later use and show preview.
-                         // Not this.previewImage: showPreview() reassigns that to the <img>.
-                         this.saveImageFile = file;
-
-                         // Create a data URL to show the preview immediately
-                         const reader = new FileReader();
-                         reader.onload = (e) => {
-                             this.showPreview(e.target.result);
-                         };
-                         reader.readAsDataURL(file);
-
-                         finish(file);
-                         return;
-                     }
-
-                    try {
-                        const response = await fetch('/erenodes/save_file_image', {
-                            method: 'POST',
-                            body: formData
-                        });
-
-                        if (response.ok) {
-                            const result = await response.json();
-                            const successMessage = result.message || 'Image saved successfully.';
-                            app.extensionManager.toast.add({
-                                severity: 'success',
-                                summary: 'Saved',
-                                detail: successMessage,
-                                life: 4000
-                            });
-                            
-                            // Clear image cache and update preview (only for TagEditContextMenu)
-                            if (this.tag) {
-                                clearCache(`/erenodes/view/${this.tag.type}/${this.tag.name}`);
-                                this.showPreview(`/erenodes/view/${this.tag.type}/${this.tag.name}`);
-                            }
-                            
-                            // Call imageCallback if it exists
-                            if (this.imageCallback && typeof this.imageCallback === 'function') {
-                                this.imageCallback();
-                            }
-                        } else {
-                            const result = await response.json();
-                            const errorMessage = result.error || result.message || 'Unknown error saving image.';
-                            console.error('[EreNodes] Error saving image:', errorMessage);
-                            app.extensionManager.toast.add({
-                                severity: 'error',
-                                summary: 'Save Error',
-                                detail: errorMessage,
-                                life: 5000
-                            });
-                        }
-                    } catch (error) {
-                        console.error('[EreNodes] Error saving image:', error);
-                        app.extensionManager.toast.add({
-                            severity: 'error',
-                            summary: 'Save Operation Error',
-                            detail: error.message,
-                            life: 5000
-                        });
-                    }
-                }
-                finish(file);
-            });
-
-            // Picker dismissed without choosing a file: 'change' never fires, so settle on 'cancel' instead.
-            // A 'focus' handler could fire from the .click() itself, while the dialog is open.
-            input.addEventListener('cancel', () => finish(null));
-
-            input.click();
-        });
+        try {
+            const result = await saveCover(this.tag.type, this.tag.name, file);
+            toast("success", "Saved", result?.message || "Image saved successfully.");
+            this.showPreview(previewUrl(this.tag.type, this.tag.name));
+            this.imageCallback?.();
+        } catch (error) {
+            console.error("[EreNodes] Error saving image:", error);
+            toast("error", "Save Error", error.message, 5000);
+        }
+        return file;
     }
 
 }
 
 // A new context menu for folders and files
 export class FileContextMenu extends DynamicContextMenu {
+    searchSeq = 0;
+
     constructor(event, onSelectCallback, type, existingTags = []) {
         super(event, onSelectCallback);
         this.type = type; // 'lora', 'embedding', or 'group'
@@ -774,13 +704,7 @@ export class FileContextMenu extends DynamicContextMenu {
 
     async searchFiles(path = "", query = "") {
         try {
-            const url = `/erenodes/search_files?type=${this.type}&path=${encodeURIComponent(path)}&query=${encodeURIComponent(query)}`;
-            const response = await fetch(url);
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            const data = await response.json();
-            return data;
+            return await requestJson(`/erenodes/search_files?type=${encodeURIComponent(this.type)}&path=${encodeURIComponent(path)}&query=${encodeURIComponent(query)}`);
         } catch (error) {
             console.error(`[EreNodes] Error searching ${this.type} files:`, error);
             // On error, don't try to calculate a parent.
@@ -811,7 +735,10 @@ export class FileContextMenu extends DynamicContextMenu {
     async updateOptions(path, query = "") {
         this.currentPath = path;
         this.currentWord = query;
+        const seq = ++this.searchSeq;
         const data = await this.searchFiles(path, query);
+        // A slower answer to a query already typed past must not replace the one on screen, and a menu closed meanwhile has nothing to render into.
+        if (seq !== this.searchSeq || !this.root) return;
         
         const parentPath = data.parentPath;
         const items = data?.items || [];
@@ -954,12 +881,8 @@ export class TagContextMenu extends DynamicContextMenu {
         let suggestions = [];
         try {
             // Per search, not cached: the menu outlives a settings change.
-            const limit = app.ui?.settings?.getSettingValue?.("EreNodes.Autocomplete.Limit", 20) ?? 20;
-            const response = await fetch(
-                `/erenodes/search_tags?query=${encodeURIComponent(query)}&limit=${limit}`,
-                { signal });
-            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-            const tags = await response.json();
+            const limit = getSetting("EreNodes.Autocomplete.Limit", 20);
+            const tags = await requestJson(`/erenodes/search_tags?query=${encodeURIComponent(query)}&limit=${limit}`, { signal });
             suggestions = tags.filter(tag => !this.existingTags.some(existingTag => existingTag.name === tag.name && existingTag.type === 'tag'));
         } catch (error) {
             if (error.name === "AbortError" || !this.isCurrentSearch(generation)) return;
@@ -1074,12 +997,10 @@ export class TagIndexContextMenu extends TagContextMenu {
         const { generation, signal } = this.beginSearch();
         let suggestions = [];
         try {
-            const limit = app.ui?.settings?.getSettingValue?.("EreNodes.Autocomplete.Limit", 20) ?? 20;
+            const limit = getSetting("EreNodes.Autocomplete.Limit", 20);
             const params = new URLSearchParams({ query, limit: String(limit) });
             if (this.contextTerms?.length) params.set("context", this.contextTerms.join(","));
-            const response = await fetch(`/erenodes/tag_index/suggest?${params}`, { signal });
-            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-            const tags = await response.json();
+            const tags = await requestJson(`/erenodes/tag_index/suggest?${params}`, { signal });
             if (Array.isArray(tags)) suggestions = tags;
         } catch (error) {
             if (error.name === "AbortError" || !this.isCurrentSearch(generation)) return;
@@ -1251,6 +1172,7 @@ export class TagEditContextMenu extends DynamicContextMenu {
         super(event, saveCallback); // The primary callback on save.
         this.tag = JSON.parse(JSON.stringify(tagObject)); // Deep copy to edit safely
         this.deleteCallback = deleteCallback;
+        this.deleted = false;
         this.imageCallback = imageCallback;
         this.unpackCallback = unpackCallback;
         this.tagIndex = tagIndex; // Track by index instead of name
@@ -1323,7 +1245,7 @@ export class TagEditContextMenu extends DynamicContextMenu {
         // Action Buttons
         const createCallback = (cb) => () => { cb(); this.close(); };
         this.options.push(
-            { name: "Remove", callback: createCallback(() => this.deleteCallback()) }
+            { name: "Remove", callback: createCallback(() => this.deleteTag()) }
         );
         
         this.show();
@@ -1507,7 +1429,7 @@ export class TagEditContextMenu extends DynamicContextMenu {
             e.stopPropagation();
             // An empty name deletes, and that is the whole of it: letting a highlighted Remove run as well would delete twice.
             if (!this.filterBox.value.trim()) {
-                this.deleteCallback();
+                this.deleteTag();
                 this.close();
                 return true;
             }
@@ -1572,17 +1494,11 @@ export class TagEditContextMenu extends DynamicContextMenu {
 
     async fetchInfoPanelContent() {
         try {
-            let url;
             if (this.tag.type === 'lora') {
-                url = `/erenodes/get_lora_metadata?filename=${encodeURIComponent(this.tag.name + this.tag.extension)}`;
-                const tagsJson = getCache(url, 'json');
-                const resolvedTags = tagsJson instanceof Promise ? await tagsJson : tagsJson;
-                return this.processLoraMetadata(resolvedTags);
+                const words = await getCache(`/erenodes/get_lora_metadata?filename=${encodeURIComponent(this.tag.name + this.tag.extension)}`);
+                return this.processLoraMetadata(words);
             } else if (this.tag.type === 'group') {
-                url = `/erenodes/get_tag_group?filename=${encodeURIComponent(this.tag.name + this.tag.extension)}`;
-                const groupTags = getCache(url, 'json');
-                const resolvedGroupTags = groupTags instanceof Promise ? await groupTags : groupTags;
-                return this.processGroupTags(resolvedGroupTags);
+                return this.processGroupTags(await loadGroupTags(this.tag.name, this.tag.extension));
             }
         } catch (error) {
             console.error("[EreNodes] Error loading side panel content:", error);
@@ -1644,12 +1560,18 @@ export class TagEditContextMenu extends DynamicContextMenu {
         return pill;
     }
 
+    // The delete runs once per menu: close() deletes an emptied name too, and the callback splices by index, so a second run would take the tag that shifted into the slot.
+    deleteTag() {
+        if (this.deleted) return;
+        this.deleted = true;
+        this.deleteCallback();
+    }
+
     close() {
         // Check if we need to delete the tag due to empty name when closing
         const nameInput = this.root?.querySelector('.comfy-context-menu-filter');
         if (nameInput && !nameInput.value.trim() && !this.isSpecialType) {
-            // Only delete if it's a regular tag (not special type) and name is empty
-            this.deleteCallback();
+            this.deleteTag();
         }
         
         // Detach autocomplete if it's attached to our input
@@ -1739,6 +1661,8 @@ export class TagGroupContextMenu extends FileContextMenu {
             
             // Default browse mode - reuse parent logic but override file callbacks
             await super.updateOptions(path, query);
+            // Loading a whole folder is a load-mode action; in save mode its payload is a list, which the save callback cannot take.
+            this.options = this.options.filter(option => option.name !== "Load all from folder");
             
             // Find the filter option and inject save options after it
             const filterIndex = this.options.findIndex(option => option.type === 'filter');
@@ -1809,12 +1733,7 @@ export class TagGroupContextMenu extends FileContextMenu {
     executeSave() {
         const filename = this.saveFileName.trim();
         if (!filename) {
-            app.extensionManager.toast.add({
-                severity: "error",
-                summary: "Invalid Filename",
-                detail: "Please enter a filename.",
-                life: 3000
-            });
+            toast("error", "Invalid Filename", "Please enter a filename.", 3000);
             return;
         }
 
@@ -1835,48 +1754,21 @@ export class TagGroupContextMenu extends FileContextMenu {
     }
 
     async createNewFolder() {
-        const folderName = prompt("Enter new folder name:", "New Folder");
+        const folderName = await promptDialog("New Folder", "Enter new folder name:", "New Folder");
         if (!folderName || folderName.trim() === "") return;
 
         try {
-            const response = await fetch('/erenodes/create_folder', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    path: this.currentPath,
-                    folderName: folderName.trim(),
-                }),
-            });
-            if (response.ok) {
-                this.updateOptions(this.currentPath, "");
-                // The sidebar caches its tree, so a new folder would not appear there.
-                app.ereSidebar?.refresh?.();
-            } else {
-                const error = await response.json();
-                console.error("[EreNodes] Error creating folder:", error.error);
-                app.extensionManager.toast.add({
-                    severity: "error",
-                    summary: "Folder Creation Error",
-                    detail: error.error || "Failed to create folder",
-                    life: 5000
-                });
-            }
+            await requestJson("/erenodes/create_folder", { body: { path: this.currentPath, folderName: folderName.trim() } });
+            this.updateOptions(this.currentPath, "");
+            // The sidebar caches its tree, so a new folder would not appear there.
+            app.ereSidebar?.refresh?.();
         } catch (error) {
             console.error("[EreNodes] Error creating folder:", error);
-            app.extensionManager.toast.add({
-                severity: "error",
-                summary: "Folder Creation Error",
-                detail: error.message,
-                life: 5000
-            });
+            toast("error", "Folder Creation Error", error.message, 5000);
         }
     }
 
 
-
-    close() {
-        super.close();
-    }
 
 }
 

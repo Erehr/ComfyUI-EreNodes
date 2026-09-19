@@ -1,6 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { TagContextMenu } from "./js/contextmenu.js";
-import { getElementOrCursorCoords } from "./js/util.js";
+import { getElementOrCursorCoords, getSetting } from "./js/util.js";
 
 // Helper class for textarea caret operations
 class TextAreaCaretHelper {
@@ -268,6 +268,8 @@ export class GlobalAutocomplete {
 
     async updateSuggestions() {
         if (!this.attachedElement || !this.helper) return;
+        // A menu closed by its own Escape leaves this reference behind, and every later keystroke would search a menu with no root.
+        if (this.menu && !this.menu.root) this.menu = null;
 
         const currentWord = this.getCurrentWord();
         if (!currentWord) {
@@ -458,7 +460,7 @@ function isEreNodeTextarea(target) {
 
 /** Textareas to keep out of, so another pack's autocomplete does not open a second menu. A setting, since we cannot know every pack that does this. */
 function isExcludedTextarea(target) {
-    const raw = app.ui?.settings?.getSettingValue?.("EreNodes.Autocomplete.Exclude", "") ?? "";
+    const raw = getSetting("EreNodes.Autocomplete.Exclude", "");
     for (const selector of raw.split(",").map(s => s.trim()).filter(Boolean)) {
         try {
             if (target.matches?.(selector) || target.closest?.(selector)) return true;
@@ -476,8 +478,8 @@ if (typeof app !== "undefined") {
         if (e.target.tagName !== "TEXTAREA") return;
         if (isExcludedTextarea(e.target)) return;
 
-        const globalEnabled = app.ui.settings.getSettingValue('EreNodes.Autocomplete.Global', true);
-        const nodesEnabled = app.ui.settings.getSettingValue('EreNodes.Autocomplete.Nodes', true);
+        const globalEnabled = getSetting("EreNodes.Autocomplete.Global", true);
+        const nodesEnabled = getSetting("EreNodes.Autocomplete.Nodes", true);
         // Outside our own nodes the global setting still rules.
         if (!globalEnabled && !(nodesEnabled && isEreNodeTextarea(e.target))) {
             return;

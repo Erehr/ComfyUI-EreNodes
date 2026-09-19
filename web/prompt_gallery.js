@@ -1,13 +1,9 @@
 import { app } from "../../scripts/app.js";
-import { initializeSharedPromptFunctions, applyContextMenuPatch, tileMenuItems } from "./prompt.js";
+import { initializeSharedPromptFunctions, tileMenuItems } from "./prompt.js";
 import { attachTagDomWidget } from "./js/renderer.js";
 
 app.registerExtension({
     name: "ErePromptGallery",
-
-    async setup() {
-        applyContextMenuPatch();
-    },
 
     beforeRegisterNodeDef(nodeType, nodeData, app) {
         if (nodeData.name !== "ErePromptGallery") return;

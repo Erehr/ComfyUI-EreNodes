@@ -2,27 +2,13 @@ import os
 import re
 
 from .prompt import DEFAULT_PREFIX_SEPARATOR, combine_prompt, join_parts
-from .prompt_lora_stack import LORA_REGEX, parse_lora_stack
-
-
-def _to_float(value, fallback):
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return fallback
+from .prompt_lora_stack import LORA_REGEX, parse_lora_stack, resolve_lora
 
 
 # The node's own pills reach here in the same syntax as an upstream prompt, so both use this.
 def rows_from_prompt(prompt):
-    rows = []
-    for name, model_strength, clip_strength in parse_lora_stack(prompt):
-        strength = _to_float(model_strength, 1.0)
-        rows.append({
-            "name": str(name),
-            "strength": strength,
-            "strengthClip": _to_float(clip_strength, strength),
-        })
-    return rows
+    return [{"name": str(name), "strength": model_strength, "strengthClip": clip_strength}
+            for name, model_strength, clip_strength in parse_lora_stack(prompt)]
 
 
 # Drop the lora tags this node consumed, leaving the rest of the prompt untouched.
@@ -51,8 +37,6 @@ class ErePromptLoraLoader:
                 "clip": ("CLIP",),
                 "prefix": ("STRING", {"forceInput": True}),
                 "separator": ("STRING", {"default": DEFAULT_PREFIX_SEPARATOR}),
-                # On when a loader further down the chain would otherwise load them again.
-                "remove_lora_tags": ("BOOLEAN", {"default": False}),
             },
         }
 
@@ -61,13 +45,18 @@ class ErePromptLoraLoader:
     FUNCTION = "process"
     CATEGORY = "EreNodes"
 
-    def process(self, text, model=None, clip=None, prefix="", separator=None, remove_lora_tags=False):
+    def process(self, text, model=None, clip=None, prefix="", separator=None):
         # Prefix first, so a lora named upstream behaves as if it loaded upstream.
         from_prefix = rows_from_prompt(prefix)
         loaded = 0
         removed_prefix = []
+        # One application per lora: the same one named upstream and again here would otherwise be applied twice, at compounded strength.
+        seen = set()
         for is_prefix, rows in ((True, from_prefix), (False, rows_from_prompt(text))):
             for row in rows:
+                if row["name"] in seen:
+                    continue
+                seen.add(row["name"])
                 model, clip, applied = apply_row(row, model, clip)
                 if not applied:
                     continue
@@ -76,7 +65,7 @@ class ErePromptLoraLoader:
                     removed_prefix.append(row)
 
         # With nothing loaded, removing the tags would delete loras this node only passes through.
-        if not remove_lora_tags or not loaded:
+        if not loaded:
             return (model, clip, combine_prompt(text, prefix, separator))
 
         # Own loras carry their chosen triggers in `text` already; prefix ones have none picked.
@@ -92,7 +81,7 @@ def apply_row(row, model, clip):
     if strength_model == 0 and strength_clip == 0:
         return model, clip, False
 
-    found = _resolve_lora(row["name"])
+    found = resolve_lora(row["name"])
     if found is None:
         print(f"[EreNodes] LoRA not found, skipping: {row['name']}")
         return model, clip, False
@@ -119,7 +108,7 @@ def _triggers_for(rows):
     out = []
     seen = set()
     for row in rows:
-        found = _resolve_lora(row["name"])
+        found = resolve_lora(row["name"])
         path = _lora_path(found) if found else None
         if not path:
             continue
@@ -134,31 +123,6 @@ def _triggers_for(rows):
                 seen.add(key)
                 out.append(str(name).strip())
     return out
-
-
-# LoraLoader takes the name as folder_paths knows it, not a path.
-# Matching against the registered list is also what keeps a name inside the lora roots.
-def _resolve_lora(name):
-    try:
-        import folder_paths
-        available = folder_paths.get_filename_list("loras")
-    except Exception:
-        return None
-
-    # A prompt may name the lora with or without its extension, and with either separator.
-    wanted = {name.replace("\\", "/").lower()}
-    wanted.add(os.path.splitext(name)[0].replace("\\", "/").lower())
-
-    for entry in available:
-        flat = entry.replace("\\", "/").lower()
-        if flat in wanted or os.path.splitext(flat)[0] in wanted:
-            return entry
-    # Written by hand without its folder.
-    for entry in available:
-        base = os.path.basename(entry.replace("\\", "/")).lower()
-        if base in wanted or os.path.splitext(base)[0] in wanted:
-            return entry
-    return None
 
 
 def _lora_path(name):
@@ -183,6 +147,7 @@ if __name__ == "__main__":
 
     rows = rows_from_prompt("a, <lora:foo:0.7>, b, <lora:bar:0.5:0.2>")
     assert [r["name"] for r in rows] == ["foo.safetensors", "bar.safetensors"], rows
+    assert rows_from_prompt("<lora:old.ckpt>")[0]["name"] == "old.ckpt"
     assert rows[0]["strength"] == 0.7 and rows[0]["strengthClip"] == 0.7
     assert rows[1]["strengthClip"] == 0.2
     assert rows_from_prompt("") == []
@@ -201,12 +166,12 @@ if __name__ == "__main__":
     fake = types.ModuleType("folder_paths")
     fake.get_filename_list = lambda kind: ["artist\\takawoyu.safetensors", "dmd2_sdxl_4step_lora_fp16.safetensors"]
     sys.modules["folder_paths"] = fake
-    assert _resolve_lora("dmd2_sdxl_4step_lora_fp16.safetensors") == "dmd2_sdxl_4step_lora_fp16.safetensors"
-    assert _resolve_lora("dmd2_sdxl_4step_lora_fp16") == "dmd2_sdxl_4step_lora_fp16.safetensors"
-    assert _resolve_lora("artist/takawoyu.safetensors") == "artist\\takawoyu.safetensors"
-    assert _resolve_lora("artist/takawoyu") == "artist\\takawoyu.safetensors"
-    assert _resolve_lora("takawoyu.safetensors") == "artist\\takawoyu.safetensors"
-    assert _resolve_lora("nope.safetensors") is None
+    assert resolve_lora("dmd2_sdxl_4step_lora_fp16.safetensors") == "dmd2_sdxl_4step_lora_fp16.safetensors"
+    assert resolve_lora("dmd2_sdxl_4step_lora_fp16") == "dmd2_sdxl_4step_lora_fp16.safetensors"
+    assert resolve_lora("artist/takawoyu.safetensors") == "artist\\takawoyu.safetensors"
+    assert resolve_lora("artist/takawoyu") == "artist\\takawoyu.safetensors"
+    assert resolve_lora("takawoyu.safetensors") == "artist\\takawoyu.safetensors"
+    assert resolve_lora("nope.safetensors") is None
     del sys.modules["folder_paths"]
 
     # No model connected: nothing was loaded, so the prompt keeps its tags even with consumption on.

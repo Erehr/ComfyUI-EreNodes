@@ -4,7 +4,7 @@ import { attachPillDrag, markDropZone, markTextDropZone, injectDragStyles, insta
 import { SURFACE_CLASS, injectTagStyles, fallbackColors, renderTagPill, renderToggleRowEl, renderTagTile } from "./tagview.js";
 import { parseTags, byTagName } from "./parser.js";
 import { ActionContextMenu } from "./contextmenu.js";
-import { isKnownMissing, ensureChecked, textareaOf, installTooltips } from "./util.js";
+import { isKnownMissing, ensureChecked, textareaOf, installTooltips, getSetting, getTags, setTags, bindImageDrop } from "./util.js";
 
 // Undo/redo restores graph state and fires "graphChanged", but Vue keeps the existing DOM widget instances, so nothing repaints on its own.
 let graphChangedHooked = false;
@@ -17,18 +17,6 @@ function hookGraphChanged() {
         }
     });
 }
-
-export const MODE_BY_TYPE = {
-    ErePromptExtractor: "extract",
-    ErePromptComposer: "composer",
-    ErePromptCloud: "cloud",
-    ErePromptToggle: "toggle",
-    ErePromptMultiSelect: "multiselect",
-    ErePromptRandomizer: "randomizer",
-    ErePromptGallery: "gallery",
-    ErePromptMultiline: "multiline",
-    ErePromptLoraLoader: "loraloader",
-};
 
 /** Hide transport widgets from both renderers. Composer row widgets use it too. */
 export function hideNativeWidget(w) {
@@ -62,11 +50,6 @@ function nativeWidgetsToHide(node, mode) {
         // Transport only: the filename is shown as the image preview itself.
         const image = node.widgets?.find(w => w.name === "image");
         if (image) list.push(image);
-    }
-    if (mode === "loraloader") {
-        // Edited from the Options flyout, like the separators.
-        const remove = node.widgets?.find(w => w.name === "remove_lora_tags");
-        if (remove) list.push(remove);
     }
     return list;
 }
@@ -151,7 +134,7 @@ function bindRootListeners(el) {
             e.stopPropagation();
             return;
         }
-        const scrolls = app.ui?.settings?.getSettingValue?.("EreNodes.Nodes.TagAreaScroll", false) ?? false;
+        const scrolls = getSetting("EreNodes.Nodes.TagAreaScroll", false);
         if (scrolls) {
             const scroller = el.querySelector(".ere-scroll") || el;
             if (scroller.scrollHeight > scroller.clientHeight + 1) {
@@ -205,7 +188,7 @@ function attachPillEvents(node, el, tag, index, mode) {
 }
 
 function openInactiveDropdown(node, e) {
-    const tagData = parseTags(node.properties?._tagDataJSON || "[]");
+    const tagData = getTags(node);
     // Alphabetical, not pill order: forty disabled tags are scanned for one name.
     const inactive = tagData.filter(t => !t.active && t.name).sort(byTagName);
     if (!inactive.length) return;
@@ -215,7 +198,7 @@ function openInactiveDropdown(node, e) {
             callback: () => {
                 const entry = tagData.find(t => t.name === tag.name);
                 if (entry) entry.active = true;
-                node.properties._tagDataJSON = JSON.stringify(tagData, null, 2);
+                node.properties._tagDataJSON = JSON.stringify(tagData);
                 node.onUpdateTextWidget?.(node);
             },
         })));
@@ -259,18 +242,7 @@ function renderExtractImage(node) {
         node.onExtractPick?.();
     });
     // Native HTML5 drop, not the pill drag layer: the payload is a file.
-    pane.addEventListener("dragover", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        pane.classList.add("ere-extract-over");
-    });
-    pane.addEventListener("dragleave", () => pane.classList.remove("ere-extract-over"));
-    pane.addEventListener("drop", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        pane.classList.remove("ere-extract-over");
-        node.onExtractDrop?.(e);
-    });
+    bindImageDrop(pane, (file, e) => node.onExtractDrop?.(file, e));
     return pane;
 }
 
@@ -468,7 +440,7 @@ export function attachTagDomWidget(node, mode, layoutOf = null) {
         // Extract mode puts its buttons in the tag column, beside the image.
         if (mode === "extract") toolbar.style.display = "none";
         else renderButtons(node, toolbar, mode);
-        const tagData = parseTags(node.properties?._tagDataJSON || "[]");
+        const tagData = getTags(node);
         // Selection is index-based; forget entries whose tag moved or vanished.
         pruneSelection(node, tagData);
 
@@ -545,8 +517,7 @@ export function attachTagDomWidget(node, mode, layoutOf = null) {
 
         const origUpdate = node.onUpdateTextWidget;
         node.onUpdateTextWidget = async function (...args) {
-            const r = origUpdate?.apply(this, args);
-            if (r instanceof Promise) await r;
+            const r = await origUpdate?.apply(this, args);
             render();
             return r;
         };
@@ -570,7 +541,7 @@ export function attachTagDomWidget(node, mode, layoutOf = null) {
     // Fit (default) locks height to content and leaves width free; Scroll lets the user size the node and scrolls the pills under a sticky toolbar.
     const PILL_ROW_H = 20;
     const scrollEnabled = () =>
-        app.ui?.settings?.getSettingValue?.("EreNodes.Nodes.TagAreaScroll", false) ?? false;
+        getSetting("EreNodes.Nodes.TagAreaScroll", false);
 
     // One visible row of tags/thumbs — scroll mode must not shrink below this.
     const oneRowHeight = () => {
@@ -811,8 +782,7 @@ export function attachTagDomWidget(node, mode, layoutOf = null) {
 
     const origUpdate = node.onUpdateTextWidget;
     node.onUpdateTextWidget = async function (...args) {
-        const r = origUpdate?.apply(this, args);
-        if (r instanceof Promise) await r;
+        const r = await origUpdate?.apply(this, args);
         render();
         syncSize();
         return r;

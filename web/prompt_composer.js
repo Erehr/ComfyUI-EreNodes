@@ -1,5 +1,5 @@
 import { app } from "../../scripts/app.js";
-import { initializeSharedPromptFunctions, applyContextMenuPatch, convertMenuItem, optionsMenuItem, tileMenuItems } from "./prompt.js";
+import { initializeSharedPromptFunctions, convertMenuItem, optionsMenuItem, tileMenuItems } from "./prompt.js";
 import { attachTagDomWidget } from "./js/renderer.js";
 import { ActionContextMenu } from "./js/contextmenu.js";
 import { ensureRows, updateComposer, renderComposer, addRow, addRowFromClipboard, removeAllRows, setAllRows, flattenRows, getRows, ROW_LAYOUTS } from "./js/composer.js";
@@ -41,10 +41,6 @@ function openComposerMenu(node, e) {
 app.registerExtension({
     name: NODE_TYPE,
 
-    async setup() {
-        applyContextMenuPatch();
-    },
-
     beforeRegisterNodeDef(nodeType, nodeData) {
         if (nodeData.name !== NODE_TYPE) return;
 
@@ -61,10 +57,6 @@ app.registerExtension({
             node.onUpdateTextWidget = (n) => updateComposer(n || node);
             node.onRenderComposer = (content, colors) => renderComposer(node, content, colors);
             node.onActionMenu = (e) => openComposerMenu(node, e);
-            // Ctrl+V on the node: always a new category, never a replace — the node has no tag
-            // list of its own to replace, and the categories it has are the point of it.
-            node.onClipboardPaste = () => addRowFromClipboard(node);
-
             // The toolbar's "+ Category" (renderButtons) rides the shared button channel.
             const origPillClick = node.onTagPillClick;
             node.onTagPillClick = (e, pos, pill) => {

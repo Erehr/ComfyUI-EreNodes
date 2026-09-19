@@ -1,12 +1,9 @@
 import { app } from "../../../scripts/app.js";
-import { beginUndoTransaction, endUndoTransaction, loadStyle, insertTagsAsText, caretIndexFromPoint, getElementOrCursorCoords } from "./util.js";
+import { beginUndoTransaction, endUndoTransaction, loadStyle, insertTagsAsText, caretIndexFromPoint, getElementOrCursorCoords, getTags, setTags, toast, HOLD_MS, MOVE_THRESHOLD } from "./util.js";
 import { ActionContextMenu } from "./contextmenu.js";
 import { accentForTags, hexToRgbTriplet, TYPE_FILL, DEFAULT_FILL, injectTagStyles, renderTagPill } from "./tagview.js";
-import { parseTags } from "./parser.js";
 
 const PILL_SELECTOR = ".ere-pill, .ere-toggle-row, .ere-tile";
-const HOLD_MS = 200;          // press-and-hold to enter reorder mode
-const MOVE_THRESHOLD = 5;     // ...or just move this far in px
 const SCROLL_EDGE = 24;       // auto-scroll band inside a scrollable tag area
 const SCROLL_SPEED = 12;
 
@@ -22,24 +19,6 @@ const state = {
 };
 
 let clickSuppressed = false;
-
-// Tag Access
-
-const getTags = node => parseTags(node?.properties?._tagDataJSON || "[]");
-
-async function setTags(node, tags) {
-    node.properties._tagDataJSON = JSON.stringify(tags, null, 2);
-    // The renderer's wrapper re-renders, resizes and records the undo checkpoint.
-    if (node.onUpdateTextWidget) await node.onUpdateTextWidget(node);
-    else node._ereDom?.render?.();
-    app.graph?.setDirtyCanvas?.(true, true);
-}
-
-function toast(severity, summary, detail) {
-    try {
-        app.extensionManager?.toast?.add({ severity, summary, detail, life: 3000 });
-    } catch {}
-}
 
 // Selection
 // On the node object, not in properties — it must not be serialized.
@@ -758,26 +737,6 @@ export function snapToGap(text, index) {
     return (i - left <= right - i) ? left : right;
 }
 
-/** Self-check for snapToGap: `import("./js/dragdrop.js").then(m => m.demo())` in the console. */
-export function demo() {
-    const eq = (got, want, what) => {
-        if (got !== want) throw new Error(`snapToGap ${what}: got ${got}, want ${want}`);
-    };
-    const t = "blue sunlight, now";
-    eq(snapToGap(t, 8), 5, "mid-word snaps to the nearer edge (left)");
-    eq(snapToGap(t, 11), 13, "mid-word snaps to the nearer edge (right)");
-    eq(snapToGap(t, 5), 5, "already at a space");
-    eq(snapToGap(t, 14), 14, "already after a comma");
-    eq(snapToGap(t, 0), 0, "start");
-    eq(snapToGap(t, t.length), t.length, "end");
-    eq(snapToGap(t, 999), t.length, "past the end clamps");
-    eq(snapToGap(t, -5), 0, "before the start clamps");
-    eq(snapToGap("", 0), 0, "empty");
-    eq(snapToGap("word", 2), 0, "single word snaps to whichever end is nearer");
-    eq(snapToGap("word", 3), 4, "…and to the other end past the middle");
-    console.log("[EreNodes] snapToGap ok");
-    return true;
-}
 
 /** The insertion bar, drawn at the snapped index and re-measured only when that index moves. */
 function setTextTarget(d, el, x = 0, y = 0) {
