@@ -67,14 +67,6 @@ def list_csv_files():
 
 # utf-8-sig: several community tag files carry a BOM, which would make the first row's tag read as "\ufeff1girl" — unmatchable, and always the highest-count one.
 DEFAULT_ENCODING = 'utf-8-sig'
-TAG_TYPES = {
-    0: "General",
-    1: "Character",
-    3: "Copyright",
-    4: "Artist",
-    5: "Meta"
-}
-
 # csv_file -> (mtime, tags), keyed by name so /erenodes/set_setting can drop one entry and stamped with mtime so an edited CSV is noticed.
 TAG_DATA_CACHE = {}
 

@@ -1,34 +1,28 @@
 /* Only what ComfyUI's own Tailwind classes do not already provide: drag and selection affordances, grid view, inline naming. */
 
 /* Drag, selection and grid view — no upstream equivalent. */
-.ere-sidebar .ere-sb-body-inner {
-    overflow-x: hidden;
-    scrollbar-width: thin;
-    scrollbar-color: var(--dialog-surface, rgba(255, 255, 255, .2)) transparent;
+/* Every view is a <ul> of rows; nothing in it wants a marker. */
+.ere-sidebar li {
+    list-style: none;
 }
-/* Desktop builds have no overlay scrollbars; a transparent track with a floating thumb is what the
-   app's own `scrollbar-custom` panels use to look like one. */
-.ere-sidebar .ere-sb-body-inner::-webkit-scrollbar {
-    width: 10px;
-    background-color: transparent;
-}
-.ere-sidebar .ere-sb-body-inner::-webkit-scrollbar-thumb {
-    background: var(--dialog-surface, rgba(255, 255, 255, .2));
-    border-radius: 9999px;
-    border: 2px solid transparent;
-    background-clip: padding-box;
-}
+/* The selected row is the fill PrimeVue's tree draws in the Workflows tab: blue, no border, leaving the grey surface to hover. */
 .ere-sidebar .ere-sb-selected {
-    background: rgba(var(--ere-drag-accent-rgb, 74, 158, 255), .18);
-    outline: 1px solid var(--ere-drag-accent, var(--p-primary-color, #4a9eff));
-    outline-offset: -1px;
+    background: var(--p-highlight-background, color-mix(in srgb, var(--p-primary-color, #4a9eff) 16%, transparent));
     border-radius: var(--p-border-radius-sm, 4px);
 }
-/* A tile is filled edge to edge by its thumbnail, so the tint has nothing to tint and an
-   inset outline is drawn over the image it is meant to frame. Ring it from outside. */
-.ere-sidebar .ere-sb-tile.ere-sb-selected {
-    outline: 2px solid var(--ere-drag-accent, var(--p-primary-color, #4a9eff));
-    outline-offset: 2px;
+/* A tile is filled edge to edge by its thumbnail, so the same translucent fill goes over it instead of behind it. */
+.ere-sidebar .ere-sb-tile.ere-sb-selected::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--p-highlight-background, color-mix(in srgb, var(--p-primary-color, #4a9eff) 16%, transparent));
+    pointer-events: none;
+}
+/* A mode that is on, drawn as the selected row is. */
+.ere-sidebar .ere-sb-btn-on {
+    background: var(--p-highlight-background, color-mix(in srgb, var(--p-primary-color, #4a9eff) 16%, transparent));
+    color: var(--p-text-color, #fff);
 }
 .ere-sb-drop-target {
     outline: 2px dashed var(--ere-drag-accent, var(--p-primary-color, #4a9eff)) !important;
@@ -49,6 +43,61 @@
     justify-content: start;
     align-items: start;
 }
+/* Tailwind's 2xl, where the rows and the editor also widen their side padding. */
+@media (min-width: 96rem) {
+    .ere-sidebar .ere-sb-grid,
+    .ere-sidebar .ere-sb-crumbs {
+        padding-inline: 1rem;
+    }
+}
+/* Focused only so the keyboard reaches it; the selected row is what shows where you are. */
+.ere-sidebar .ere-sb-body-inner:focus,
+.ere-sidebar .ere-sb-body-inner:focus-visible {
+    outline: none;
+}
+
+/* Hidden until the row is hovered, bookmarked or not: the folder at the top is the list of them. */
+.ere-sidebar .ere-sb-bookmark {
+    flex: 0 0 auto;
+    margin-right: 6px;
+    padding: 2px;
+    border: 0;
+    border-radius: 4px;
+    background: none;
+    color: var(--p-text-muted-color, #888);
+    cursor: pointer;
+    opacity: 0;
+    font-size: 12px;
+    line-height: 1;
+}
+.ere-sidebar .group\/tree-node:hover .ere-sb-bookmark,
+.ere-sidebar .ere-sb-tile:hover .ere-sb-bookmark,
+.ere-sidebar .ere-sb-bookmark:focus-visible {
+    opacity: 1;
+}
+.ere-sidebar .ere-sb-bookmark:hover {
+    color: var(--p-text-color, #ddd);
+}
+/* On a tile the row has no spare width, so it floats over the corner. */
+.ere-sidebar .ere-sb-tile > .ere-sb-bookmark {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    z-index: 2;
+    margin: 0;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, .45);
+    color: #eee;
+}
+/* Separates the bookmarks from everything else. Between the two grids it is its own element; on a row it is a shadow, so the line costs no height and every row in the window stays the same size. */
+.ere-sidebar .ere-sb-rule {
+    height: 0;
+    margin: 6px 8px;
+    border-top: 1px solid var(--p-content-border-color, #333);
+}
+.ere-sidebar .ere-sb-divider {
+    box-shadow: inset 0 1px 0 var(--p-content-border-color, #333);
+}
 .ere-sidebar .ere-sb-tile {
     position: relative;
     cursor: pointer;
@@ -57,9 +106,21 @@
     height: var(--ere-tile-h, 96px);
     border-radius: var(--p-border-radius-md, 6px);
 }
+/* Tiles carry no chrome of their own, so grid view reads like the list: the hover and selection fills are the only surfaces. The node's own gallery keeps the bordered look. */
 .ere-sidebar .ere-sb-tile > .ere-tile {
-    width: 100% !important;
-    height: 100% !important;
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: transparent;
+}
+.ere-sidebar .ere-sb-tile:not(.ere-sb-selected):not(.ere-sb-folder-tile),
+.ere-sidebar .ere-sb-tile:not(.ere-sb-selected):hover {
+    background: var(--comfy-input-bg, #222);
+}
+/* renderTagTile sets the type fill inline, so lifting the label off the fill needs the weight. */
+.ere-sidebar .ere-sb-tile:hover .ere-name,
+.ere-sidebar .ere-sb-selected .ere-name {
+    background: transparent !important;
 }
 .ere-sidebar .ere-sb-folder-tile {
     display: flex;
@@ -67,8 +128,6 @@
     align-items: center;
     justify-content: center;
     gap: .25rem;
-    border: 1px solid var(--p-content-border-color, var(--border-color, #444));
-    background: var(--p-content-background, var(--comfy-input-bg, #222));
 }
 .ere-sidebar .ere-sb-tile-name {
     max-width: 100%;
@@ -199,11 +258,26 @@
     word-break: break-word;
 }
 
+/* Content width, not the space to the viewport edge. Tailwind utilities sit in a layer, so this has to be unlayered CSS to hold. */
+.ere-sb-menu {
+    width: max-content;
+    min-width: 200px;
+    max-width: calc(100vw - 20px);
+}
+/* PopoverArrow, as a rotated corner: the frontend draws it with an inline SVG that is not reachable from here. */
+.ere-sb-menu-arrow {
+    position: absolute;
+    top: -5px;
+    width: 8px;
+    height: 8px;
+    transform: rotate(45deg);
+}
+
 /* ComfyUI compiles only a subset of lucide, and the rectangle icons are not in it.
    Stretching the square stands in for them: at 16px the proportions read clearly enough. */
-.ere-sidebar .ere-ratio-3-4 {
+.ere-ratio-3-4 {
     scale: 1 1.1;
 }
-.ere-sidebar .ere-ratio-9-16 {
+.ere-ratio-9-16 {
     scale: 1 1.2;
 }

@@ -1,13 +1,10 @@
-import { getCache, isNotFound, loadStyle } from "./util.js";
+import { getCache, isNotFound, loadStyle, loadGroupTags, trackMarquee, trackPress } from "./util.js";
 import { injectTagStyles, renderTagCloud, SURFACE_CLASS, previewUrl } from "./tagview.js";
 
 const PANEL_ID = "erenodes-hover-preview";
 const MAX_PILLS = 60;
 /** Long enough that arrowing down a list doesn't fire a request per row, short enough to feel instant when the pointer settles. */
 const HOVER_DELAY = 120;
-// Same press grammar as pills inside a node.
-const HOLD_MS = 200;
-const MOVE_THRESHOLD = 5;
 
 let panel = null;
 let hideTimer = 0;
@@ -55,9 +52,8 @@ function position(el, anchorRect) {
 
 async function fetchJson(url) {
     try {
-        const value = getCache(url, "json");
-        const resolved = value instanceof Promise ? await value : value;
-        return isNotFound(resolved) ? null : resolved;
+        const value = await getCache(url, "json");
+        return isNotFound(value) ? null : value;
     } catch {
         return null;
     }
@@ -65,12 +61,7 @@ async function fetchJson(url) {
 
 /** Tags a preview should show for a given file type. */
 async function loadTags(type, path, extension) {
-    if (type === "group") {
-        const data = await fetchJson(
-            `/erenodes/get_tag_group?filename=${encodeURIComponent(path + (extension || ".json"))}`
-        );
-        return Array.isArray(data) ? data : null;
-    }
+    if (type === "group") return loadGroupTags(path, extension || ".json");
     if (type === "lora") {
         const words = await fetchJson(
             `/erenodes/get_lora_metadata?filename=${encodeURIComponent(path + (extension || ""))}`
@@ -131,6 +122,7 @@ export function showPreviewFor({ type, path, extension, anchor, image = true, in
 
         if (tags && tags.length) {
             const cloud = renderTagCloud(tags, { max: MAX_PILLS });
+            cloud.classList.add("scrollbar-custom");
             el.appendChild(cloud);
             if (interactive) attachPillPicking(cloud, tags, el);
             hasTags = true;
@@ -164,52 +156,33 @@ function attachPillPicking(cloud, tags, panelEl) {
         pill.addEventListener("pointerdown", (e) => {
             if (e.button !== 0) return;
             e.stopPropagation();
-            const start = { x: e.clientX, y: e.clientY };
-            let dragging = false;
-
-            const begin = () => {
-                if (dragging) return;
-                dragging = true;
-                // Drag the picked set if this pill belongs to it, else just this one.
-                const indices = picked.has(index) ? [...picked].sort((a, b) => a - b) : [index];
-                const payload = indices.map(i => tags[i]).filter(Boolean);
-                const label = payload.length > 1 ? `${payload.length} tags` : (payload[0]?.name ?? "");
-                hidePreviewPanel(true);
-                startDrag?.({
-                    tags: payload, label, x: start.x, y: start.y,
-                    origin: { kind: "preview", onCanvasDrop: onCanvasDropFromPreview },
-                });
-            };
-
-            const timer = setTimeout(begin, HOLD_MS);
-            const onMove = (ev) => {
-                if (dragging) return;
-                if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) > MOVE_THRESHOLD) {
-                    clearTimeout(timer);
-                    begin();
-                }
-            };
-            const onUp = (ev) => {
-                clearTimeout(timer);
-                window.removeEventListener("pointermove", onMove, true);
-                window.removeEventListener("pointerup", onUp, true);
-                if (dragging) return;
-
+            trackPress(e, {
+                onDrag: (session) => {
+                    // Drag the picked set if this pill belongs to it, else just this one.
+                    const indices = picked.has(index) ? [...picked].sort((a, b) => a - b) : [index];
+                    const payload = indices.map(i => tags[i]).filter(Boolean);
+                    const label = payload.length > 1 ? `${payload.length} tags` : (payload[0]?.name ?? "");
+                    hidePreviewPanel(true);
+                    startDrag?.({
+                        tags: payload, label, x: session.x, y: session.y,
+                        origin: { kind: "preview", onCanvasDrop: onCanvasDropFromPreview },
+                    });
+                },
                 // A plain click does nothing: toggling here would imply it changes the group.
-                if (ev.ctrlKey || ev.metaKey) {
-                    if (picked.has(index)) picked.delete(index);
-                    else picked.add(index);
-                    anchorIndex = index;
-                    sync();
-                } else if (ev.shiftKey && anchorIndex != null) {
-                    const [lo, hi] = anchorIndex <= index ? [anchorIndex, index] : [index, anchorIndex];
-                    picked.clear();
-                    for (let i = lo; i <= hi; i++) picked.add(i);
-                    sync();
-                }
-            };
-            window.addEventListener("pointermove", onMove, true);
-            window.addEventListener("pointerup", onUp, true);
+                onClick: (ev) => {
+                    if (ev.ctrlKey || ev.metaKey) {
+                        if (picked.has(index)) picked.delete(index);
+                        else picked.add(index);
+                        anchorIndex = index;
+                        sync();
+                    } else if (ev.shiftKey && anchorIndex != null) {
+                        const [lo, hi] = anchorIndex <= index ? [anchorIndex, index] : [index, anchorIndex];
+                        picked.clear();
+                        for (let i = lo; i <= hi; i++) picked.add(i);
+                        sync();
+                    }
+                },
+            });
         });
     });
 }
@@ -222,49 +195,21 @@ function attachPanelMarquee(panelEl, pills, picked, sync) {
         e.stopPropagation();
 
         const additive = e.ctrlKey || e.metaKey;
-        const base = new Set(additive ? picked : []);
-        const start = { x: e.clientX, y: e.clientY };
-        let band = null;
-
-        const update = (x, y) => {
-            const left = Math.min(start.x, x), top = Math.min(start.y, y);
-            const width = Math.abs(x - start.x), height = Math.abs(y - start.y);
-            Object.assign(band.style, {
-                left: `${left}px`, top: `${top}px`,
-                width: `${width}px`, height: `${height}px`,
-            });
+        const applyPicked = (keys) => {
             picked.clear();
-            for (const i of base) picked.add(i);
-            pills.forEach((pill, i) => {
-                const r = pill.getBoundingClientRect();
-                if (r.left < left + width && r.right > left && r.top < top + height && r.bottom > top) {
-                    // XOR, so sweeping back over a picked pill removes it.
-                    if (picked.has(i)) picked.delete(i);
-                    else picked.add(i);
-                }
-            });
+            for (const key of keys) picked.add(key);
             sync();
         };
-
-        const onMove = (ev) => {
-            if (!band && Math.hypot(ev.clientX - start.x, ev.clientY - start.y) > MOVE_THRESHOLD) {
-                band = document.createElement("div");
-                band.className = "ere-marquee ere-marquee-above";
-                document.body.appendChild(band);
-            }
-            if (band) { ev.preventDefault(); update(ev.clientX, ev.clientY); }
-        };
-        const finish = () => {
-            window.removeEventListener("pointermove", onMove, true);
-            window.removeEventListener("pointerup", finish, true);
-            window.removeEventListener("pointercancel", finish, true);
-            band?.remove();
+        trackMarquee(e, {
+            items: () => pills.map((pill, i) => ({ key: i, el: pill })),
+            base: additive ? picked : [],
+            onChange: applyPicked,
             // A press on the background that never became a band clears.
-            if (!band && !additive && picked.size) { picked.clear(); sync(); }
-        };
-        window.addEventListener("pointermove", onMove, true);
-        window.addEventListener("pointerup", finish, true);
-        window.addEventListener("pointercancel", finish, true);
+            onClick: () => { if (!additive && picked.size) applyPicked([]); },
+            // The panel sits above everything; its band has to as well.
+            bandClass: "ere-marquee-above",
+            markBody: false,
+        });
     });
 }
 

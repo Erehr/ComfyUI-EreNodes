@@ -1,24 +1,11 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
-import { initializeSharedPromptFunctions, applyContextMenuPatch } from "./prompt.js";
+import { initializeSharedPromptFunctions } from "./prompt.js";
 import { attachTagDomWidget } from "./js/renderer.js";
 
 /** Prompt Randomizer. The seed is ComfyUI's own — declared in py/prompt.py with `control_after_generate`, so the frontend pairs it with the standard control widget and steps it per queued prompt. The arrangement follows from it (`arrangementForSeed`). */
 app.registerExtension({
     name: "ErePromptRandomizer",
-
-    setup() {
-        applyContextMenuPatch();
-
-        // Safety net for a frontend where afterQueued (below) never fires; it costs nothing when it does, since onSeedChanged is a no-op if the seed has not moved.
-        api.addEventListener("execution_success", () => {
-            setTimeout(() => {
-                for (const node of app.graph?._nodes ?? []) {
-                    if (node.type === "ErePromptRandomizer") node.onSeedChanged?.();
-                }
-            }, 10);
-        });
-    },
 
     beforeRegisterNodeDef(nodeType, nodeData, app) {
         if (nodeData.name !== "ErePromptRandomizer") return;

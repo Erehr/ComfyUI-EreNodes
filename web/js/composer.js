@@ -1,7 +1,7 @@
 import { app } from "../../../scripts/app.js";
 import { initializeSharedPromptFunctions } from "../prompt.js";
-import { captureUndoState, beginUndoTransaction, endUndoTransaction, loadStyle, ensureChecked, tagsToText, insertTagsAsText } from "./util.js";
-import { parseTags, parseTextToTagData, joinPrompt, looksLikeProse } from "./parser.js";
+import { captureUndoState, beginUndoTransaction, endUndoTransaction, loadStyle, ensureChecked, tagsToText, insertTagsAsText, getTags, trackMarquee, HOLD_MS, MOVE_THRESHOLD } from "./util.js";
+import { parseTags, parseTextToTagData, joinPrompt, looksLikeProse, DEFAULT_SEPARATOR } from "./parser.js";
 import { SURFACE_CLASS, renderSwitchEl } from "./tagview.js";
 import { markTextDropZone, clearAllSelections, pruneSelection, buildCountBadges, isDragActive } from "./dragdrop.js";
 import { renderTagBody, hideNativeWidget } from "./renderer.js";
@@ -13,8 +13,6 @@ loadStyle("composer");
 // See documentation.txt for the data flow.
 
 const TAGS_KEY = "_tagDataJSON";
-const HOLD_MS = 200;        // press-and-hold a header to drag the row...
-const MOVE_THRESHOLD = 5;   // ...or move this far, whichever comes first
 
 // Row Model
 // One property, two shapes: a Composer stores `[{title, active, open, tags}]`, every other prompt node stores a flat tag list. A flat list read here is one category, which is all "convert a Cloud into a Composer" has to do.
@@ -53,7 +51,7 @@ export function getRows(node) {
 }
 
 function setRows(node, rows) {
-    node.properties[TAGS_KEY] = JSON.stringify(rows, null, 2);
+    node.properties[TAGS_KEY] = JSON.stringify(rows);
 }
 
 const makeRow = (title, tags = [], layout = "cloud") =>
@@ -71,7 +69,7 @@ export function ensureRows(node) {
 export function flattenRows(node) {
     const tags = getRows(node).flatMap(row =>
         row.layout === "multiline" ? parseTextToTagData(row.text || "") : row.tags);
-    node.properties[TAGS_KEY] = JSON.stringify(tags, null, 2);
+    node.properties[TAGS_KEY] = JSON.stringify(tags);
 }
 
 // Pseudo Node
@@ -101,15 +99,15 @@ function hostFor(node, index) {
     host.onUpdateTextWidget = async () => {
         const rows = getRows(node);
         if (!rows[index]) return;
-        rows[index].tags = parseTags(host.properties._tagDataJSON || "[]");
+        rows[index].tags = getTags(host);
         setRows(node, rows);
         await node.onUpdateTextWidget?.(node);
     };
     // prompt.js's version writes _tagDataJSON without re-rendering, which for a host means the row keeps its old pills.
     host.onRemoveTags = (mode = "all") => {
-        const tags = parseTags(host.properties._tagDataJSON || "[]");
+        const tags = getTags(host);
         host.properties._tagDataJSON = mode === "inactive"
-            ? JSON.stringify(tags.filter(t => t.active), null, 2)
+            ? JSON.stringify(tags.filter(t => t.active))
             : "[]";
         clearAllSelections();
         host.onUpdateTextWidget();
@@ -180,7 +178,7 @@ function textareaFor(node, index) {
     let area = cache.get(index);
     if (!area) {
         area = document.createElement("textarea");
-        area.className = "ere-textarea";
+        area.className = "ere-textarea scrollbar-custom";
         area.spellcheck = false;
         area.placeholder = "Prompt text";
         area.addEventListener("input", () => {
@@ -234,13 +232,14 @@ function syncRowWidgets(node, texts) {
 
 /** Rows join the way chained nodes do; Python repeats this on the same values. */
 function joinRows(texts, separator) {
-    return joinPrompt(texts.filter(t => t && t.trim()), separator || ",\\n\\n");
+    return joinPrompt(texts.filter(t => t && t.trim()), separator || DEFAULT_SEPARATOR);
 }
 
 /** Recompute every category: its text, the flat mirror, the transport widgets and the node's combined text. */
 export async function updateComposer(node) {
     const rows = ensureRows(node);
     const texts = [];
+    const gen = node._textGen = (node._textGen || 0) + 1;
 
     // One undo step for the pass, not one per category.
     beginUndoTransaction();
@@ -253,7 +252,7 @@ export async function updateComposer(node) {
             }
             const host = hostFor(node, index);
             host.title = row.title;
-            host.properties._tagDataJSON = JSON.stringify(row.tags, null, 2);
+            host.properties._tagDataJSON = JSON.stringify(row.tags);
             // One separator setting for the node, not one per row. Tile size travels the same way.
             host.properties._tagSeparator = node.properties._tagSeparator;
             host.properties._tagImageWidth = node.properties._tagImageWidth;
@@ -262,6 +261,8 @@ export async function updateComposer(node) {
             await host.computeText(host);
             texts.push(row.active ? host.widgets[0].value : "");
         }
+        // A category holding an uncached group resolves after a newer pass; the newer one is what the rows show.
+        if (gen !== node._textGen) return;
         syncRowWidgets(node, texts);
         const textWidget = node.widgets?.find(w => w.name === "text");
         if (textWidget) textWidget.value = joinRows(texts, node.properties._prefixSeparator);
@@ -574,60 +575,22 @@ function beginRowSelectPress(node, index, e) {
 
     const base = selectionNode === node ? selectedRowIndices(node) : [];
     const list = node._ereDom?.content?.querySelector(".ere-composer");
-    const start = { x: e.clientX, y: e.clientY };
-    let band = null;
 
-    const update = (x, y) => {
-        const left = Math.min(start.x, x), top = Math.min(start.y, y);
-        const width = Math.abs(x - start.x), height = Math.abs(y - start.y);
-        Object.assign(band.style, {
-            left: `${left}px`, top: `${top}px`, width: `${width}px`, height: `${height}px`,
-        });
-        // XOR against what the band started from, like Explorer and like the pills.
-        const next = new Set(base);
-        for (const el of list?.children ?? []) {
-            if (!el.classList?.contains("ere-composer-row")) continue;
-            const r = el.getBoundingClientRect();
-            if (r.left < left + width && r.right > left && r.top < top + height && r.bottom > top) {
-                const i = Number(el.dataset.ereRow);
-                if (next.has(i)) next.delete(i);
-                else next.add(i);
-            }
-        }
-        setRowSelection(node, [...next]);
-    };
-
-    const onMove = (ev) => {
-        if (!band && Math.hypot(ev.clientX - start.x, ev.clientY - start.y) > MOVE_THRESHOLD) {
-            band = document.createElement("div");
-            band.className = "ere-marquee";
-            document.body.appendChild(band);
-            document.body.classList.add("ere-marquee-active");
-        }
-        if (band) { ev.preventDefault(); update(ev.clientX, ev.clientY); }
-    };
-    const finish = () => {
-        window.removeEventListener("pointermove", onMove, true);
-        window.removeEventListener("pointerup", onUp, true);
-        window.removeEventListener("pointercancel", finish, true);
-        band?.remove();
-        band = null;
-        document.body.classList.remove("ere-marquee-active");
-    };
-    const onUp = () => {
-        const banded = !!band;
-        finish();
+    trackMarquee(e, {
+        items: () => [...(list?.children ?? [])]
+            .filter(el => el.classList?.contains("ere-composer-row"))
+            .map(el => ({ key: Number(el.dataset.ereRow), el })),
+        base,
+        onChange: (keys) => setRowSelection(node, [...keys]),
         // A ctrl press that never moved is a plain ctrl+click: toggle this one.
-        if (banded) return;
-        const next = new Set(base);
-        if (next.has(index)) next.delete(index);
-        else next.add(index);
-        setRowSelection(node, [...next]);
-        selectionAnchor = index;
-    };
-    window.addEventListener("pointermove", onMove, true);
-    window.addEventListener("pointerup", onUp, true);
-    window.addEventListener("pointercancel", finish, true);
+        onClick: () => {
+            const next = new Set(base);
+            if (next.has(index)) next.delete(index);
+            else next.add(index);
+            setRowSelection(node, [...next]);
+            selectionAnchor = index;
+        },
+    });
 }
 
 /** Right-click inside a selection: what applies to all of them. */
@@ -948,7 +911,7 @@ function openRowMenu(node, index, host, e) {
         return;
     }
 
-    const tags = parseTags(host.properties._tagDataJSON || "[]");
+    const tags = getTags(host);
     // The node menu's own order, minus what only a whole node can do (convert, fit height).
     new ActionContextMenu(anchor, null, [
         ...head,
@@ -976,7 +939,7 @@ function renderRow(node, row, index, colors) {
     const multiline = row.layout === "multiline";
     const host = hostFor(node, index);
     // Undo/redo re-renders without an update pass, so re-seed here.
-    host.properties._tagDataJSON = JSON.stringify(row.tags, null, 2);
+    host.properties._tagDataJSON = JSON.stringify(row.tags);
     host.properties._tagImageWidth = node.properties._tagImageWidth;
     host.properties._tagImageHeight = node.properties._tagImageHeight;
 
@@ -1113,8 +1076,8 @@ async function dropAsCategory(node, tags, source, origin, alt) {
         // A drag out of a tag area is a move; one in from the sidebar has no source to take from.
         if (source?.properties) {
             const names = new Set(added.flatMap(g => g.tags.map(t => t.name)));
-            const left = parseTags(source.properties._tagDataJSON || "[]").filter(t => !names.has(t.name));
-            source.properties._tagDataJSON = JSON.stringify(left, null, 2);
+            const left = getTags(source).filter(t => !names.has(t.name));
+            source.properties._tagDataJSON = JSON.stringify(left);
             await source.onUpdateTextWidget?.(source);
         }
         const rows = getRows(node);

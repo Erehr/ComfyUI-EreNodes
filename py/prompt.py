@@ -50,7 +50,7 @@ class ErePrompt:
     FUNCTION = "process"
     CATEGORY = "EreNodes"
 
-    def process(self, text, prefix="", separator=None):
+    def process(self, text, prefix="", separator=None, **_):
         return (combine_prompt(text, prefix, separator),)
 
 
@@ -78,10 +78,6 @@ class ErePromptRandomizer(ErePrompt):
         })
         return spec
 
-    # Accepted and ignored: the arrangement it selected is already baked into `text`.
-    def process(self, text, prefix="", separator=None, seed=0):
-        return (combine_prompt(text, prefix, separator),)
-
 
 
 # Recover a prompt from a generated image, as editable tag pills.
@@ -97,9 +93,6 @@ class ErePromptExtractor(ErePrompt):
                        "drop a new one on the node to re-extract).",
         })
         return spec
-
-    def process(self, text, prefix="", separator=None, image=""):
-        return (combine_prompt(text, prefix, separator),)
 
 
 # Prompt Composer: one hidden `row_<n>` input per category, joined the way a chain of prompt nodes joins.
@@ -179,12 +172,5 @@ if __name__ == "__main__":
     assert "row_7" in optional and optional["row_7"][0] == "STRING"
     assert ErePrompt().process("t", "p", None) == ("p,\n\nt",)
 
-    # A part that already ends in punctuation keeps it, and the separator drops its own.
-    assert join_parts(["a sentence.", "tags"], None) == "a sentence.\n\ntags"
-    assert join_parts(["trailing,", "tags"], None) == "trailing,\n\ntags"
-    assert join_parts(["what?", "tags"], ", ") == "what? tags"
-    assert join_parts(["tags", "more"], None) == "tags,\n\nmore"
-    assert join_parts(["a.", "b"], " | ") == "a. | b"       # nothing to drop
-    assert join_parts(["", "only"], None) == "only"
-    assert join_parts(["a. ", "b"], None) == "a. \n\nb"     # trailing space, still a sentence
+    # Joining and the lora syntax are also implemented in JS; tests/vectors.py and tests/vectors.mjs check both against one file.
     print("ok")

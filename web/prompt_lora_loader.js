@@ -1,5 +1,5 @@
 import { app } from "../../scripts/app.js";
-import { initializeSharedPromptFunctions, applyContextMenuPatch, optionsMenuItem, tileMenuItems } from "./prompt.js";
+import { initializeSharedPromptFunctions, optionsMenuItem, tileMenuItems } from "./prompt.js";
 import { attachTagDomWidget } from "./js/renderer.js";
 import { ActionContextMenu, FileContextMenu } from "./js/contextmenu.js";
 import { parseTags } from "./js/parser.js";
@@ -20,7 +20,7 @@ const layoutOf = (node) => {
 };
 
 const loraTagsOf = (node) =>
-    parseTags(node.properties?._tagDataJSON || "[]").filter(t => t.type === "lora");
+    getTags(node).filter(t => t.type === "lora");
 
 /** Windows hands subfolders back with backslashes, the file picker with forward ones. */
 const samePath = (name) => String(name || "").replace(/\\/g, "/");
@@ -43,10 +43,10 @@ function layoutMenuItem(node) {
 
 /** Only loras have anything to apply, so a drop or paste of anything else is dropped. */
 function keepOnlyLoras(node) {
-    const stored = parseTags(node.properties?._tagDataJSON || "[]");
+    const stored = getTags(node);
     const loras = stored.filter(t => t.type === "lora");
     if (stored.length === loras.length) return false;
-    node.properties._tagDataJSON = JSON.stringify(loras, null, 2);
+    node.properties._tagDataJSON = JSON.stringify(loras);
     return true;
 }
 
@@ -60,7 +60,7 @@ function openLoraPicker(node, e) {
             if (!name || tags.some(t => samePath(t.name) === name)) continue;
             tags.push({ name, type: "lora", active: true });
         }
-        node.properties._tagDataJSON = JSON.stringify(tags, null, 2);
+        node.properties._tagDataJSON = JSON.stringify(tags);
         node.onUpdateTextWidget?.(node);
         node._ereDom?.render?.();
     }, "lora", loraTagsOf(node));
@@ -87,7 +87,6 @@ app.registerExtension({
     name: NODE_TYPE,
 
     async setup() {
-        applyContextMenuPatch();
     },
 
     beforeRegisterNodeDef(nodeType, nodeData) {
@@ -113,29 +112,13 @@ app.registerExtension({
                 return origUpdate?.apply(this, args);
             };
 
-            node.onExtraOptions = () => {
-                const remove = node.widgets?.find(w => w.name === "remove_lora_tags");
-                return [
-                    {
-                        name: "Remove lora tags from STRING",
-                        checked: !!remove?.value,
-                        callback: () => { if (remove) remove.value = !remove.value; },
-                    },
-                    // Tile controls only affect the gallery layout.
-                    ...(layoutOf(node) === "gallery" ? tileMenuItems(node) : []),
-                ];
-            };
+            // Tile controls only affect the gallery layout.
+            node.onExtraOptions = () => (layoutOf(node) === "gallery" ? tileMenuItems(node) : []);
 
             const origPillClick = node.onTagPillClick;
             node.onTagPillClick = (e, pos, pill) => {
                 if (pill?.label === "button_add_lora") return openLoraPicker(node, e);
                 return origPillClick?.(e, pos, pill);
-            };
-
-            const origPropertyChanged = node.onPropertyChanged;
-            node.onPropertyChanged = function (name, value) {
-                origPropertyChanged?.apply(this, arguments);
-                if (name === "_tagSeparator") node.onUpdateTextWidget(node);
             };
 
             // convertTo() replaces `properties` after onNodeCreated without firing onConfigure.

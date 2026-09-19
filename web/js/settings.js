@@ -1,33 +1,24 @@
 import { app } from "../../../scripts/app.js";
+import { requestJson, toast, confirmDialog } from "./util.js";
+import { DEFAULT_SEPARATOR } from "./parser.js";
 
 // Fetch CSV options before registration so the combo can be populated.
 // (Top-level await is fine here: extension files are loaded as ES modules.)
+// The server decides the tag-group location (fresh installs get the user folder, ones with groups already in the node folder stay there), so the combo seeds from it instead of asserting its own default.
 let csvOptions = [];
-try {
-    // Timeout so a stalled endpoint can't block extension loading forever.
-    const response = await fetch("/erenodes/list_csv_files", { signal: AbortSignal.timeout(5000) });
-    if (response.ok) {
-        const csvFiles = await response.json();
-        csvOptions = csvFiles.map(file => ({ text: file, value: file }));
-    }
-} catch (e) {
-    console.warn("[EreNodes] Could not fetch autocomplete CSV list.", e);
-}
-
-// The server decides the location (fresh installs get the user folder, ones with groups already in
-// the node folder stay there), so the combo seeds from it instead of asserting its own default.
 let tagGroupsLocation = "user";
 let tagGroupsLegacy = false;
-try {
-    const response = await fetch("/erenodes/tag_groups_location", { signal: AbortSignal.timeout(5000) });
-    if (response.ok) {
-        const state = await response.json();
-        if (state?.location) tagGroupsLocation = state.location;
-        tagGroupsLegacy = !!state?.legacy;
-    }
-} catch (e) {
-    console.warn("[EreNodes] Could not fetch tag groups location.", e);
-}
+
+// Timeout so a stalled endpoint cannot block extension loading forever, and both at once so they do not queue.
+const [csvFiles, location] = await Promise.all([
+    requestJson("/erenodes/list_csv_files", { signal: AbortSignal.timeout(5000) })
+        .catch(e => { console.warn("[EreNodes] Could not fetch autocomplete CSV list.", e); return null; }),
+    requestJson("/erenodes/tag_groups_location", { signal: AbortSignal.timeout(5000) })
+        .catch(e => { console.warn("[EreNodes] Could not fetch tag groups location.", e); return null; }),
+]);
+if (Array.isArray(csvFiles)) csvOptions = csvFiles.map(file => ({ text: file, value: file }));
+if (location?.location) tagGroupsLocation = location.location;
+tagGroupsLegacy = !!location?.legacy;
 
 /**
  * Push the tag-group location to the server and offer to migrate existing groups.
@@ -38,71 +29,33 @@ async function applyTagGroupsLocation(location, previousValue) {
 
     let result;
     try {
-        const response = await fetch("/erenodes/set_tag_groups_location", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ location }),
-        });
-        result = await response.json();
-        if (!response.ok) throw new Error(result?.error || `HTTP ${response.status}`);
+        result = await requestJson("/erenodes/set_tag_groups_location", { body: { location } });
     } catch (e) {
         console.error("[EreNodes] Could not set tag groups location.", e);
-        app.extensionManager?.toast?.add({
-            severity: "error",
-            summary: "Tag Groups Folder",
-            detail: `${e.message}. The previous location is still in use.`,
-            life: 6000,
-        });
+        toast("error", "Tag Groups Folder", `${e.message}. The previous location is still in use.`, 6000);
         return;
     }
 
     // First call of the session just syncs server state — nothing to migrate.
     if (previousValue === undefined || result.previous === result.location) return;
 
-    app.extensionManager?.toast?.add({
-        severity: "success",
-        summary: "Tag Groups Folder",
-        detail: result.resolved,
-        life: 4000,
-    });
+    toast("success", "Tag Groups Folder", result.resolved);
 
     if (!result.legacy_count) return;
 
     const message = `${result.legacy_count} tag group(s) are still in the previous folder. `
         + `Copy them to the new location? Nothing is deleted — the old folder stays as a backup.`;
-    let confirmed;
-    if (app.extensionManager?.dialog?.confirm) {
-        confirmed = await app.extensionManager.dialog.confirm({ title: "Copy tag groups?", message });
-    } else {
-        confirmed = window.confirm(message);
-    }
-    if (!confirmed) return;
+    if (!await confirmDialog("Copy tag groups?", message)) return;
 
     try {
-        const response = await fetch("/erenodes/migrate_tag_groups", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ from: result.previous, to: result.location }),
-        });
-        const migrated = await response.json();
-        if (!response.ok) throw new Error(migrated?.error || `HTTP ${response.status}`);
-        app.extensionManager?.toast?.add({
-            severity: "success",
-            summary: "Tag groups copied",
-            detail: `${migrated.copied} copied`
-                + (migrated.skipped ? `, ${migrated.skipped} skipped (already present)` : ""),
-            life: 5000,
-        });
+        const migrated = await requestJson("/erenodes/migrate_tag_groups", { body: { from: result.previous, to: result.location } });
+        toast("success", "Tag groups copied",
+            `${migrated.copied} copied` + (migrated.skipped ? `, ${migrated.skipped} skipped (already present)` : ""), 5000);
         // The sidebar is showing the old folder's contents.
         app.ereSidebar?.refresh?.();
     } catch (e) {
         console.error("[EreNodes] Migration failed.", e);
-        app.extensionManager?.toast?.add({
-            severity: "error",
-            summary: "Copy failed",
-            detail: e.message,
-            life: 6000,
-        });
+        toast("error", "Copy failed", e.message, 6000);
     }
 }
 
@@ -147,11 +100,7 @@ app.registerExtension({
             onChange: (newVal) => {
                 if (!newVal) return;
                 // Also fires once on page load, which keeps the server's settings.json in sync with the settings store.
-                fetch("/erenodes/set_setting", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ key: "autocomplete.csv", value: newVal }),
-                }).catch(() => {});
+                requestJson("/erenodes/set_setting", { body: { key: "autocomplete.csv", value: newVal } }).catch(() => {});
             },
         },
         {
@@ -186,13 +135,6 @@ app.registerExtension({
             ],
         },
         {
-            id: "EreNodes.Nodes.PasteAction",
-            name: "Paste Action",
-            type: "combo",
-            defaultValue: "Replace tags",
-            options: ["Replace tags", "Append tags"].map(v => ({ text: v, value: v })),
-        },
-        {
             id: "EreNodes.Nodes.TagSeparator",
             name: "Default tag separator",
             tooltip: "What goes between tags in a newly created node. Written as stored, with \\n for a line break. Existing nodes keep the separator they were saved with — change theirs in the node's ≡ menu, under Options.",
@@ -204,7 +146,7 @@ app.registerExtension({
             name: "Default node separator",
             tooltip: "What goes between a newly created node and the node feeding its prefix (and between a Composer's categories). Written as stored, with \\n for a line break. Existing nodes keep the separator they were saved with — change theirs in the node's ≡ menu, under Options.",
             type: "text",
-            defaultValue: ",\\n\\n",
+            defaultValue: DEFAULT_SEPARATOR,
         },
         {
             id: "EreNodes.Nodes.TagAreaScroll",

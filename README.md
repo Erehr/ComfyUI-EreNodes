@@ -68,6 +68,7 @@ ComfyUI-EreNodes provides an intuitive and feature-rich solution for handling pr
 
 ### 🗂️ EreNodes Sidebar
 - **Native Sidebar Tab**: Browse tag groups, LoRAs and embeddings in a proper ComfyUI sidebar tab
+- **Bookmarks**: Pin the tag groups you reach daily to a folder at the top of the list, and to the top of every search result
 - **Two-Mode Search**: Filter by file and folder name or the tags *inside* every group
 - **Autocomplete in Tag Search**: the search box completes tags as you type, offering only tags your groups actually contain (with counts)
 - **Hover Previews**: Hover any entry to see its thumbnail and its tags, drawn with the exact same pills the nodes use

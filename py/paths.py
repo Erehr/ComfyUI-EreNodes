@@ -1,7 +1,9 @@
 # Where tag groups live, per the `tag_groups.location` setting: "node" is <custom_nodes>/ComfyUI-EreNodes/__prompts__, "models" is <models_dir>/tag_groups.
 # The models option goes through ComfyUI's folder_paths registry, so it honours --base-directory and can be redirected from extra_model_paths.yaml.
 
+import ntpath
 import os
+import posixpath
 import shutil
 
 import folder_paths
@@ -115,6 +117,28 @@ def is_within(root, target):
         return os.path.commonpath([abs_root, os.path.realpath(target)]) == abs_root
     except ValueError:
         return False
+
+
+# A client-supplied path fragment as a relative POSIX path, or None if it names anything but a location inside the root.
+# Both flavours of isabs and splitdrive: on Linux a Windows client still sends backslashes, and ntpath is what recognises "C:x" and "\\host\share" there.
+def safe_rel(value):
+    rel = str(value or "").replace("\\", "/")
+    if ntpath.isabs(rel) or posixpath.isabs(rel) or ntpath.splitdrive(rel)[0]:
+        return None
+    parts = [p for p in rel.split("/") if p not in ("", ".")]
+    if any(p == ".." for p in parts):
+        return None
+    return "/".join(parts)
+
+
+# Absolute path for `parts` under `root`, or None when the result would leave it.
+# The containment check is on the final path, since a fragment that looks safe can still join to a drive or share.
+def safe_join(root, *parts):
+    rel = safe_rel("/".join(str(p) for p in parts if p not in (None, "")))
+    if rel is None:
+        return None
+    target = os.path.abspath(os.path.join(root, rel))
+    return target if is_within(root, target) else None
 
 
 # Number of .json files anywhere under `path` (0 if it does not exist).

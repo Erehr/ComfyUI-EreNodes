@@ -15,11 +15,11 @@ from . import images
 from . import tag_index
 from .paths import (
     IMAGE_EXTENSIONS,
-    LOCATION_NODE,
-    LOCATION_MODELS,
     VALID_LOCATIONS,
     get_prompts_dir,
     is_within,
+    safe_join,
+    safe_rel,
 )
 
 
@@ -29,7 +29,7 @@ from .paths import (
 
 # Strip characters that are unsafe in a filename; spaces and underscores stay.
 def sanitize_filename(filename):
-    filename = re.sub(r'[\/:*?"<>|]', '_', filename)
+    filename = re.sub(r'[\\/:*?"<>|]', '_', filename)
     filename = filename.replace('..', '_')
     return filename.strip()
 
@@ -118,9 +118,9 @@ async def check_files_handler(request):
         for root in config["roots"]:
             abs_root = os.path.abspath(root)
             for ext in candidates:
-                # `name` is client-supplied: check containment before probing.
-                candidate = os.path.normpath(os.path.join(abs_root, name + (ext or "")))
-                if not is_within(abs_root, candidate):
+                # `name` is client-supplied: resolve it before probing, since a UNC path would otherwise be opened by the isfile below.
+                candidate = safe_join(abs_root, name + (ext or ""))
+                if not candidate:
                     continue
                 if os.path.isfile(candidate):
                     found = True
@@ -139,16 +139,10 @@ async def get_tag_group_handler(request):
     if not filename_param:
         return web.json_response({"message": "Filename not provided"}, status=400)
 
-    safe_filename = filename_param.lstrip('/').lstrip('\\')
-    safe_filename = safe_filename.replace("..", "_")
-
-    if os.path.isabs(safe_filename):
-        safe_filename = os.path.basename(safe_filename)
-
     prompts_dir = get_prompts_dir()
-    file_path = os.path.abspath(os.path.join(prompts_dir, safe_filename))
+    file_path = safe_join(prompts_dir, filename_param)
 
-    if not is_within(prompts_dir, file_path):
+    if not file_path:
         return web.json_response({"error": "Forbidden path"}, status=403)
 
     if not os.path.exists(file_path) or not os.path.isfile(file_path):
@@ -176,19 +170,22 @@ async def save_tag_group_handler(request):
         if not filename or tags_json_str is None:
             return web.json_response({"message": "Filename or tags_json not provided"}, status=400)
 
-        safe_path_param = path_param.lstrip('/').lstrip('\\').replace("..", "_")
         prompts_dir = get_prompts_dir()
-        target_dir = os.path.abspath(os.path.join(prompts_dir, safe_path_param))
+        safe_path_param = safe_rel(path_param)
+        target_dir = safe_join(prompts_dir, safe_path_param) if safe_path_param is not None else None
 
-        if not is_within(prompts_dir, target_dir):
+        if not target_dir:
             return web.json_response({"error": "Forbidden save path"}, status=403)
 
-        os.makedirs(target_dir, exist_ok=True)
-        safe_filename = sanitize_filename(os.path.basename(filename))
+        safe_filename = sanitize_filename(os.path.basename(str(filename).replace("\\", "/")))
         if not safe_filename.lower().endswith(".json"):
             safe_filename += ".json"
 
-        file_path = os.path.join(target_dir, safe_filename)
+        file_path = safe_join(target_dir, safe_filename)
+        if not file_path:
+            return web.json_response({"error": "Forbidden save path"}, status=403)
+
+        os.makedirs(target_dir, exist_ok=True)
 
         if os.path.isdir(file_path):
             return web.json_response({"message": "A directory with this name already exists at the target location."}, status=400)
@@ -425,11 +422,11 @@ async def search_files_handler(request):
 
         # (scan target, collection root) pairs: a path resolves against whichever root holds it, since loras can live in several.
         if path_param:
-            normalized_path_param = os.path.normpath(path_param.lstrip('/').lstrip('\\'))
             for root in collection_paths:
                 abs_root = os.path.abspath(root)
-                potential_scan_path = os.path.abspath(os.path.join(abs_root, normalized_path_param))
-                if os.path.isdir(potential_scan_path) and is_within(abs_root, potential_scan_path):
+                # Resolved before isdir: a UNC path would otherwise be reached by the probe itself.
+                potential_scan_path = safe_join(abs_root, path_param)
+                if potential_scan_path and os.path.isdir(potential_scan_path):
                     scan_target_abs = potential_scan_path
                     current_collection_root_abs = abs_root
                     break
@@ -448,7 +445,7 @@ async def search_files_handler(request):
 
                  # Process files
                  for filename in filenames:
-                     if filename.lower().endswith(extensions):
+                     if filename.lower().endswith(extensions) and not _tree_excluded(filename):
                          filename_no_ext, file_ext = os.path.splitext(filename)
                          full_file_path_abs = os.path.join(dirpath, filename)
                          relative_to_collection_root = os.path.relpath(full_file_path_abs, current_collection_root_abs)
@@ -530,15 +527,16 @@ async def create_folder_handler(request):
         if not folder_name:
             return web.json_response({"message": "Folder name not provided"}, status=400)
 
-        safe_path_param = path_param.lstrip('/').lstrip('\\').replace("..", "_")
         prompts_dir = get_prompts_dir()
-        target_dir = os.path.abspath(os.path.join(prompts_dir, safe_path_param))
+        target_dir = safe_join(prompts_dir, path_param)
 
-        if not is_within(prompts_dir, target_dir):
+        if not target_dir:
             return web.json_response({"error": "Forbidden path"}, status=403)
 
         safe_folder_name = sanitize_filename(folder_name)
-        new_folder_path = os.path.join(target_dir, safe_folder_name)
+        new_folder_path = safe_join(target_dir, safe_folder_name)
+        if not new_folder_path:
+            return web.json_response({"error": "Forbidden path"}, status=403)
 
         if os.path.exists(new_folder_path):
             return web.json_response({"message": "A folder or file with this name already exists."}, status=409)
@@ -549,22 +547,11 @@ async def create_folder_handler(request):
         return web.json_response({"error": str(e)}, status=500)
 
 # Preview images are served straight off disk, so two headers (Content-Type and Cache-Control) have to be set by hand.
-_PREVIEW_MIME = {
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".png": "image/png",
-    ".webp": "image/webp",
-}
 PREVIEW_CACHE_SECONDS = 300
 
 
 def _preview_response(image_path):
-    ext = os.path.splitext(image_path)[1].lower()
-    headers = {"Cache-Control": f"public, max-age={PREVIEW_CACHE_SECONDS}"}
-    mime = _PREVIEW_MIME.get(ext)
-    if mime:
-        headers["Content-Type"] = mime
-    return web.FileResponse(image_path, headers=headers)
+    return web.FileResponse(image_path, headers={"Cache-Control": f"public, max-age={PREVIEW_CACHE_SECONDS}"})
 
 
 @server.PromptServer.instance.routes.get("/erenodes/view/{type}/{path:.*}")
@@ -574,11 +561,6 @@ async def view_file_handler(request):
 
     if not type_name or not path_param:
         return web.Response(status=400, text="Missing type or path")
-
-    # Sizing params are accepted for cache-key stability on the client and ignored here; nothing is resized server-side.
-    _w = request.query.get("w")
-    _h = request.query.get("h")
-    _fit = request.query.get("fit")
 
     # Determine base directories
     if type_name == 'group':
@@ -591,20 +573,13 @@ async def view_file_handler(request):
     if not base_dirs:
         return web.Response(status=404, text=f"No folder configured for type '{type_name}'")
 
-    # A first pass; the containment check below is what actually stops '..' escaping the intended directories.
-    path_param = path_param.replace("..", "_")
-
-    potential_extensions = IMAGE_EXTENSIONS
-
     for root_dir in base_dirs:
-        abs_root_dir = os.path.abspath(root_dir)
         # The path without its extension, which is the base a preview image is found from.
-        prospective_path_base = os.path.join(abs_root_dir, path_param)
+        prospective_path_base = safe_join(root_dir, path_param)
 
-        # Security check: ensure the requested path is within the intended directory (see is_within — a sibling dir like ".../loras_x" must not pass a ".../loras" check).
-        if is_within(abs_root_dir, prospective_path_base):
+        if prospective_path_base:
             # Check for both filename.extension and filename.preview.extension patterns
-            for ext in potential_extensions:
+            for ext in IMAGE_EXTENSIONS:
                 # First try: filename.extension (original pattern)
                 image_path = prospective_path_base + ext
                 if os.path.isfile(image_path):
@@ -654,13 +629,11 @@ async def save_file_image_handler(request):
         if not config:
             return web.json_response({"error": f"Invalid file type: {file_type}"}, status=400)
 
-        # `name` is client-supplied: containment is checked with is_within, not startswith, so ".../loras_backup" cannot pass a ".../loras" check.
         file_path = None
         for root_dir in config['roots']:
-            abs_root = os.path.abspath(root_dir)
             for ext in config['extensions']:
-                potential_path = os.path.normpath(os.path.join(abs_root, file_name + ext))
-                if not is_within(abs_root, potential_path):
+                potential_path = safe_join(root_dir, file_name + ext)
+                if not potential_path:
                     continue
                 if os.path.exists(potential_path):
                     file_path = potential_path
@@ -700,8 +673,8 @@ async def delete_file_image_handler(request):
             return web.json_response({"error": "Name not provided"}, status=400)
 
         root = get_prompts_dir()
-        target = os.path.normpath(os.path.join(root, name))
-        if not is_within(root, target):
+        target = safe_join(root, name)
+        if not target or target == os.path.abspath(root):
             return web.json_response({"error": "Invalid path"}, status=400)
         if not os.path.isfile(target + ".json"):
             return web.json_response({"error": f"Tag group not found: {name}"}, status=404)
@@ -758,7 +731,7 @@ def _build_tree(root, extensions, rel="", depth=0):
                 "name": name, "path": child_rel.replace(os.sep, '/'),
                 "type": "folder", **sub,
             })
-        elif name.lower().endswith(extensions):
+        elif name.lower().endswith(extensions) and not _tree_excluded(name):
             stem, ext = os.path.splitext(name)
             files.append({
                 "name": stem,
@@ -841,6 +814,71 @@ async def tree_handler(request):
     return web.json_response({"version": signature, **tree})
 
 
+# Bookmarks API Endpoints
+# Stored beside the tag index so they follow `tag_groups.location` and travel with the library they name.
+# The leading dot keeps the file out of the listing routes.
+
+BOOKMARKS_NAME = ".erenodes_bookmarks.json"
+MAX_BOOKMARKS = 5000
+
+
+def _bookmarks_path():
+    return os.path.join(get_prompts_dir(), BOOKMARKS_NAME)
+
+
+def _read_bookmarks():
+    try:
+        with open(_bookmarks_path(), 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception:
+        return []
+    paths = data.get("paths") if isinstance(data, dict) else data
+    return [p for p in paths if isinstance(p, str)] if isinstance(paths, list) else []
+
+
+# A tag group path as the sidebar spells it: relative, forward slashes, no extension.
+def _valid_bookmark(path):
+    if not isinstance(path, str) or not path or len(path) > 400:
+        return False
+    return paths.safe_rel(path) == path.replace('\\', '/').strip('/')
+
+
+@server.PromptServer.instance.routes.get("/erenodes/bookmarks")
+async def get_bookmarks_handler(request):
+    return web.json_response({"paths": _read_bookmarks()})
+
+
+@server.PromptServer.instance.routes.post("/erenodes/bookmarks")
+async def set_bookmarks_handler(request):
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
+
+    paths = data.get("paths")
+    if not isinstance(paths, list):
+        return web.json_response({"error": "paths must be a list"}, status=400)
+    if len(paths) > MAX_BOOKMARKS:
+        return web.json_response({"error": f"Too many bookmarks (max {MAX_BOOKMARKS})"}, status=400)
+
+    clean = []
+    for path in paths:
+        if not _valid_bookmark(path):
+            return web.json_response({"error": f"Invalid bookmark: {path!r}"}, status=400)
+        if path not in clean:
+            clean.append(path)
+
+    try:
+        target = _bookmarks_path()
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, 'w', encoding='utf-8') as f:
+            json.dump({"paths": clean}, f, indent=2, ensure_ascii=False)
+    except OSError as e:
+        return web.json_response({"error": f"Could not save bookmarks: {e}"}, status=500)
+
+    return web.json_response({"paths": clean})
+
+
 # Tag Index API Endpoints
 # The half of the sidebar's search that answers "which groups contain this tag", which needs the file contents the client does not have.
 # Split by cost: status is a directory walk, sync starts a background build the client polls, search is the query itself.
@@ -905,11 +943,10 @@ def _resolve_group_path(rel_path, must_exist=True):
     if not rel_path:
         return None, web.json_response({"error": "path not provided"}, status=400)
 
-    cleaned = str(rel_path).lstrip('/').lstrip('\\').replace("..", "_")
     root = get_prompts_dir()
-    target = os.path.abspath(os.path.join(root, cleaned))
+    target = safe_join(root, rel_path)
 
-    if not is_within(root, target) or os.path.abspath(root) == target:
+    if not target or os.path.abspath(root) == target:
         return None, web.json_response({"error": "Forbidden path"}, status=403)
     if must_exist and not os.path.exists(target):
         return None, web.json_response({"error": "Not found"}, status=404)
@@ -936,8 +973,8 @@ async def rename_path_handler(request):
     if not is_dir and not new_name.lower().endswith(".json"):
         new_name += ".json"
 
-    target = os.path.join(os.path.dirname(source), new_name)
-    if not is_within(get_prompts_dir(), target):
+    target = safe_join(os.path.dirname(source), new_name)
+    if not target or not is_within(get_prompts_dir(), target):
         return web.json_response({"error": "Forbidden path"}, status=403)
     if os.path.exists(target):
         return web.json_response({"error": "A file or folder with that name already exists."}, status=409)
@@ -972,10 +1009,9 @@ async def move_path_handler(request):
 
     prompts_dir = get_prompts_dir()
     # "" is the root, which _resolve_group_path deliberately rejects.
-    raw_dest = str(data.get("toFolder") or "").lstrip('/').lstrip('\\').replace("..", "_")
-    dest_dir = os.path.abspath(os.path.join(prompts_dir, raw_dest)) if raw_dest else os.path.abspath(prompts_dir)
+    dest_dir = safe_join(prompts_dir, data.get("toFolder") or "")
 
-    if not is_within(prompts_dir, dest_dir) or not os.path.isdir(dest_dir):
+    if not dest_dir or not os.path.isdir(dest_dir):
         return web.json_response({"error": "Invalid destination folder"}, status=400)
     if os.path.dirname(source) == dest_dir:
         return web.json_response({"ok": True, "unchanged": True})

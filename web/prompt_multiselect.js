@@ -1,13 +1,9 @@
 import { app } from "../../scripts/app.js";
-import { initializeSharedPromptFunctions, applyContextMenuPatch } from "./prompt.js";
+import { initializeSharedPromptFunctions } from "./prompt.js";
 import { attachTagDomWidget } from "./js/renderer.js";
 
 app.registerExtension({
     name: "ErePromptMultiSelect",
-
-    async setup() {
-        applyContextMenuPatch();
-    },
 
     beforeRegisterNodeDef(nodeType, nodeData, app) {
         if (nodeData.name !== "ErePromptMultiSelect") return;
