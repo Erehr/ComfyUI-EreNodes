@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 import json
 import os
 import re
@@ -16,10 +15,12 @@ from . import tag_index
 from .paths import (
     IMAGE_EXTENSIONS,
     VALID_LOCATIONS,
+    excluded,
     get_prompts_dir,
     is_within,
     safe_join,
     safe_rel,
+    tree_signature,
 )
 
 
@@ -193,6 +194,7 @@ async def save_tag_group_handler(request):
         tags_data = json.loads(tags_json_str)
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(tags_data, f, indent=2)
+        tag_index.invalidate_status()
 
         message = f"Tag group '{os.path.join(safe_path_param, safe_filename) if safe_path_param else safe_filename}' saved successfully."
 
@@ -445,7 +447,7 @@ async def search_files_handler(request):
 
                  # Process files
                  for filename in filenames:
-                     if filename.lower().endswith(extensions) and not _tree_excluded(filename):
+                     if filename.lower().endswith(extensions) and not excluded(filename):
                          filename_no_ext, file_ext = os.path.splitext(filename)
                          full_file_path_abs = os.path.join(dirpath, filename)
                          relative_to_collection_root = os.path.relpath(full_file_path_abs, current_collection_root_abs)
@@ -469,7 +471,7 @@ async def search_files_handler(request):
                  dirnames_orig[:] = []
 
                  for dirname in current_level_dirnames_to_process:
-                     if dirname.startswith('.') or dirname == "__pycache__":
+                     if excluded(dirname):
                          continue
 
                      full_folder_path_abs = os.path.join(dirpath, dirname)
@@ -691,10 +693,6 @@ async def delete_file_image_handler(request):
 # Whole-tree data, one request instead of one per folder; the sidebar filters that tree itself.
 
 
-def _tree_excluded(name):
-    return name.startswith('.') or name == "__pycache__"
-
-
 # Nested {folders, files} for one collection root; depth 0 is the whole tree, depth 1 stops at this level.
 # Paths are relative to the root and forward-slashed, so the client can use them in URLs whatever the host OS.
 # scandir saves a stat per file, which is seconds over 36k groups.
@@ -723,7 +721,7 @@ def _build_tree(root, extensions, rel="", depth=0):
         except OSError:
             continue
         if is_dir:
-            if _tree_excluded(name):
+            if excluded(name):
                 continue
             sub = ({"folders": [], "files": []} if depth == 1
                    else _build_tree(root, extensions, child_rel, max(depth - 1, 0)))
@@ -731,7 +729,7 @@ def _build_tree(root, extensions, rel="", depth=0):
                 "name": name, "path": child_rel.replace(os.sep, '/'),
                 "type": "folder", **sub,
             })
-        elif name.lower().endswith(extensions) and not _tree_excluded(name):
+        elif name.lower().endswith(extensions) and not excluded(name):
             stem, ext = os.path.splitext(name)
             files.append({
                 "name": stem,
@@ -745,25 +743,6 @@ def _build_tree(root, extensions, rel="", depth=0):
 
 # One built tree per file type, kept until something on disk actually changes.
 _TREE_CACHE = {}
-
-
-# A fingerprint of every directory under the roots.
-# A directory's mtime moves whenever an entry inside it is added, removed or renamed, which is exactly what the tree reflects, so a few hundred stats stand in for tens of thousands of files.
-def _tree_signature(roots):
-    parts = []
-    stack = [os.path.abspath(r) for r in roots if os.path.isdir(r)]
-    while stack:
-        path = stack.pop()
-        try:
-            parts.append(f"{path}:{os.stat(path).st_mtime_ns}")
-            with os.scandir(path) as scan:
-                for entry in scan:
-                    if entry.is_dir() and not _tree_excluded(entry.name):
-                        stack.append(entry.path)
-        except OSError:
-            continue
-    parts.sort()
-    return hashlib.sha1("\n".join(parts).encode("utf-8")).hexdigest()
 
 
 # Query parameters:
@@ -798,7 +777,7 @@ async def tree_handler(request):
             # No version: a partial tree must never be mistaken for the real one.
             return web.json_response({"partial": True, **await asyncio.to_thread(build, depth)})
 
-        signature = await asyncio.to_thread(_tree_signature, config['roots'])
+        signature = await asyncio.to_thread(tree_signature, config['roots'])
         if known and known == signature and not force:
             return web.json_response({"version": signature, "unchanged": True})
 
