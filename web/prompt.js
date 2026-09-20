@@ -2,7 +2,7 @@ import { app } from "../../scripts/app.js";
 import { TagContextMenuInsert, TagEditContextMenu, TagGroupContextMenu, ActionContextMenu } from "./js/contextmenu.js";
 import { getCache, clearCache, captureUndoState, tagsToText, textareaOf, insertTagsAsText, getSetting, requestJson, apiFetch, toast, confirmDialog, promptDialog, pickFile, getTags, setTags, expandGroup, loadGroupTags } from "./js/util.js";
 import { bumpPreview, TILE_SIZES, TILE_RATIOS, tileBoxFor } from "./js/tagview.js";
-import { parseTags, parseTag, formatTag, parseTextToTagData, stripNestedGroups, dedupeTags, DEFAULT_SEPARATOR } from "./js/parser.js";
+import { parseTags, parseTag, formatTag, parseTextToTagData, parseClipboardTags, stripNestedGroups, dedupeTags, DEFAULT_SEPARATOR } from "./js/parser.js";
 
 // The dice button's range. ComfyUI's seed goes to 2^64, which a JS number cannot hold exactly and nothing here needs.
 const DICE_SEED_MAX = 0xFFFFFFFF;
@@ -523,7 +523,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
             if (node.type !== "ErePromptMultiline") {
                 // The shared parser, so a pasted sentence arrives as a text pill rather than as
                 // the four tags its commas would make of it.
-                const tagData = parseTextToTagData(text);
+                const tagData = parseClipboardTags(text);
                 const json = JSON.stringify(tagData, null, 2);
                 node.properties._tagDataJSON = json;
                 await node.onUpdateTextWidget(node);
@@ -540,7 +540,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
     node.onClipboardAppend = () => {
         navigator.clipboard.readText().then(async text => {
             if (node.type !== "ErePromptMultiline") {
-                const pasted = parseTextToTagData(text);
+                const pasted = parseClipboardTags(text);
                 if (!pasted.length) return;
                 const existingTagData = getTags(node);
                 const existingTagNames = new Set(existingTagData.map(t => t.name));

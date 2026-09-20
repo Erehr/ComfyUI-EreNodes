@@ -171,6 +171,4 @@ if __name__ == "__main__":
     optional = c.INPUT_TYPES()["optional"]
     assert "row_7" in optional and optional["row_7"][0] == "STRING"
     assert ErePrompt().process("t", "p", None) == ("p,\n\nt",)
-
-    # Joining and the lora syntax are also implemented in JS; tests/vectors.py and tests/vectors.mjs check both against one file.
     print("ok")

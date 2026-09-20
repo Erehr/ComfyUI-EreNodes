@@ -128,6 +128,16 @@ export function parseTextToTagData(text, oldTagData = []) {
     return dedupeTags(tagData);
 }
 
+/**
+ * The same, for text arriving from the clipboard. Booru sites write tags with underscores and the anime checkpoints are trained on the spaced form.
+ * Only `tag` pills are converted: a lora, embedding or group name is a filename, and `text` is prose.
+ */
+export function parseClipboardTags(text, oldTagData = []) {
+    const tags = parseTextToTagData(text, oldTagData).map(tag => tag.type === "tag" && tag.name ? { ...tag, name: tag.name.replace(/_/g, " ") } : tag);
+    // Again after converting, since "white_hair, white hair" only collides once both are spaced.
+    return dedupeTags(tags);
+}
+
 // Punctuation a part can already end with, which the separator must then not repeat.
 // Closing brackets are deliberately not in it: `(masterpiece:1.2)` does want a comma after it.
 const TERMINATORS = ",.;:!?";

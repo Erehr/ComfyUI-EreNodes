@@ -1,7 +1,7 @@
 import { app } from "../../../scripts/app.js";
 import { initializeSharedPromptFunctions } from "../prompt.js";
 import { captureUndoState, beginUndoTransaction, endUndoTransaction, loadStyle, ensureChecked, tagsToText, insertTagsAsText, getTags, trackMarquee, HOLD_MS, MOVE_THRESHOLD } from "./util.js";
-import { parseTags, parseTextToTagData, joinPrompt, looksLikeProse, DEFAULT_SEPARATOR } from "./parser.js";
+import { parseTags, parseTextToTagData, parseClipboardTags, joinPrompt, looksLikeProse, DEFAULT_SEPARATOR } from "./parser.js";
 import { SURFACE_CLASS, renderSwitchEl } from "./tagview.js";
 import { markTextDropZone, clearAllSelections, pruneSelection, buildCountBadges, isDragActive } from "./dragdrop.js";
 import { renderTagBody, hideNativeWidget } from "./renderer.js";
@@ -10,7 +10,6 @@ import { ActionContextMenu, TagContextMenuInsert } from "./contextmenu.js";
 loadStyle("composer");
 
 // Prompt Composer rows. Each category is a pseudo node (as in tageditor.js), so the drag layer and the menus drive it without knowing what a category is.
-// See documentation.txt for the data flow.
 
 const TAGS_KEY = "_tagDataJSON";
 
@@ -301,7 +300,7 @@ export async function addRowFromClipboard(node) {
         row.text = text;
         rows.push(row);
     } else {
-        const tags = parseTextToTagData(text);
+        const tags = parseClipboardTags(text);
         if (!tags.length) return;
         rows.push(makeRow(title, tags));
     }

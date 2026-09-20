@@ -116,11 +116,12 @@ def remote_name(text):
 
 
 # Stricter, for names we write locally: also dodges the Windows device names.
+# Illegal characters become a space rather than remote_name's underscore, which is AnimaDex's rule for the CDN and not ours: "fate/grand order" is one name, not two joined by punctuation.
 def safe_name(text, fallback="unnamed"):
-    name = remote_name(text)
+    name = re.sub(r"\s+", " ", BAD_CHARS.sub(" ", (text or "").replace("_", " "))).strip().rstrip(". ")
     if name.upper() in RESERVED:
         name = "_" + name
-    return name[:120] or fallback
+    return name[:120].rstrip(". ") or fallback
 
 
 # Title-case for display, leaving punctuation and inner capitals alone.
@@ -152,6 +153,8 @@ def build_tags(row):
     names = split_tags(row.get("trigger")) or [(row.get("character") or "").replace("_", " ")]
     tags, seen = [], set()
     for name in names + split_tags(row.get("core_tags")):
+        # The catalogue stores booru form; anime checkpoints are trained on the spaced form.
+        name = name.replace("_", " ")
         key = name.lower()
         if key in seen:
             continue

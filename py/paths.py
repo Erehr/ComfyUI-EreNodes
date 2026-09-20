@@ -1,6 +1,7 @@
 # Where tag groups live, per the `tag_groups.location` setting: "node" is <custom_nodes>/ComfyUI-EreNodes/__prompts__, "models" is <models_dir>/tag_groups.
 # The models option goes through ComfyUI's folder_paths registry, so it honours --base-directory and can be redirected from extra_model_paths.yaml.
 
+import hashlib
 import ntpath
 import os
 import posixpath
@@ -139,6 +140,32 @@ def safe_join(root, *parts):
         return None
     target = os.path.abspath(os.path.join(root, rel))
     return target if is_within(root, target) else None
+
+
+# Dotfiles (the tag index, bookmarks) and caches are never part of a collection.
+def excluded(name):
+    return name.startswith('.') or name == "__pycache__"
+
+
+# Fingerprint of every file and folder name under `roots`, which is what the sidebar tree shows.
+# Names rather than directory mtimes: the tag index database and its journal come and go in the root folder, and would otherwise change the fingerprint on every query.
+# A file rewritten in place keeps the same fingerprint.
+def tree_signature(roots):
+    digest = hashlib.sha1()
+    stack = [os.path.abspath(r) for r in roots if os.path.isdir(r)]
+    while stack:
+        path = stack.pop()
+        try:
+            with os.scandir(path) as scan:
+                entries = sorted((e for e in scan if not excluded(e.name)), key=lambda e: e.name)
+            digest.update(path.encode("utf-8", "surrogateescape") + b"\0")
+            for entry in entries:
+                digest.update(entry.name.encode("utf-8", "surrogateescape") + b"\n")
+                if entry.is_dir():
+                    stack.append(entry.path)
+        except OSError:
+            continue
+    return digest.hexdigest()
 
 
 # Number of .json files anywhere under `path` (0 if it does not exist).

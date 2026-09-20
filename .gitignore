@@ -1,52 +1,15 @@
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Node
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
 
 # IDE
-.idea/
 .vscode/
-*.swp
-*.swo
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Project specific
-__prompts__/
+# Project
 audit/
 references/
-*.log 
-__autocomplete__/booru_complete.csv
-py/settings.json
-.cursor/rules/guidelines.mdc
-documentation.txt
-REFACTOR_PLAN.md
+.codegraph/
 CLAUDE.md
-AGENTS.md
-APPEAL-registry-backend.md
-APPEAL-3169-followup.md
