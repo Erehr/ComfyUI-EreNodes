@@ -112,7 +112,7 @@ def get_prompts_dir():
 # True if `target` is `root` or lives inside it.
 # commonpath, not startswith: a sibling like "__prompts__backup" would pass a prefix check, and mismatched Windows drives raise ValueError.
 # `strict` resolves symlinks, so a link inside the root cannot lead a write outside it.
-# Reads of model folders pass strict=False: a lora library linked in from another disk is common, and ComfyUI itself follows those links.
+# Model-folder reads pass strict=False: ComfyUI follows those links too.
 def is_within(root, target, strict=True):
     resolve = os.path.realpath if strict else os.path.abspath
     try:
@@ -144,8 +144,8 @@ def safe_join(root, *parts, strict=True):
     return target if is_within(root, target, strict) else None
 
 
-# Identity of a directory, for walkers that follow symlinks and must not loop on one pointing back up the tree.
-# Device and inode where the filesystem has them; FAT and some network shares report inode 0 for everything, so those fall back to the resolved path.
+# Identity of a directory, for walkers that follow symlinks and must not loop.
+# FAT and some network shares report inode 0 for everything, so those fall back to the resolved path.
 def dir_key(path):
     try:
         stat = os.stat(path)

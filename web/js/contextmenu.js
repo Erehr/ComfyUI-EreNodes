@@ -37,7 +37,7 @@ injectTagStyles();
 const isEditableTarget = (el) =>
     !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
 
-/** True when the caret sits at that end of the field with nothing selected, so the arrow has nowhere left to go inside it. */
+/** True when the caret is at that edge with nothing selected, so the arrow has nowhere to go in the field. */
 const caretAtEdge = (el, edge) => {
     if (!el || typeof el.selectionStart !== "number") return true;
     if (el.selectionStart !== el.selectionEnd) return false;
@@ -500,7 +500,7 @@ export class DynamicContextMenu {
             // A textarea keeps its own up and down to move the caret between lines.
             const walksMenu = e.key === "Escape" || e.key === "Tab"
                 || ((e.key === "ArrowUp" || e.key === "ArrowDown") && e.target?.tagName !== "TEXTAREA")
-                // Opening and closing a submenu from a field with a rename box in it, once the caret is at that edge.
+                // So a submenu still opens from a menu that has a text field.
                 || (e.key === "ArrowRight" && caretAtEdge(e.target, "end"))
                 || (e.key === "ArrowLeft" && caretAtEdge(e.target, "start"));
             if (!walksMenu && isEditableTarget(e.target) && e.target !== this.filterBox

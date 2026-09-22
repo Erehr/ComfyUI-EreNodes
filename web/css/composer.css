@@ -58,7 +58,7 @@
 .ere-surface .ere-composer-body .ere-toggle-row {
     background: var(--ere-inset-bg);
 }
-/* Restated here because the rule above outranks the shared hover in tagview.css. Lifted from the inset, so a row hovers the same whatever type it holds. */
+/* The rule above outranks the shared hover in tagview.css. */
 .ere-surface .ere-composer-body .ere-toggle-row:hover {
     background: color-mix(in srgb, var(--ere-inset-bg) 88%, var(--contrast-mix-color, #fff));
 }

@@ -90,7 +90,7 @@ def remote_name(text):
 
 
 # Stricter, for names we write locally: also dodges the Windows device names.
-# Illegal characters become a space rather than remote_name's underscore, which is AnimaDex's rule for the CDN and not ours: "fate/grand order" is one name, not two joined by punctuation.
+# A space, not remote_name's underscore: that rule builds AnimaDex's CDN filename, not ours.
 def safe_name(text, fallback="unnamed"):
     name = re.sub(r"\s+", " ", BAD_CHARS.sub(" ", (text or "").replace("_", " "))).strip().rstrip(". ")
     if name.upper() in RESERVED:
@@ -113,7 +113,7 @@ def artist_name(row):
 
 # One tag group, one pill. An artist row carries no tag list of its own, unlike a character.
 def build_tags(row):
-    # Spaced, not booru form: artist_name itself must keep the underscores, since the cover filename on the CDN is built from it.
+    # artist_name itself must keep its underscores: the CDN cover filename is built from it.
     return [{"name": artist_name(row).replace("_", " "), "type": "tag", "active": True}]
 
 

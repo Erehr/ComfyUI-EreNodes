@@ -82,7 +82,7 @@ export function getCache(url, type = "json") {
     return promise;
 }
 
-// Rename, move and delete can take a whole folder, and other tabs change groups too, so every group's contents are dropped rather than working out which paths were touched.
+// All of them: a rename or delete can take a whole folder.
 const GROUP_URL = "/erenodes/get_tag_group?";
 const groupChannel = typeof BroadcastChannel === "function" ? new BroadcastChannel("erenodes-tag-groups") : null;
 groupChannel?.addEventListener("message", () => dropGroupContents());
@@ -364,7 +364,7 @@ function tipElement() {
     if (!tipEl) {
         tipEl = document.createElement("div");
         tipEl.className = "ere-tip";
-        // Referenced by aria-describedby while shown, since the custom tip takes the `title` away.
+        // aria-describedby points here while the tip holds the `title`.
         tipEl.id = "erenodes-tip";
         document.body.appendChild(tipEl);
     }

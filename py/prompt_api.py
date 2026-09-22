@@ -375,7 +375,7 @@ def _read_lora_tags(lora_path):
 
 # Roots + extensions for a browsable file type, or None if unknown.
 # Resolved per call, not cached: the tag-group root follows a live setting and model roots can change when extra_model_paths is reloaded.
-# `strict` is how reads are contained: model folders follow symlinks as ComfyUI does, while the tag-group root, which is also written and deleted in, does not.
+# `strict` contains reads: model folders follow symlinks as ComfyUI does, the tag-group root does not.
 def get_type_config(file_type):
     if file_type == 'lora':
         return {'roots': get_model_paths("loras"),
@@ -558,7 +558,7 @@ async def view_file_handler(request):
         return web.Response(status=400, text="Missing type or path")
 
     # Only the types this pack browses; any other folder_paths name would expose images beside checkpoints and the like.
-    # 404 rather than 400, since a menu row asks with whatever type it carries and treats any failure as "no preview".
+    # 404, not 400: a menu row asks with whatever type it carries.
     config = get_type_config(type_name)
     if not config:
         return web.Response(status=404, text=f"Unknown type '{type_name}'")
@@ -675,7 +675,7 @@ async def delete_file_image_handler(request):
 def _build_tree(root, extensions, rel="", depth=0, seen=None):
     abs_dir = os.path.join(root, rel) if rel else root
     folders, files = [], []
-    # is_dir() follows links, so a link back up the tree would otherwise recurse until the OS refuses; a folder already walked is listed empty instead.
+    # is_dir() follows links, so a link back up the tree would recurse until the OS refuses.
     seen = set() if seen is None else seen
     key = dir_key(abs_dir)
     if key is None or key in seen:
@@ -1052,7 +1052,7 @@ async def extract_prompt_handler(request):
         return web.json_response(
             {"error": f"Unsupported image type: {original}"}, status=400)
 
-    # Checked before anything is written: only the filename's extension is known so far, and input/ is served by ComfyUI's /view.
+    # Before anything is written: only the extension is known so far, and input/ is served by /view.
     if not await asyncio.to_thread(images.is_image, field.file):
         return web.json_response({"error": f"Not a readable image: {original}"}, status=400)
 
@@ -1080,7 +1080,7 @@ async def extract_prompt_handler(request):
 
 
 # Copy an upload into `input_dir` without clobbering an existing input, returning the name it got.
-# Exclusive create claims the name atomically, so two uploads of the same name cannot overwrite each other.
+# Exclusive create claims the name atomically.
 def _store_upload(fileobj, input_dir, safe_name):
     os.makedirs(input_dir, exist_ok=True)
     stem, ext = os.path.splitext(safe_name)

@@ -116,7 +116,7 @@ def remote_name(text):
 
 
 # Stricter, for names we write locally: also dodges the Windows device names.
-# Illegal characters become a space rather than remote_name's underscore, which is AnimaDex's rule for the CDN and not ours: "fate/grand order" is one name, not two joined by punctuation.
+# A space, not remote_name's underscore: that rule builds AnimaDex's CDN filename, not ours.
 def safe_name(text, fallback="unnamed"):
     name = re.sub(r"\s+", " ", BAD_CHARS.sub(" ", (text or "").replace("_", " "))).strip().rstrip(". ")
     if name.upper() in RESERVED:

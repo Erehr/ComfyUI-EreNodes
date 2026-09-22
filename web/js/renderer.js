@@ -154,7 +154,7 @@ function makeButton(node, label, display, title) {
     btn.type = "button";
     btn.className = "ere-btn";
     btn.textContent = display;
-    // The label is a glyph, so the accessible name has to come from the title.
+    // The label is a glyph, so the name has to come from the title.
     if (title) { btn.title = title; btn.setAttribute("aria-label", title); }
     btn.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -332,10 +332,7 @@ function renderGalleryTile(node, tag, index, pillW, pillH) {
  * One implementation for a node's own tag area and for a Composer category, which is why it
  * takes anything node-shaped (`properties._tagDataJSON` plus the shared callbacks).
  */
-/**
- * Names whose on/off state changed since this node last drew, and records the new one.
- * Keyed by name rather than index, so reordering or removing a tag does not read as a flip.
- */
+/** Names whose state changed since this node last drew, keyed by name so a reorder does not read as a flip. */
 function flippedSince(node, tagData) {
     const previous = node._erePrevActive;
     const current = new Map(tagData.filter(t => t?.name).map(t => [t.name, t.active !== false]));
