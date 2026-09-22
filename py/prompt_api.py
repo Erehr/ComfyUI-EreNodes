@@ -15,6 +15,7 @@ from . import tag_index
 from .paths import (
     IMAGE_EXTENSIONS,
     VALID_LOCATIONS,
+    dir_key,
     excluded,
     get_prompts_dir,
     is_within,
@@ -88,13 +89,19 @@ async def check_files_handler(request):
     if len(items) > 500:
         return web.json_response({"error": "Too many items"}, status=400)
 
+    return web.json_response({"exists": await asyncio.to_thread(_check_files, items)})
+
+
+# Up to 500 items x roots x extensions of isfile probes, which is seconds on a network share.
+def _check_files(items):
     exists = {}
     configs = {}      # get_type_config resolves roots per call; cache them here
 
     for item in items:
         if not isinstance(item, dict):
             continue
-        name = (item.get("name") or "").strip()
+        name = item.get("name")
+        name = name.strip() if isinstance(name, str) else ""
         file_type = item.get("type")
         if not name or file_type not in ("lora", "embedding", "group"):
             continue
@@ -113,14 +120,14 @@ async def check_files_handler(request):
 
         # An explicit extension wins, then the bare name: a lora recovered from prompt text carries its extension inside the name.
         extension = item.get("extension")
-        candidates = (extension,) if extension else ("",) + tuple(config["extensions"])
+        candidates = (extension,) if isinstance(extension, str) and extension else ("",) + tuple(config["extensions"])
 
         found = False
         for root in config["roots"]:
             abs_root = os.path.abspath(root)
             for ext in candidates:
                 # `name` is client-supplied: resolve it before probing, since a UNC path would otherwise be opened by the isfile below.
-                candidate = safe_join(abs_root, name + (ext or ""))
+                candidate = safe_join(abs_root, name + (ext or ""), strict=config["strict"])
                 if not candidate:
                     continue
                 if os.path.isfile(candidate):
@@ -130,7 +137,7 @@ async def check_files_handler(request):
                 break
         exists[key] = found
 
-    return web.json_response({"exists": exists})
+    return exists
 
 
 @server.PromptServer.instance.routes.get("/erenodes/get_tag_group")
@@ -202,7 +209,7 @@ async def save_tag_group_handler(request):
         if image_file_field and hasattr(image_file_field, 'file') and image_file_field.file:
             try:
                 basename = os.path.splitext(safe_filename)[0]
-                written = images.save_preview_image(image_file_field.file, target_dir, basename)
+                written = await asyncio.to_thread(images.save_preview_image, image_file_field.file, target_dir, basename)
                 # A legacy cover.png beside the new cover.webp would keep being served, since view_file_handler probes extensions in order.
                 images.remove_other_previews(target_dir, basename, written)
                 message += f" Cover '{written}' also saved."
@@ -269,13 +276,14 @@ async def set_tag_groups_location_handler(request):
     save_erenodes_settings(settings)
 
     other = paths.dir_for_location(previous)
+    # How many groups are still sitting in the location we just left, so the client can offer to copy them across.
+    legacy_count = await asyncio.to_thread(paths.count_tag_groups, other) if previous != location else 0
     return web.json_response({
         "ok": True,
         "location": location,
         "previous": previous,
         "resolved": target,
-        # How many groups are still sitting in the location we just left, so the client can offer to copy them across.
-        "legacy_count": paths.count_tag_groups(other) if previous != location else 0,
+        "legacy_count": legacy_count,
     })
 
 
@@ -296,9 +304,7 @@ async def migrate_tag_groups_handler(request):
     if src_key == dst_key:
         return web.json_response({"copied": 0, "skipped": 0})
 
-    copied, skipped = paths.copy_tag_groups(
-        paths.dir_for_location(src_key), paths.dir_for_location(dst_key)
-    )
+    copied, skipped = await asyncio.to_thread(paths.copy_tag_groups, paths.dir_for_location(src_key), paths.dir_for_location(dst_key))
     return web.json_response({"copied": copied, "skipped": skipped})
 
 
@@ -324,7 +330,7 @@ async def get_lora_metadata_handler(request):
 
         # `filename` is client-supplied and this reads a file: get_full_path sanitises in current ComfyUI, but it has not always.
         roots = get_model_paths("loras") + get_model_paths("loras_old")
-        if not any(is_within(os.path.abspath(root), lora_path) for root in roots):
+        if not any(is_within(root, lora_path, strict=False) for root in roots):
             return web.json_response({"error": "Forbidden path"}, status=403)
 
         # File reads (especially safetensors header reads on large files) are blocking - run them in a thread so the server event loop stays free.
@@ -369,15 +375,16 @@ def _read_lora_tags(lora_path):
 
 # Roots + extensions for a browsable file type, or None if unknown.
 # Resolved per call, not cached: the tag-group root follows a live setting and model roots can change when extra_model_paths is reloaded.
+# `strict` is how reads are contained: model folders follow symlinks as ComfyUI does, while the tag-group root, which is also written and deleted in, does not.
 def get_type_config(file_type):
     if file_type == 'lora':
         return {'roots': get_model_paths("loras"),
-                'extensions': ('.safetensors', '.pt', '.ckpt', '.lora')}
+                'extensions': ('.safetensors', '.pt', '.ckpt', '.lora'), 'strict': False}
     if file_type == 'embedding':
         return {'roots': get_model_paths("embeddings"),
-                'extensions': ('.pt', '.bin', '.safetensors', '.embedding')}
+                'extensions': ('.pt', '.bin', '.safetensors', '.embedding'), 'strict': False}
     if file_type == 'group':
-        return {'roots': [get_prompts_dir()], 'extensions': ('.json',)}
+        return {'roots': [get_prompts_dir()], 'extensions': ('.json',), 'strict': True}
     return None
 
 
@@ -412,13 +419,14 @@ async def search_files_handler(request):
     
     query = actual_search_query
 
-    try:
+    strict = config['strict']
+
+    def run():
         if not collection_paths:
-            return web.json_response({"items": [], "parentPath": path_param if path_param else ""})
+            return {"items": [], "parentPath": path_param if path_param else ""}
 
         items = []
         found_relative_paths = set()
-
         scan_target_abs = None
         current_collection_root_abs = None
 
@@ -427,72 +435,60 @@ async def search_files_handler(request):
             for root in collection_paths:
                 abs_root = os.path.abspath(root)
                 # Resolved before isdir: a UNC path would otherwise be reached by the probe itself.
-                potential_scan_path = safe_join(abs_root, path_param)
+                potential_scan_path = safe_join(abs_root, path_param, strict=strict)
                 if potential_scan_path and os.path.isdir(potential_scan_path):
                     scan_target_abs = potential_scan_path
                     current_collection_root_abs = abs_root
                     break
             if not scan_target_abs:
-                return web.json_response({"items": [], "parentPath": path_param})
+                return {"items": [], "parentPath": path_param}
             scan_targets = [(scan_target_abs, current_collection_root_abs)]
         else:
             scan_targets = [(os.path.abspath(r), os.path.abspath(r)) for r in collection_paths]
 
-        for current_scan_target, current_collection_root_abs in scan_targets:
-            if not os.path.exists(current_scan_target):
+        for scan_target, collection_root in scan_targets:
+            if not os.path.exists(scan_target):
                 continue
+            # Model folders follow links, so a link pointing back up the tree must not be walked twice.
+            seen = {dir_key(scan_target)}
+            for dirpath, dirnames, filenames in os.walk(scan_target, topdown=True, followlinks=not strict):
+                is_scan_level = os.path.normpath(dirpath) == os.path.normpath(scan_target)
 
-            for dirpath, dirnames_orig, filenames in os.walk(current_scan_target, topdown=True):
-                 is_current_scan_level = (os.path.normpath(dirpath) == os.path.normpath(current_scan_target))
+                for filename in filenames:
+                    if not filename.lower().endswith(extensions) or excluded(filename):
+                        continue
+                    filename_no_ext, file_ext = os.path.splitext(filename)
+                    prompt_path = os.path.splitext(os.path.relpath(os.path.join(dirpath, filename), collection_root))[0]
+                    if prompt_path in found_relative_paths:
+                        continue
+                    if query:
+                        if query not in filename_no_ext.lower() and query not in prompt_path.lower():
+                            continue
+                    elif not is_scan_level:
+                        continue
+                    items.append({"name": filename_no_ext, "type": file_type, "path": prompt_path, "extension": file_ext})
+                    found_relative_paths.add(prompt_path)
 
-                 # Process files
-                 for filename in filenames:
-                     if filename.lower().endswith(extensions) and not excluded(filename):
-                         filename_no_ext, file_ext = os.path.splitext(filename)
-                         full_file_path_abs = os.path.join(dirpath, filename)
-                         relative_to_collection_root = os.path.relpath(full_file_path_abs, current_collection_root_abs)
-                         prompt_path = os.path.splitext(relative_to_collection_root)[0]
-
-                         item_data = {"name": filename_no_ext, "type": file_type, "path": prompt_path, "extension": file_ext}
-
-                         if query:
-                             if query in filename_no_ext.lower() or query in prompt_path.lower():
-                                 if prompt_path not in found_relative_paths:
-                                     items.append(item_data)
-                                     found_relative_paths.add(prompt_path)
-                         else:
-                             if is_current_scan_level:
-                                 if prompt_path not in found_relative_paths:
-                                     items.append(item_data)
-                                     found_relative_paths.add(prompt_path)
-                 
-                 # Process folders
-                 current_level_dirnames_to_process = list(dirnames_orig)
-                 dirnames_orig[:] = []
-
-                 for dirname in current_level_dirnames_to_process:
-                     if excluded(dirname):
-                         continue
-
-                     full_folder_path_abs = os.path.join(dirpath, dirname)
-                     relative_to_collection_root = os.path.relpath(full_folder_path_abs, current_collection_root_abs)
-
-
-                     if query:
-                         if query in dirname.lower():
-                             if relative_to_collection_root not in found_relative_paths:
-                                 items.append({"name": dirname, "type": "folder", "path": relative_to_collection_root})
-                                 found_relative_paths.add(relative_to_collection_root)
-                         dirnames_orig.append(dirname)
-                     else:
-                         if is_current_scan_level:
-                            if relative_to_collection_root not in found_relative_paths:
-                                items.append({"name": dirname, "type": "folder", "path": relative_to_collection_root})
-                                found_relative_paths.add(relative_to_collection_root)
+                # Only a query descends; browsing lists one level.
+                children = list(dirnames)
+                dirnames[:] = []
+                for dirname in children:
+                    if excluded(dirname):
+                        continue
+                    folder_abs = os.path.join(dirpath, dirname)
+                    folder_rel = os.path.relpath(folder_abs, collection_root)
+                    listed = (query in dirname.lower()) if query else is_scan_level
+                    if listed and folder_rel not in found_relative_paths:
+                        items.append({"name": dirname, "type": "folder", "path": folder_rel})
+                        found_relative_paths.add(folder_rel)
+                    if query:
+                        key = dir_key(folder_abs)
+                        if key is not None and key not in seen:
+                            seen.add(key)
+                            dirnames.append(dirname)
 
         items.sort(key=lambda x: (x["type"] != "folder", x["name"].lower()))
-        
-        # Handle path information for response
+
         if path_param:
             current_relative_path_for_client = os.path.relpath(scan_target_abs, current_collection_root_abs)
             if current_relative_path_for_client == '.':
@@ -506,15 +502,12 @@ async def search_files_handler(request):
             # When scanning all paths, we're at the root level
             current_relative_path_for_client = ""
             parent_path_for_client = ""
-        
-        response_data = {
-            "items": items,
-            "currentPath": current_relative_path_for_client,
-            "parentPath": parent_path_for_client
-        }
-        
-        return web.json_response(response_data)
 
+        return {"items": items, "currentPath": current_relative_path_for_client, "parentPath": parent_path_for_client}
+
+    # A query walks every root, once per keystroke.
+    try:
+        return web.json_response(await asyncio.to_thread(run))
     except Exception as e:
         return web.json_response({"items": [], "parentPath": path_param if path_param else "", "error": str(e)}, status=500)
 
@@ -564,20 +557,19 @@ async def view_file_handler(request):
     if not type_name or not path_param:
         return web.Response(status=400, text="Missing type or path")
 
-    # Determine base directories
-    if type_name == 'group':
-        # get_prompts_dir() returns an absolute path.
-        base_dirs = [get_prompts_dir()]
-    else:
-        # folder_paths uses plural for loras, embeddings, etc.
-        base_dirs = get_model_paths(type_name + 's')
+    # Only the types this pack browses; any other folder_paths name would expose images beside checkpoints and the like.
+    # 404 rather than 400, since a menu row asks with whatever type it carries and treats any failure as "no preview".
+    config = get_type_config(type_name)
+    if not config:
+        return web.Response(status=404, text=f"Unknown type '{type_name}'")
+    base_dirs = config['roots']
 
     if not base_dirs:
         return web.Response(status=404, text=f"No folder configured for type '{type_name}'")
 
     for root_dir in base_dirs:
         # The path without its extension, which is the base a preview image is found from.
-        prospective_path_base = safe_join(root_dir, path_param)
+        prospective_path_base = safe_join(root_dir, path_param, strict=config['strict'])
 
         if prospective_path_base:
             # Check for both filename.extension and filename.preview.extension patterns
@@ -611,23 +603,7 @@ async def save_file_image_handler(request):
         if not hasattr(image_file_field, 'file') or not image_file_field.file:
             return web.json_response({"error": "Invalid image file"}, status=400)
 
-        # Determine the base directory based on file type
-        type_configs = {
-            'lora': {
-                'roots': get_model_paths("loras"),
-                'extensions': ('.safetensors', '.pt', '.ckpt', '.lora'),
-            },
-            'embedding': {
-                'roots': get_model_paths("embeddings"),
-                'extensions': ('.pt', '.bin', '.safetensors', '.embedding'),
-            },
-            'group': {
-                'roots': [get_prompts_dir()],
-                'extensions': ('.json',),
-            }
-        }
-
-        config = type_configs.get(file_type)
+        config = get_type_config(file_type)
         if not config:
             return web.json_response({"error": f"Invalid file type: {file_type}"}, status=400)
 
@@ -650,7 +626,7 @@ async def save_file_image_handler(request):
         file_basename = os.path.splitext(os.path.basename(file_path))[0]
 
         try:
-            image_filename = images.save_preview_image(image_file_field.file, file_dir, file_basename)
+            image_filename = await asyncio.to_thread(images.save_preview_image, image_file_field.file, file_dir, file_basename)
         except images.PreviewError as e:
             return web.json_response({"error": str(e)}, status=400)
         images.remove_other_previews(file_dir, file_basename, image_filename)
@@ -696,9 +672,15 @@ async def delete_file_image_handler(request):
 # Nested {folders, files} for one collection root; depth 0 is the whole tree, depth 1 stops at this level.
 # Paths are relative to the root and forward-slashed, so the client can use them in URLs whatever the host OS.
 # scandir saves a stat per file, which is seconds over 36k groups.
-def _build_tree(root, extensions, rel="", depth=0):
+def _build_tree(root, extensions, rel="", depth=0, seen=None):
     abs_dir = os.path.join(root, rel) if rel else root
     folders, files = [], []
+    # is_dir() follows links, so a link back up the tree would otherwise recurse until the OS refuses; a folder already walked is listed empty instead.
+    seen = set() if seen is None else seen
+    key = dir_key(abs_dir)
+    if key is None or key in seen:
+        return {"folders": folders, "files": files}
+    seen.add(key)
     try:
         with os.scandir(abs_dir) as scan:
             entries = sorted(scan, key=lambda e: e.name.lower())
@@ -724,7 +706,7 @@ def _build_tree(root, extensions, rel="", depth=0):
             if excluded(name):
                 continue
             sub = ({"folders": [], "files": []} if depth == 1
-                   else _build_tree(root, extensions, child_rel, max(depth - 1, 0)))
+                   else _build_tree(root, extensions, child_rel, max(depth - 1, 0), seen))
             folders.append({
                 "name": name, "path": child_rel.replace(os.sep, '/'),
                 "type": "folder", **sub,
@@ -790,7 +772,9 @@ async def tree_handler(request):
     except Exception as e:
         print(f"[EreNodes] tree({file_type}) failed: {e}")
         return web.json_response({"folders": [], "files": [], "error": str(e)}, status=500)
-    return web.json_response({"version": signature, **tree})
+    # Serialised off the loop: a full tree is several MB of JSON.
+    body = await asyncio.to_thread(json.dumps, {"version": signature, **tree})
+    return web.Response(text=body, content_type="application/json")
 
 
 # Bookmarks API Endpoints
@@ -1029,13 +1013,16 @@ async def delete_path_handler(request):
     if err:
         return err
 
-    try:
+    def remove():
         if os.path.isdir(target):
             shutil.rmtree(target)
         else:
             for image in paths.sibling_images(target):
                 os.remove(image)
             os.remove(target)
+
+    try:
+        await asyncio.to_thread(remove)
     except Exception as e:
         print(f"[EreNodes] delete failed: {e}")
         return web.json_response({"error": f"Delete failed: {e}"}, status=500)
@@ -1065,34 +1052,50 @@ async def extract_prompt_handler(request):
         return web.json_response(
             {"error": f"Unsupported image type: {original}"}, status=400)
 
+    # Checked before anything is written: only the filename's extension is known so far, and input/ is served by ComfyUI's /view.
+    if not await asyncio.to_thread(images.is_image, field.file):
+        return web.json_response({"error": f"Not a readable image: {original}"}, status=400)
+
     input_dir = folder_paths.get_input_directory()
-    os.makedirs(input_dir, exist_ok=True)
-
-    # Never clobber an existing input: suffix until the name is free.
-    safe = sanitize_filename(original)
-    stem, ext = os.path.splitext(safe)
-    name, counter = safe, 1
-    while os.path.exists(os.path.join(input_dir, name)):
-        name = f"{stem}_{counter}{ext}"
-        counter += 1
-
-    target = os.path.join(input_dir, name)
     try:
-        with open(target, "wb") as out:
-            field.file.seek(0)
-            shutil.copyfileobj(field.file, out)
+        name = await asyncio.to_thread(_store_upload, field.file, input_dir, sanitize_filename(original))
     except Exception as e:
         return web.json_response({"error": f"Could not save image: {e}"}, status=500)
 
+    target = os.path.join(input_dir, name)
     try:
         # extract_from_image already prefers the editor graph when it contains our nodes (the only source that keeps strengths and inactive tags).
         result = await asyncio.to_thread(prompt_extractor.extract_from_image, target)
     except Exception as e:
         print(f"[EreNodes] extract_prompt failed: {e}")
+        # The client only learns the stored name on success, so on failure the file would be orphaned.
+        try:
+            os.remove(target)
+        except OSError:
+            pass
         return web.json_response({"error": "Internal error while reading metadata"}, status=500)
 
     result["filename"] = name
     return web.json_response(result)
+
+
+# Copy an upload into `input_dir` without clobbering an existing input, returning the name it got.
+# Exclusive create claims the name atomically, so two uploads of the same name cannot overwrite each other.
+def _store_upload(fileobj, input_dir, safe_name):
+    os.makedirs(input_dir, exist_ok=True)
+    stem, ext = os.path.splitext(safe_name)
+    name, counter = safe_name, 1
+    while True:
+        try:
+            out = open(os.path.join(input_dir, name), "xb")
+            break
+        except FileExistsError:
+            name = f"{stem}_{counter}{ext}"
+            counter += 1
+    with out:
+        fileobj.seek(0)
+        shutil.copyfileobj(fileobj, out)
+    return name
 
 
 # Re-extract from an image already in the input directory.

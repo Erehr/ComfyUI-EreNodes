@@ -5,30 +5,38 @@
 .ere-sidebar li {
     list-style: none;
 }
-/* The selected row is the fill PrimeVue's tree draws in the Workflows tab: blue, no border, leaving the grey surface to hover. */
+/* One selected row is the neutral fill the Node Library uses (TreeExplorerV2Node.vue); the accent below marks a multi-selection. */
 .ere-sidebar .ere-sb-selected {
-    background: var(--p-highlight-background, color-mix(in srgb, var(--p-primary-color, #4a9eff) 16%, transparent));
-    border-radius: var(--p-border-radius-sm, 4px);
+    background: var(--comfy-input-bg);
+    border-radius: var(--radius-sm, 4px);
 }
-/* A tile is filled edge to edge by its thumbnail, so the same translucent fill goes over it instead of behind it. */
+.ere-sidebar.ere-sb-multi .ere-sb-selected {
+    background: color-mix(in srgb, var(--ere-drag-accent, var(--primary-background)) 18%, transparent);
+    outline: 1px solid var(--ere-drag-accent, var(--primary-background));
+    outline-offset: -1px;
+}
+/* A tile is filled edge to edge by its thumbnail, so the fill goes over it instead of behind it and has to stay translucent. */
 .ere-sidebar .ere-sb-tile.ere-sb-selected::after {
     content: "";
     position: absolute;
     inset: 0;
     border-radius: inherit;
-    background: var(--p-highlight-background, color-mix(in srgb, var(--p-primary-color, #4a9eff) 16%, transparent));
+    background: color-mix(in srgb, var(--comfy-input-bg) 70%, transparent);
     pointer-events: none;
+}
+.ere-sidebar.ere-sb-multi .ere-sb-tile.ere-sb-selected::after {
+    background: color-mix(in srgb, var(--ere-drag-accent, var(--primary-background)) 18%, transparent);
 }
 /* A mode that is on, drawn as the selected row is. */
 .ere-sidebar .ere-sb-btn-on {
-    background: var(--p-highlight-background, color-mix(in srgb, var(--p-primary-color, #4a9eff) 16%, transparent));
-    color: var(--p-text-color, #fff);
+    background: color-mix(in srgb, var(--primary-background) 16%, transparent);
+    color: var(--base-foreground);
 }
 .ere-sb-drop-target {
-    outline: 2px dashed var(--ere-drag-accent, var(--p-primary-color, #4a9eff)) !important;
+    outline: 2px dashed var(--ere-drag-accent, var(--primary-background)) !important;
     outline-offset: -2px;
-    background: rgba(var(--ere-drag-accent-rgb, 74, 158, 255), .12) !important;
-    border-radius: var(--p-border-radius-sm, 4px);
+    background: color-mix(in srgb, var(--ere-drag-accent, var(--primary-background)) 12%, transparent) !important;
+    border-radius: var(--radius-sm, 4px);
 }
 
 /* CSS grid, not flex-wrap: folder tiles and file tiles are different elements with different intrinsic widths, so a flex row packed them into different column counts and drifted further out of alignment the wider the panel got. */
@@ -55,28 +63,16 @@
 .ere-sidebar .ere-sb-body-inner:focus-visible {
     outline: none;
 }
-
-/* Hidden until the row is hovered, bookmarked or not: the folder at the top is the list of them. */
-.ere-sidebar .ere-sb-bookmark {
-    flex: 0 0 auto;
-    margin-right: 6px;
-    padding: 2px;
-    border: 0;
-    border-radius: 4px;
-    background: none;
-    color: var(--p-text-muted-color, #888);
-    cursor: pointer;
-    opacity: 0;
-    font-size: 12px;
-    line-height: 1;
+/* Keyboard users still need the cursor row, since the list itself draws no ring. */
+.ere-sidebar .ere-sb-body-inner:focus-visible .ere-sb-selected {
+    outline: 1px solid var(--border-default);
+    outline-offset: -1px;
 }
-.ere-sidebar .group\/tree-node:hover .ere-sb-bookmark,
+
+/* A tile is not a tree node, so the group-hover class on the button cannot reach it; focus-visible is restated in case that variant is not compiled. */
 .ere-sidebar .ere-sb-tile:hover .ere-sb-bookmark,
 .ere-sidebar .ere-sb-bookmark:focus-visible {
     opacity: 1;
-}
-.ere-sidebar .ere-sb-bookmark:hover {
-    color: var(--p-text-color, #ddd);
 }
 /* On a tile the row has no spare width, so it floats over the corner. */
 .ere-sidebar .ere-sb-tile > .ere-sb-bookmark {
@@ -93,10 +89,10 @@
 .ere-sidebar .ere-sb-rule {
     height: 0;
     margin: 6px 8px;
-    border-top: 1px solid var(--p-content-border-color, #333);
+    border-top: 1px dashed var(--comfy-input-bg);
 }
 .ere-sidebar .ere-sb-divider {
-    box-shadow: inset 0 1px 0 var(--p-content-border-color, #333);
+    box-shadow: inset 0 1px 0 var(--comfy-input-bg);
 }
 .ere-sidebar .ere-sb-tile {
     position: relative;
@@ -104,7 +100,7 @@
     user-select: none;
     width: var(--ere-tile-w, 96px);
     height: var(--ere-tile-h, 96px);
-    border-radius: var(--p-border-radius-md, 6px);
+    border-radius: var(--radius-lg, 8px);
 }
 /* Tiles carry no chrome of their own, so grid view reads like the list: the hover and selection fills are the only surfaces. The node's own gallery keeps the bordered look. */
 .ere-sidebar .ere-sb-tile > .ere-tile {
@@ -115,7 +111,7 @@
 }
 .ere-sidebar .ere-sb-tile:not(.ere-sb-selected):not(.ere-sb-folder-tile),
 .ere-sidebar .ere-sb-tile:not(.ere-sb-selected):hover {
-    background: var(--comfy-input-bg, #222);
+    background: var(--comfy-input-bg);
 }
 /* renderTagTile sets the type fill inline, so lifting the label off the fill needs the weight. */
 .ere-sidebar .ere-sb-tile:hover .ere-name,
@@ -128,6 +124,11 @@
     align-items: center;
     justify-content: center;
     gap: .25rem;
+    border: 1px solid var(--border-default);
+    background: var(--modal-card-background);
+}
+.ere-sidebar .ere-sb-folder-tile:hover {
+    background: var(--modal-card-background-hovered);
 }
 .ere-sidebar .ere-sb-tile-name {
     max-width: 100%;
@@ -135,7 +136,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 11px;
+    font-size: var(--text-2xs, 10px);
 }
 .ere-sidebar .ere-sb-tile-badge {
     position: absolute;
@@ -153,11 +154,9 @@
     align-items: center;
     gap: 2px;
     padding: .5rem;
-    background: var(--comfy-menu-bg, var(--p-content-background, #202020));
-    border-color: var(--comfy-input-bg);
-    border-bottom-style: var(--tw-border-style);
-    border-bottom-width: 1px;
-    font-size: .75rem;
+    background: var(--comfy-menu-bg);
+    border-bottom: 1px solid var(--comfy-input-bg);
+    font-size: var(--text-xs, .75rem);
 }
 /* Tag index build progress.
    Two divs and a width, not PrimeVue's ProgressBar: p-progressbar is lazily injected like every other p-* component, so a tab opened before one has ever mounted would render nothing at all. Same reason the tree rows are hand-built. */
@@ -169,24 +168,22 @@
     flex-direction: column;
     gap: 4px;
     padding: .5rem .75rem;
-    background: var(--comfy-menu-bg, var(--p-content-background, #202020));
-    border-color: var(--comfy-input-bg);
-    border-bottom-style: var(--tw-border-style);
-    border-bottom-width: 1px;
-    font-size: .75rem;
+    background: var(--comfy-menu-bg);
+    border-bottom: 1px solid var(--comfy-input-bg);
+    font-size: var(--text-xs, .75rem);
 }
 .ere-sidebar .ere-sb-progress {
     height: 3px;
     width: 100%;
     overflow: hidden;
-    border-radius: 2px;
-    background: rgba(127, 127, 127, .25);
+    border-radius: var(--radius-xs, 2px);
+    background: var(--secondary-background);
 }
 .ere-sidebar .ere-sb-progress-fill {
     height: 100%;
     width: 0;
-    border-radius: 2px;
-    background: var(--ere-drag-accent, var(--p-primary-color, #4a9eff));
+    border-radius: var(--radius-xs, 2px);
+    background: var(--primary-background);
     transition: width .3s ease;
 }
 /* The scan has not produced a total yet, so there is no fraction to draw. A sweep says "working" where a bar stuck at 0% says "stuck". */
@@ -222,10 +219,13 @@
     cursor: pointer;
     font: inherit;
     padding: 2px 4px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm, 4px);
 }
 .ere-sidebar .ere-sb-crumb:hover {
-    background: var(--p-content-hover-background, rgba(255, 255, 255, .08));
+    background: var(--secondary-background-hover);
+}
+.ere-sidebar .ere-sb-crumb:focus-visible {
+    outline: 1px solid var(--border-default);
 }
 
 /* Inline naming (rename / new folder) — sized to sit inside a row without changing its height, so the tree does not jump when editing starts. */
@@ -234,12 +234,12 @@
     flex: 1 1 auto;
     height: 20px;
     padding: 0 4px;
-    border-radius: var(--p-border-radius-sm, 4px);
-    border: 1px solid var(--p-primary-color, #4a9eff);
-    background: var(--p-content-background, var(--comfy-input-bg, #222));
-    color: inherit;
+    border-radius: var(--radius-sm, 4px);
+    border: 1px solid var(--primary-background);
+    background: var(--comfy-input-bg);
+    color: var(--input-text);
     font: inherit;
-    font-size: .75rem;
+    font-size: var(--text-xs, .75rem);
     outline: none;
 }
 .ere-sidebar .ere-sb-tile .ere-sb-inline {
@@ -251,7 +251,7 @@
     padding: 1rem;
     text-align: center;
     opacity: .55;
-    font-size: .75rem;
+    font-size: var(--text-xs, .75rem);
 }
 /* The tag groups folder is configurable and its path can be long, so it wraps rather than stretching the card. */
 .ere-sidebar .no-results-placeholder p {

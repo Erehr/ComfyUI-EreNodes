@@ -1,7 +1,7 @@
 import { app } from "../../../scripts/app.js";
 import { api } from "../../../scripts/api.js";
 import { attachPillDrag, markDropZone, markTextDropZone, injectDragStyles, installDragGlobals, pruneSelection,handlePillSelectClick,handlePillContextMenu,consumeDragClick } from "./dragdrop.js";
-import { SURFACE_CLASS, injectTagStyles, fallbackColors, renderTagPill, renderToggleRowEl, renderTagTile } from "./tagview.js";
+import { SURFACE_CLASS, injectTagStyles, renderTagPill, renderToggleRowEl, renderTagTile } from "./tagview.js";
 import { parseTags, byTagName } from "./parser.js";
 import { ActionContextMenu } from "./contextmenu.js";
 import { isKnownMissing, ensureChecked, textareaOf, installTooltips, getSetting, getTags, setTags, bindImageDrop } from "./util.js";
@@ -154,7 +154,8 @@ function makeButton(node, label, display, title) {
     btn.type = "button";
     btn.className = "ere-btn";
     btn.textContent = display;
-    if (title) btn.title = title;
+    // The label is a glyph, so the accessible name has to come from the title.
+    if (title) { btn.title = title; btn.setAttribute("aria-label", title); }
     btn.addEventListener("click", (e) => {
         e.stopPropagation();
         node.onTagPillClick?.(e, [0, 0], { label, button: true });
@@ -308,20 +309,20 @@ function markIfMissing(el, tag) {
 }
 
 /** One pill, wired for click / quick edit / drag. `node` may be a pseudo node (Composer rows). */
-export function renderPill(node, tag, index, colors, mode) {
-    const pill = renderTagPill(tag, { colors });
+export function renderPill(node, tag, index, mode) {
+    const pill = renderTagPill(tag);
     attachPillEvents(node, pill, tag, index, mode);
     return markIfMissing(pill, tag);
 }
 
-function renderToggleRow(node, tag, index, colors) {
-    const row = renderToggleRowEl(tag, { colors });
+function renderToggleRow(node, tag, index, slide) {
+    const row = renderToggleRowEl(tag, { slide });
     attachPillEvents(node, row, tag, index, "toggle");
     return markIfMissing(row, tag);
 }
 
-function renderGalleryTile(node, tag, index, colors, pillW, pillH) {
-    const tile = renderTagTile(tag, { colors, width: pillW, height: pillH });
+function renderGalleryTile(node, tag, index, pillW, pillH) {
+    const tile = renderTagTile(tag, { width: pillW, height: pillH });
     attachPillEvents(node, tile, tag, index, "gallery");
     return markIfMissing(tile, tag);
 }
@@ -331,13 +332,30 @@ function renderGalleryTile(node, tag, index, colors, pillW, pillH) {
  * One implementation for a node's own tag area and for a Composer category, which is why it
  * takes anything node-shaped (`properties._tagDataJSON` plus the shared callbacks).
  */
-export function renderTagBody(node, container, mode, colors, tagData) {
+/**
+ * Names whose on/off state changed since this node last drew, and records the new one.
+ * Keyed by name rather than index, so reordering or removing a tag does not read as a flip.
+ */
+function flippedSince(node, tagData) {
+    const previous = node._erePrevActive;
+    const current = new Map(tagData.filter(t => t?.name).map(t => [t.name, t.active !== false]));
+    node._erePrevActive = current;
+    if (!previous) return new Set();
+    const flipped = new Set();
+    for (const [name, on] of current) {
+        if (previous.has(name) && previous.get(name) !== on) flipped.add(name);
+    }
+    return flipped;
+}
+
+export function renderTagBody(node, container, mode, tagData) {
     if (mode === "toggle") {
+        const flipped = flippedSince(node, tagData);
         const list = document.createElement("div");
         list.className = "ere-column";
         markDropZone(list, "column");
         for (let i = 0; i < tagData.length; i++) {
-            list.appendChild(renderToggleRow(node, tagData[i], i, colors));
+            list.appendChild(renderToggleRow(node, tagData[i], i, flipped.has(tagData[i].name)));
         }
         container.appendChild(list);
         return list;
@@ -350,7 +368,7 @@ export function renderTagBody(node, container, mode, colors, tagData) {
         grid.className = "ere-flow";
         markDropZone(grid, "flow");
         for (let i = 0; i < tagData.length; i++) {
-            grid.appendChild(renderGalleryTile(node, tagData[i], i, colors, pillW, pillH));
+            grid.appendChild(renderGalleryTile(node, tagData[i], i, pillW, pillH));
         }
         container.appendChild(grid);
         return grid;
@@ -370,7 +388,7 @@ export function renderTagBody(node, container, mode, colors, tagData) {
         for (let i = 0; i < tagData.length; i++) {
             // The eye reveals disabled tags in place: dimmed, still disabled, but draggable, selectable and quick-editable, none of which the dropdown can do.
             if (!tagData[i].active && !node._showInactive) continue;
-            panel.appendChild(renderPill(node, tagData[i], i, colors, mode));
+            panel.appendChild(renderPill(node, tagData[i], i, mode));
         }
         container.appendChild(panel);
         return panel;
@@ -381,7 +399,7 @@ export function renderTagBody(node, container, mode, colors, tagData) {
     flow.className = "ere-flow";
     markDropZone(flow, "flow");
     for (let i = 0; i < tagData.length; i++) {
-        flow.appendChild(renderPill(node, tagData[i], i, colors, mode));
+        flow.appendChild(renderPill(node, tagData[i], i, mode));
     }
     container.appendChild(flow);
     return flow;
@@ -398,7 +416,6 @@ export function attachTagDomWidget(node, mode, layoutOf = null) {
     installTooltips();
     installWheelGuard();
     installResizeDragTracking();
-    const colors = fallbackColors();
 
     for (const w of nativeWidgetsToHide(node, mode)) hideNativeWidget(w);
 
@@ -451,7 +468,7 @@ export function attachTagDomWidget(node, mode, layoutOf = null) {
 
         // Rows are drawn by js/composer.js, installed by the node's own extension.
         if (mode === "composer") {
-            node.onRenderComposer?.(content, colors);
+            node.onRenderComposer?.(content);
             return;
         }
 
@@ -470,7 +487,7 @@ export function attachTagDomWidget(node, mode, layoutOf = null) {
             renderButtons(node, bar, mode);
             column.appendChild(bar);
 
-            renderTagBody(node, column, "extract", colors, tagData)
+            renderTagBody(node, column, "extract", tagData)
                 .classList.add("ere-split-tags");
             split.appendChild(column);
 
@@ -481,7 +498,7 @@ export function attachTagDomWidget(node, mode, layoutOf = null) {
 
         const drawn = layoutOf?.() || mode;
         el._ereMode = drawn;
-        renderTagBody(node, content, drawn, colors, tagData);
+        renderTagBody(node, content, drawn, tagData);
     };
 
     if (typeof node.addDOMWidget !== "function") {
@@ -490,7 +507,7 @@ export function attachTagDomWidget(node, mode, layoutOf = null) {
     }
     const widget = node.addDOMWidget(`erenodes_${mode}`, "erenodes_tags", el, {
         serialize: false,
-        hideOnZoom: false,
+        hideOnZoom: true,
     });
     if (!widget) {
         console.warn("[EreNodes] addDOMWidget returned no widget; DOM tag UI not attached.");

@@ -10,9 +10,11 @@ import sqlite3
 import threading
 import time
 
-from .paths import excluded, get_prompts_dir, tree_signature
+from .paths import excluded, get_prompts_dir, tree_signature, dir_key
 
 DB_NAME = ".erenodes_tag_index.db"
+
+MAX_GROUP_BYTES = 16 * 1024 * 1024
 
 # Bumped when the schema changes; a mismatch rebuilds rather than migrates a cache that can always be regenerated from disk.
 SCHEMA_VERSION = 2
@@ -159,8 +161,13 @@ def _ensure_schema(connection):
 def _scan(root):
     found = {}
     stack = [("", root)]
+    seen = set()
     while stack:
         rel, abs_dir = stack.pop()
+        key = dir_key(abs_dir)
+        if key is None or key in seen:
+            continue
+        seen.add(key)
         try:
             with os.scandir(abs_dir) as scan:
                 entries = list(scan)
@@ -189,9 +196,13 @@ def _scan(root):
 # Only `tag` entries: lora, embedding and nested group pills are already findable by name in the default path search.
 def _read_tags(abs_path):
     try:
+        # No real tag group comes near this; the cap keeps one hostile file from costing a sync its memory.
+        if os.path.getsize(abs_path) > MAX_GROUP_BYTES:
+            return None
         with open(abs_path, 'r', encoding='utf-8') as handle:
             data = json.load(handle)
-    except (OSError, ValueError):
+    # RecursionError is not a ValueError: a deeply nested file raises it from json.load, and uncaught it would abort every sync at that file.
+    except (OSError, ValueError, RecursionError):
         return None
     if not isinstance(data, list):
         return []

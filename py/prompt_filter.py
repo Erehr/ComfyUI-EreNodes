@@ -6,8 +6,11 @@ from .prompt_csv import get_filter_maps, list_csv_files
 def _clean_token(token):
     token = re.sub(r'<lora:[^:>]+(:[^:>]+){1,2}>', '', token)
     token = re.sub(r'lora\([^)]+\)', '', token)
-    token = re.sub(r'<[^>]+>', '', token)
-    token = re.sub(r'([\w\- ]+):[\d.]+', r'\1', token)
+    # Nothing after the last '>' can match, and scanning that tail from every unclosed '<' is quadratic.
+    end = token.rfind('>') + 1
+    token = re.sub(r'<[^>]+>', '', token[:end]) + token[end:]
+    # Must stay a lookbehind: capturing the run before the colon makes this quadratic on a long token.
+    token = re.sub(r'(?<=[\w\- ]):[\d.]+', '', token)
 
     token = re.sub(r'^\(\(\((.*?)\)\)\)$', r'\1', token)
     token = re.sub(r'^\(\((.*?)\)\)$', r'\1', token)
@@ -21,13 +24,13 @@ def _clean_token(token):
 
 # Keep only tokens known to the CSV (as tag or alias).
 def filter_prompt(prompt, csv_file, alias_handling):
-    prompt = prompt.lower().replace("_", " ")
-    tokens = [t.strip() for t in re.split(r'[,\n]', prompt) if t.strip()]
-
     maps = get_filter_maps(csv_file)
     if maps is None:
+        print(f"[EreNodes] Prompt Filter: CSV '{csv_file}' is not available, so the prompt passes through unfiltered.")
         return prompt
     tag_set, alias_map = maps
+
+    tokens = [t.strip() for t in re.split(r'[,\n]', prompt.lower().replace("_", " ")) if t.strip()]
 
     result_tags = []
     for token in tokens:

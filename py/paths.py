@@ -111,11 +111,13 @@ def get_prompts_dir():
 
 # True if `target` is `root` or lives inside it.
 # commonpath, not startswith: a sibling like "__prompts__backup" would pass a prefix check, and mismatched Windows drives raise ValueError.
-def is_within(root, target):
-    # realpath, not abspath: a symlink inside the root would otherwise pass while pointing outside it.
+# `strict` resolves symlinks, so a link inside the root cannot lead a write outside it.
+# Reads of model folders pass strict=False: a lora library linked in from another disk is common, and ComfyUI itself follows those links.
+def is_within(root, target, strict=True):
+    resolve = os.path.realpath if strict else os.path.abspath
     try:
-        abs_root = os.path.realpath(root)
-        return os.path.commonpath([abs_root, os.path.realpath(target)]) == abs_root
+        abs_root = resolve(root)
+        return os.path.commonpath([abs_root, resolve(target)]) == abs_root
     except ValueError:
         return False
 
@@ -134,12 +136,22 @@ def safe_rel(value):
 
 # Absolute path for `parts` under `root`, or None when the result would leave it.
 # The containment check is on the final path, since a fragment that looks safe can still join to a drive or share.
-def safe_join(root, *parts):
+def safe_join(root, *parts, strict=True):
     rel = safe_rel("/".join(str(p) for p in parts if p not in (None, "")))
     if rel is None:
         return None
     target = os.path.abspath(os.path.join(root, rel))
-    return target if is_within(root, target) else None
+    return target if is_within(root, target, strict) else None
+
+
+# Identity of a directory, for walkers that follow symlinks and must not loop on one pointing back up the tree.
+# Device and inode where the filesystem has them; FAT and some network shares report inode 0 for everything, so those fall back to the resolved path.
+def dir_key(path):
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    return (stat.st_dev, stat.st_ino) if stat.st_ino else os.path.realpath(path)
 
 
 # Dotfiles (the tag index, bookmarks) and caches are never part of a collection.
@@ -153,8 +165,13 @@ def excluded(name):
 def tree_signature(roots):
     digest = hashlib.sha1()
     stack = [os.path.abspath(r) for r in roots if os.path.isdir(r)]
+    seen = set()
     while stack:
         path = stack.pop()
+        key = dir_key(path)
+        if key is None or key in seen:
+            continue
+        seen.add(key)
         try:
             with os.scandir(path) as scan:
                 entries = sorted((e for e in scan if not excluded(e.name)), key=lambda e: e.name)

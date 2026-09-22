@@ -1,10 +1,50 @@
 /* Tag pills, toggle rows, gallery tiles and the extractor image pane.
    Scoped to .ere-surface so every surface that draws a tag — nodes, menu previews, the sidebar — shares one rule set. */
 
+/* Pack tokens split light on :root and dark on .dark-theme, the same way the frontend splits its own. */
+:root {
+    --ere-fill-tag: color-mix(in srgb, #4a9eff 30%, var(--secondary-background-hover, #d9d9d9));
+    --ere-fill-lora: color-mix(in srgb, #5fbf6a 30%, var(--secondary-background-hover, #d9d9d9));
+    --ere-fill-embedding: color-mix(in srgb, #d2687f 30%, var(--secondary-background-hover, #d9d9d9));
+    --ere-fill-group: color-mix(in srgb, #e0a53f 30%, var(--secondary-background-hover, #d9d9d9));
+    --ere-pill-fg: var(--base-foreground, #171718);
+    /* One set for both themes: darkening these for the light palette left them muddy, and the knob reads as a type marker rather than as text. */
+    --ere-knob-tag: #8899bb;
+    --ere-knob-lora: #89a189;
+    --ere-knob-embedding: #9b8899;
+    --ere-knob-group: #9b9188;
+    --ere-knob-text: #9b9b9b;
+    --ere-knob-off: #616161;
+    --ere-switch-track: var(--interface-stroke, #c1c1c1);
+    --ere-pill-font: monospace;
+    /* Declared here, not per surface: a disabled pill is the same colour on a node, in a Composer row and in the sidebar. */
+    --ere-inactive-bg: color-mix(in srgb, var(--component-node-widget-background) 88%, #000);
+}
+/* Equal specificity to :root, so this block has to stay after it. */
+.dark-theme {
+    --ere-fill-tag: #414650;
+    --ere-fill-lora: #415041;
+    --ere-fill-embedding: #504149;
+    --ere-fill-group: #504C41;
+    --ere-pill-fg: #fff;
+    --ere-knob-off: #888;
+    --ere-switch-track: #4a4a4a;
+}
+
 .ere-surface {
-    font: 12px monospace;
+    /* Per surface rather than on :root, so a surface that overrides the widget colour also moves the shades derived from it. */
+    --ere-widget-bg: var(--component-node-widget-background);
+    --ere-widget-bg-hover: var(--component-node-widget-background-hovered);
+    --ere-stroke: var(--node-component-border, #444);
+    --ere-fg: var(--component-node-foreground);
+    --ere-fg-muted: var(--component-node-foreground-secondary);
+    --ere-radius: var(--radius-md, 6px);
+    /* 88% lands on #2b2c2f over the default dark widget colour, and keeps the same step on every other palette. */
+    --ere-inset-bg: color-mix(in srgb, var(--ere-widget-bg) 88%, #000);
+    --ere-fill-text: color-mix(in srgb, var(--ere-widget-bg) 78%, #000);
+    font: 12px var(--ere-pill-font);
     box-sizing: border-box;
-    color: var(--component-node-foreground, #ddd);
+    color: var(--ere-fg);
 }
 .ere-surface * {
     box-sizing: border-box;
@@ -38,7 +78,7 @@
     overflow-x: hidden;
     overflow-y: hidden;
     scrollbar-width: thin;
-    scrollbar-color: var(--dialog-surface, rgba(255, 255, 255, .2)) transparent;
+    scrollbar-color: var(--dialog-surface) transparent;
 }
 /* The frontend's `scrollbar-custom` utility cannot be used here: it forces `overflow-y: auto`, and this element's overflow is toggled from the renderer (fit vs scroll). Same look, written out. */
 .erenodes-dom .ere-scroll::-webkit-scrollbar {
@@ -46,7 +86,7 @@
     background-color: transparent;
 }
 .erenodes-dom .ere-scroll::-webkit-scrollbar-thumb {
-    background: var(--dialog-surface, rgba(255, 255, 255, .2));
+    background: var(--dialog-surface);
     border-radius: 9999px;
     border: 2px solid transparent;
     background-clip: padding-box;
@@ -95,13 +135,13 @@
     height: 20px;
     flex: 0 0 auto;
     padding: 0;
-    border-radius: 5px;
-    border: 1px solid #444;
+    border-radius: var(--ere-radius);
+    border: 1px solid var(--ere-stroke);
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--component-node-widget-background, #353535);
-    color: var(--component-node-foreground-secondary, #aaa);
+    background: var(--ere-widget-bg);
+    color: var(--ere-fg-muted);
     cursor: pointer;
     user-select: none;
     font: inherit;
@@ -115,13 +155,19 @@
 }
 /* Pressed state for a toolbar toggle (currently the eye). Reuses the hover treatment plus a brighter border, so "on" reads without inventing a colour the theme does not have. */
 .ere-surface .ere-btn.ere-btn-on {
-    background: var(--component-node-widget-background-hovered, #2a2a2a);
-    color: var(--component-node-foreground, #ddd);
-    border-color: var(--component-node-foreground-secondary, #777);
+    background: var(--ere-widget-bg-hover);
+    color: var(--ere-fg);
+    border-color: var(--component-node-widget-background-selected);
 }
 .ere-surface .ere-btn:hover {
-    background: var(--component-node-widget-background-hovered, #2a2a2a);
-    color: var(--component-node-foreground, #ddd);
+    background: var(--ere-widget-bg-hover);
+    color: var(--ere-fg);
+}
+.ere-surface .ere-btn:focus-visible,
+.ere-surface .ere-toggle-row:focus-visible,
+.ere-surface .ere-pill:focus-visible {
+    outline: 1px solid var(--component-node-widget-background-highlighted);
+    outline-offset: 1px;
 }
 /* Replaces the browser tooltip on our elements. Not scoped to .ere-surface: it is on body. */
 .ere-tip {
@@ -130,13 +176,14 @@
     display: none;
     width: fit-content;
     max-width: 320px;
-    padding: var(--p-tooltip-padding, .5rem .75rem);
-    border-radius: var(--p-tooltip-border-radius, var(--p-border-radius-md, 6px));
-    background: var(--p-tooltip-background, #4b5563);
-    color: var(--p-tooltip-color, #fff);
-    box-shadow: var(--p-tooltip-shadow, 0 4px 12px rgba(0, 0, 0, .35));
+    padding: 4px 8px;
+    border: 1px solid var(--node-component-tooltip-border);
+    border-radius: var(--radius-md, 6px);
+    background: var(--node-component-tooltip-surface);
+    color: var(--node-component-tooltip);
+    box-shadow: none;
     font-size: .875rem;
-    line-height: 1.35;
+    line-height: 1.2;
     white-space: pre-line;
     pointer-events: none;
 }
@@ -147,7 +194,7 @@
     height: 20px;
     line-height: 18px;
     max-width: 100%;
-    border-radius: 6px;
+    border-radius: var(--ere-radius);
     border: 1px solid transparent;
     padding: 0 5px;
     overflow: hidden;
@@ -155,19 +202,25 @@
     white-space: nowrap;
     cursor: pointer;
     user-select: none;
-    color: #FFF;
+    background: var(--ere-fill, var(--ere-fill-tag));
+    border-color: var(--ere-fill, var(--ere-fill-tag));
+    color: var(--ere-pill-fg);
 }
 .ere-surface .ere-pill.inactive {
+    background: var(--ere-inactive-bg);
+    border-color: var(--ere-stroke);
+    color: var(--ere-fg);
     opacity: .5;
 }
 .ere-surface .ere-pill.ere-more {
     background: transparent;
-    border-color: #444;
-    color: var(--component-node-foreground-secondary, #aaa);
+    border-color: var(--ere-stroke);
+    color: var(--ere-fg-muted);
     cursor: default;
 }
+/* .5 measured 3.7:1 on the tag fill; .7 clears 4.5:1. */
 .ere-surface .ere-strength {
-    opacity: .5;
+    opacity: .7;
 }
 
 /* The file this pill names is not on disk — ComfyUI's red node border, at pill scale.
@@ -176,25 +229,37 @@
 .ere-surface .ere-pill.ere-missing,
 .ere-surface .ere-toggle-row.ere-missing,
 .ere-surface .ere-tile.ere-missing {
-    border: 2px solid var(--ere-missing-color, #c50707);
+    border: 2px solid var(--ere-missing-color, var(--node-component-border-error, #c02323));
 }
 .ere-surface .ere-panel {
-    border: 1px solid #444;
-    border-radius: 5px;
+    border: 1px solid var(--ere-stroke);
+    border-radius: var(--ere-radius);
     padding: 5px;
-    background: var(--component-node-widget-background, #222);
+    background: var(--ere-widget-bg);
 }
 .ere-surface .ere-toggle-row {
     display: flex;
     align-items: center;
     width: 100%;
     height: 20px;
-    border-radius: 6px;
-    border: 1px solid #444;
-    background: var(--component-node-widget-background, #222);
+    border-radius: var(--ere-radius);
+    border: 1px solid var(--ere-stroke);
+    background: var(--ere-widget-bg);
     cursor: pointer;
     user-select: none;
     overflow: hidden;
+}
+/* Every pill answers the pointer, lifted from its own fill so a lora stays green.
+   --contrast-mix-color is #fff on a dark palette and #000 on a light one, so this lightens or darkens as the theme needs. */
+.ere-surface .ere-pill:hover {
+    background: color-mix(in srgb, var(--ere-fill, var(--ere-fill-tag)) 88%, var(--contrast-mix-color, #fff));
+}
+.ere-surface .ere-pill.inactive:hover {
+    background: color-mix(in srgb, var(--ere-inactive-bg) 88%, var(--contrast-mix-color, #fff));
+}
+.ere-surface .ere-toggle-row:hover,
+.ere-surface .ere-tile:hover {
+    background: color-mix(in srgb, var(--ere-widget-bg) 88%, var(--contrast-mix-color, #fff));
 }
 /* Half, not three quarters: a text pill's own fill is dark, so at .75 a disabled one read as
    *darker* than an enabled one — the wrong way round for "switched off". */
@@ -205,7 +270,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: #FFF;
+    color: var(--ere-fg);
     /* Takes the slack so the name truncates and the numbers keep the right edge. */
     flex: 1 1 auto;
     min-width: 0;
@@ -216,11 +281,7 @@
     gap: 6px;
     padding: 0 8px 0 6px;
     white-space: nowrap;
-    color: #FFF;
-}
-.ere-surface .ere-toggle-row.inactive .ere-label,
-.ere-surface .ere-toggle-row.inactive .ere-meta {
-    color: inherit;
+    color: var(--ere-fg);
 }
 .ere-surface .ere-switch {
     position: relative;
@@ -228,15 +289,39 @@
     height: 10px;
     margin: 0 12px 0 5px;
     border-radius: 5px;
-    background: #3b3b3b;
+    background: var(--ere-switch-track);
     flex: 0 0 auto;
 }
 .ere-surface .ere-switch .ere-knob {
     position: absolute;
     top: -2px;
+    left: -2px;
     width: 14px;
     height: 14px;
     border-radius: 50%;
+}
+/* 8px is the same travel the old left/right pair produced, so the on and off positions are unchanged. */
+.ere-surface .ere-switch.ere-on .ere-knob {
+    transform: translateX(8px);
+}
+/* A transition has nothing to animate from: render() empties the tag area and builds every row again, so the knob is created already in its final place.
+   The renderer marks only the row whose state actually changed, and a keyframe carries it from where it was. */
+.ere-surface .ere-switch.ere-slide .ere-knob {
+    animation: ere-knob-on .12s ease;
+}
+.ere-surface .ere-switch.ere-slide:not(.ere-on) .ere-knob {
+    animation-name: ere-knob-off;
+}
+@keyframes ere-knob-on {
+    from { transform: translateX(0); }
+}
+@keyframes ere-knob-off {
+    from { transform: translateX(8px); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .ere-surface .ere-switch.ere-slide .ere-knob {
+        animation: none;
+    }
 }
 .ere-surface .ere-tile {
     position: relative;
@@ -244,9 +329,9 @@
     flex-direction: column;
     flex: 0 0 auto;
     overflow: hidden;
-    border-radius: 5px;
-    border: 1px solid #444;
-    background: var(--component-node-widget-background, #222);
+    border-radius: var(--ere-radius);
+    border: 1px solid var(--ere-stroke);
+    background: var(--ere-widget-bg);
     cursor: pointer;
     user-select: none;
 }
@@ -269,9 +354,13 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: #FFF;
+    background: var(--ere-fill, var(--ere-fill-tag));
+    color: var(--ere-pill-fg);
+    border-radius: 0 0 calc(var(--ere-radius) - 1px) calc(var(--ere-radius) - 1px);
 }
 .ere-surface .ere-tile.inactive .ere-name {
+    background: var(--ere-inactive-bg);
+    color: var(--ere-fg);
     opacity: .5;
 }
 .ere-surface .ere-tile .ere-info {
@@ -281,11 +370,12 @@
     height: 15px;
     line-height: 15px;
     padding: 0 3px;
-    font-size: 10px;
+    font-size: var(--text-2xs, 10px);
     text-align: center;
-    background: #222;
-    color: #FFF;
-    border-radius: 5px;
+    /* Sits on a thumbnail, so it stays dark whatever the palette. */
+    background: rgb(0 0 0 / .6);
+    color: #fff;
+    border-radius: var(--radius-sm, 4px);
     opacity: .75;
 }
 .ere-surface .ere-tile.inactive .ere-info {
@@ -332,9 +422,9 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    border: 1px dashed #444;
-    border-radius: 6px;
-    background: var(--component-node-widget-background, #222);
+    border: 1px dashed var(--ere-stroke);
+    border-radius: var(--ere-radius);
+    background: var(--ere-widget-bg);
     cursor: pointer;
     overflow: hidden;
     user-select: none;
@@ -352,8 +442,8 @@
 }
 .ere-surface .ere-extract-pane:hover,
 .ere-surface .ere-extract-pane.ere-extract-over {
-    border-color: var(--p-primary-color, #4a9eff);
-    background: rgba(74, 158, 255, .08);
+    border-color: var(--primary-background);
+    background: color-mix(in srgb, var(--primary-background) 8%, transparent);
 }
 .ere-surface .ere-extract-pane img {
     display: block;
@@ -363,7 +453,7 @@
 }
 .ere-surface .ere-extract-empty {
     padding: 12px;
-    font-size: 11px;
+    font-size: var(--text-2xs, 10px);
     opacity: .6;
     text-align: center;
     line-height: 1.4;
@@ -406,19 +496,19 @@
 }
 .litemenu-entry.ere-menu-input > span {
     opacity: .7;
-    font-size: 11px;
+    font-size: var(--text-2xs, 10px);
 }
 .litemenu-entry.ere-menu-input > input,
 .litemenu-entry.ere-menu-input > textarea {
     width: 100%;
     box-sizing: border-box;
     padding: 3px 6px;
-    border: 1px solid #444;
-    border-radius: 4px;
-    background: var(--comfy-input-bg, #222);
-    color: var(--input-text, #ddd);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm, 4px);
+    background: var(--comfy-input-bg);
+    color: var(--input-text);
     font-family: inherit;
-    font-size: 12px;
+    font-size: var(--text-xs, .75rem);
 }
 .litemenu-entry.ere-menu-input > textarea {
     resize: vertical;
@@ -429,6 +519,39 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(0, 0, 0, .55);
-    font-size: 11px;
+    background: rgb(0 0 0 / .6);
+    font-size: var(--text-2xs, 10px);
+}
+/* Autocomplete match, the menu's keyboard cursor, and a menu preview image. */
+.ere-mark {
+    background: var(--ere-fill-tag);
+    color: var(--ere-pill-fg);
+    border-radius: var(--radius-xs, 2px);
+}
+/* Hover and the keyboard cursor are one mechanism in these menus (mouseenter calls setHighlight), so this rule draws both.
+   `!important` because litegraph's own `.litemenu-entry:hover:not(.disabled):not(.separator)` is more specific and would otherwise win on the hovered row.
+   Not --palette-interface-panel-hover-surface: it is a color-mix over optional palette keys, so it resolves to nothing at all on some palettes. */
+.litegraph .litemenu-entry.ere-menu-active {
+    background-color: var(--secondary-background-hover, #313235) !important;
+    color: var(--content-hover-fg, #fff) !important;
+}
+.ere-menu-preview {
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md, 6px);
+    background: var(--base-background);
+}
+/* The strength steppers take the menu's own text colour instead of a fixed white. */
+.ere-menu-step {
+    padding: 2px 5px;
+    border: none;
+    background: none;
+    color: inherit;
+    cursor: pointer;
+    font-size: var(--text-xs, .75rem);
+    line-height: 1;
+}
+/* litegraph themes `.litecontextmenu input`, but the quick-edit filter is a textarea. */
+.litecontextmenu textarea.comfy-context-menu-filter {
+    background: var(--comfy-input-bg);
+    color: var(--input-text);
 }

@@ -253,7 +253,8 @@ export class GlobalAutocomplete {
         let before = this.helper.getBeforeCursor();
         if (!before?.length) return null;
         
-        const match = before.match(/([^,;"|}()\n]+)$/);
+        // The lookbehind limits attempts to the start of a run; without it a long run ending in a separator is rescanned from every character, per keystroke.
+        const match = before.match(/(?<![^,;"|}()\n])([^,;"|}()\n]+)$/);
         if (match) {
             const word = match[0].replace(/^\s+/, "").replace(/\s/g, "_") || null;
             // Two characters before suggesting keeps English from firing on every stray letter.

@@ -846,6 +846,7 @@ function rowButton(label, title, onClick) {
     btn.className = "ere-btn";
     btn.textContent = label;
     btn.title = title;
+    btn.setAttribute("aria-label", title);
     btn.addEventListener("click", (e) => { e.stopPropagation(); onClick(e); });
     return btn;
 }
@@ -934,7 +935,7 @@ function openRowMenu(node, index, host, e) {
     ]);
 }
 
-function renderRow(node, row, index, colors) {
+function renderRow(node, row, index, slide) {
     const multiline = row.layout === "multiline";
     const host = hostFor(node, index);
     // Undo/redo re-renders without an update pass, so re-seed here.
@@ -974,9 +975,12 @@ function renderRow(node, row, index, colors) {
         if (badges) head.appendChild(badges);
     }
 
-    const sw = renderSwitchEl(row.active, "tag");
+    const sw = renderSwitchEl(row.active, "tag", slide);
     sw.classList.add("ere-composer-switch");
-    sw.title = row.active ? "Disable category (keeps its tags)" : "Enable category";
+    sw.setAttribute("role", "switch");
+    sw.setAttribute("aria-checked", String(!!row.active));
+    sw.setAttribute("aria-label", `${row.title || "Category"} enabled`);
+    sw.title = row.active ? "Disable category" : "Enable category";
     sw.addEventListener("click", (e) => { e.stopPropagation(); toggleRow(node, index, "active"); });
     head.appendChild(sw);
 
@@ -1036,7 +1040,7 @@ function renderRow(node, row, index, colors) {
 
     // Before rendering: the pills read the selection as they are built.
     pruneSelection(host, row.tags);
-    const tagArea = renderTagBody(host, body, row.layout, colors, row.tags);
+    const tagArea = renderTagBody(host, body, row.layout, row.tags);
     tagArea.classList.add("ere-composer-tags");
     host._ereDom = { el, content: tagArea, render: () => node._ereDom?.render?.() };
     return el;
@@ -1092,7 +1096,7 @@ async function dropAsCategory(node, tags, source, origin, alt) {
 }
 
 /** Draw the categories. Called by renderer.js for mode "composer". */
-export function renderComposer(node, content, colors) {
+export function renderComposer(node, content) {
     const rows = ensureRows(node);
     dropStaleHosts(node, rows);
     // The toolbar is rebuilt on every render, so the button is wired on every render.
@@ -1104,7 +1108,10 @@ export function renderComposer(node, content, colors) {
     list.dataset.ereComposer = String(node.id);
     // How a row drag resolves the Composer it is over.
     list._ereComposerNode = node;
-    rows.forEach((row, i) => list.appendChild(renderRow(node, row, i, colors)));
+    // Same one-shot slide the tag rows get: a category is rebuilt on every render, so only the one that actually flipped animates.
+    const wasActive = node._erePrevRowActive;
+    node._erePrevRowActive = new Map(rows.map((row, i) => [i, row.active !== false]));
+    rows.forEach((row, i) => list.appendChild(renderRow(node, row, i, wasActive?.has(i) && wasActive.get(i) !== (row.active !== false))));
     content.appendChild(list);
 
     // Same fire-and-forget as the node renderer: draw from what is known, repaint once if a "this file is gone" verdict arrives late.

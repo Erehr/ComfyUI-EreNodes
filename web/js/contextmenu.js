@@ -37,6 +37,13 @@ injectTagStyles();
 const isEditableTarget = (el) =>
     !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
 
+/** True when the caret sits at that end of the field with nothing selected, so the arrow has nowhere left to go inside it. */
+const caretAtEdge = (el, edge) => {
+    if (!el || typeof el.selectionStart !== "number") return true;
+    if (el.selectionStart !== el.selectionEnd) return false;
+    return edge === "start" ? el.selectionStart === 0 : el.selectionStart === (el.value?.length ?? 0);
+};
+
 // Base class for dynamic context menus
 export class DynamicContextMenu {
     /** Widen (or release) the menu for a mode that needs the room — the text field. */
@@ -280,7 +287,7 @@ export class DynamicContextMenu {
             const pre = this.escapeHtml(text.substring(0, index));
             const match = this.escapeHtml(text.substring(index, index + query.length));
             const post = this.escapeHtml(text.substring(index + query.length));
-            return `${pre}<mark style="background-color: #414650; color: white;">${match}</mark>${post}`;
+            return `${pre}<mark class="ere-mark">${match}</mark>${post}`;
         }
         return this.escapeHtml(text);
     }
@@ -492,7 +499,10 @@ export class DynamicContextMenu {
             // A type 'input' field owns its text; the keys that walk the menu still belong here.
             // A textarea keeps its own up and down to move the caret between lines.
             const walksMenu = e.key === "Escape" || e.key === "Tab"
-                || ((e.key === "ArrowUp" || e.key === "ArrowDown") && e.target?.tagName !== "TEXTAREA");
+                || ((e.key === "ArrowUp" || e.key === "ArrowDown") && e.target?.tagName !== "TEXTAREA")
+                // Opening and closing a submenu from a field with a rename box in it, once the caret is at that edge.
+                || (e.key === "ArrowRight" && caretAtEdge(e.target, "end"))
+                || (e.key === "ArrowLeft" && caretAtEdge(e.target, "start"));
             if (!walksMenu && isEditableTarget(e.target) && e.target !== this.filterBox
                 && this.root?.contains(e.target)) {
                 return;
@@ -537,11 +547,7 @@ export class DynamicContextMenu {
         if (!this.root) return;
 
         if (this.highlighted > -1) {
-            const oldItem = this.root.querySelector(`[data-option-index="${this.highlighted}"]`);
-            if (oldItem) {
-                oldItem.style.backgroundColor = "";
-                oldItem.style.color = "";
-            }
+            this.root.querySelector(`[data-option-index="${this.highlighted}"]`)?.classList.remove("ere-menu-active");
         }
 
         this.highlighted = index;
@@ -549,8 +555,7 @@ export class DynamicContextMenu {
         if (index > -1) {
             const newItem = this.root.querySelector(`[data-option-index="${index}"]`);
             if (newItem && this.options[index] && !this.options[index].disabled) {
-                newItem.style.setProperty('background-color', 'rgb(204, 204, 204)', 'important');
-                newItem.style.setProperty('color', 'rgb(0, 0, 0)', 'important');
+                newItem.classList.add("ere-menu-active");
                 newItem.scrollIntoView({ block: 'nearest' });
             }
             
@@ -606,12 +611,11 @@ export class DynamicContextMenu {
         if (!url || !this.root) return;
 
         this.previewImage = document.createElement('img');
-        this.previewImage.className = PREVIEW_CLASS;
+        this.previewImage.className = `${PREVIEW_CLASS} ere-menu-preview`;
 
         Object.assign(this.previewImage.style, {
             position: 'fixed',
             zIndex: 1001,
-            border: '1px solid #444',
             display: 'block',
             maxWidth: '256px',
             maxHeight: '256px',
@@ -1295,7 +1299,6 @@ export class TagEditContextMenu extends DynamicContextMenu {
                 if (element !== keptFilter) {
                     element.className = "comfy-context-menu-filter";
                     element.value = this.tag.name;
-                    element.style.background = "#222";
                     element.style.minWidth = "100%";
                     element.style.margin = "0";
                     if (this.tag.type === 'text') {
@@ -1357,8 +1360,9 @@ export class TagEditContextMenu extends DynamicContextMenu {
                 
                 const createButton = (text, onClick) => {
                     const btn = document.createElement("button");
+                    btn.type = "button";
+                    btn.className = "ere-menu-step";
                     btn.textContent = text;
-                    btn.style.cssText = "background:none; border:none; line-height:1; font-size:12px; cursor:pointer; color:white; padding: 2px 5px;";
                     btn.onclick = (e) => { e.stopPropagation(); onClick(e); };
                     return btn;
                 };

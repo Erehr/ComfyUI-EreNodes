@@ -17,10 +17,11 @@ def strip_lora_tags(prompt):
 
 
 # A removed tag leaves ", ," or a dangling separator where it was.
+# The leading whitespace is only taken from the start of a run: a bare `[ \t]*,` retries from every character of a long run of spaces, which is quadratic.
 def _collapse_separators(text):
-    text = re.sub(r"[ \t]*,[ \t]*(?=,)", "", text)
+    text = re.sub(r"(?:(?<![ \t])[ \t]+)?,[ \t]*(?=,)", "", text)
     text = re.sub(r"(?m)^[ \t]*,[ \t]*", "", text)
-    text = re.sub(r"[ \t]*,[ \t]*$", "", text)
+    text = re.sub(r"(?:(?<![ \t])[ \t]+)?,[ \t]*$", "", text)
     text = re.sub(r"[ \t]{2,}", " ", text)
     return text.strip().strip(",").strip()
 

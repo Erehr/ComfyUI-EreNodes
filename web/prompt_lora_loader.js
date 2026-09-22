@@ -2,7 +2,7 @@ import { app } from "../../scripts/app.js";
 import { initializeSharedPromptFunctions, optionsMenuItem, tileMenuItems } from "./prompt.js";
 import { attachTagDomWidget } from "./js/renderer.js";
 import { ActionContextMenu, FileContextMenu } from "./js/contextmenu.js";
-import { parseTags } from "./js/parser.js";
+import { getTags } from "./js/util.js";
 
 const NODE_TYPE = "ErePromptLoraLoader";
 

@@ -9,7 +9,7 @@
     height: 100%;
     min-height: 0;
     /* Side padding comes from the same classes the rows above use; only the extra room under the buttons is ours. */
-    padding-bottom: 10px;
+    padding-bottom: .5rem;
 }
 .ere-editor-dom {
     flex: 1 1 auto;
@@ -32,13 +32,18 @@
     border: 0;
     border-radius: 50%;
     cursor: pointer;
-    background: rgba(0, 0, 0, .6);
+    background: rgb(0 0 0 / .6);
     color: #fff;
-    font-size: 11px;
+    font-size: var(--text-2xs, 10px);
     line-height: 1;
 }
 .ere-editor-clear:hover {
-    background: rgba(0, 0, 0, .85);
+    background: rgb(0 0 0 / .85);
+}
+/* On a dark scrim in every theme, so the ring is white rather than a token. */
+.ere-editor-clear:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 1px;
 }
 /* Empty is a drop area one pill row tall, not a sentence a drop placeholder has to
    appear after. */
@@ -48,7 +53,7 @@
 .ere-editor-actions {
     display: flex;
     justify-content: flex-end;
-    gap: 6px;
+    gap: .5rem;
     flex: 0 0 auto;
     padding-top: 2px;
 }

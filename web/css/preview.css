@@ -14,10 +14,10 @@
     flex-direction: column;
     gap: 6px;
     padding: 12px;
-    border-radius: 8px;
-    border: 1px solid #444;
-    background: var(--comfy-menu-bg, #202020);
-    box-shadow: 0 6px 20px rgba(0, 0, 0, .55);
+    border-radius: var(--radius-lg, 8px);
+    border: 1px solid var(--border-default);
+    background: var(--base-background);
+    box-shadow: var(--interface-panel-box-shadow, 1px 1px 8px 0 rgb(0 0 0 / .4));
 }
 
 /* Interactive mode: the pointer can move into the panel and work with the pills.
@@ -39,7 +39,7 @@
     width: calc(100% - var(--ere-preview-inset) * 2);
     margin: 0 var(--ere-preview-inset);
     height: auto;
-    border-radius: 5px;
+    border-radius: var(--radius-md, 6px);
 }
 
 /* Must beat the rule above, which would otherwise re-show a broken image icon for every file that has no preview (a plain [hidden] attribute loses to any explicit display declaration). */
@@ -58,7 +58,7 @@
     align-content: flex-start;
 }
 #erenodes-hover-preview .ere-preview-empty {
-    font-size: 11px;
+    font-size: var(--text-2xs, 10px);
     opacity: .55;
 }
 
