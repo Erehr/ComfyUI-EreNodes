@@ -1,6 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { TagContextMenuInsert, TagEditContextMenu, TagGroupContextMenu, ActionContextMenu } from "./js/contextmenu.js";
-import { getCache, clearCache, captureUndoState, tagsToText, textareaOf, insertTagsAsText, getSetting, requestJson, apiFetch, toast, confirmDialog, promptDialog, pickFile, getTags, setTags, expandGroup, loadGroupTags } from "./js/util.js";
+import { getCache, clearGroupCache, captureUndoState, tagsToText, textareaOf, insertTagsAsText, getSetting, requestJson, apiFetch, toast, confirmDialog, promptDialog, pickFile, getTags, setTags, expandGroup, loadGroupTags } from "./js/util.js";
 import { bumpPreview, TILE_SIZES, TILE_RATIOS, tileBoxFor } from "./js/tagview.js";
 import { parseTags, parseTag, formatTag, parseTextToTagData, parseClipboardTags, stripNestedGroups, dedupeTags, DEFAULT_SEPARATOR } from "./js/parser.js";
 
@@ -104,7 +104,6 @@ export async function saveTagGroup({ path = "", filename, tags, imageFile, overw
             }
         }
 
-        clearCache(`/erenodes/get_tag_group?filename=${encodeURIComponent(fullPath)}`);
         // Move the cover's URL, or the browser goes on showing the thumbnail it has.
         bumpPreview("group", fullPath.replace(/\.json$/i, ""));
 
@@ -115,6 +114,8 @@ export async function saveTagGroup({ path = "", filename, tags, imageFile, overw
         if (imageFile) formData.append('image_file', imageFile, imageFile.name);
 
         const result = await requestJson("/erenodes/save_tag_group", { form: formData });
+        // After the write, not before: a fetch landing between the two would cache the old contents again.
+        clearGroupCache();
         const successMessage = result?.message || `Tag group '${name}' saved successfully.`;
         toast("success", "Saved", successMessage);
         app.ereSidebar?.refresh?.();

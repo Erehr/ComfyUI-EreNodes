@@ -38,6 +38,8 @@ export function getSetting(id, fallback) {
 
 const cache = new Map();
 const notFound = Symbol("notFound");   // 404 / 204 / empty body
+// Bumped when entries are dropped, so a fetch already in flight does not put the old answer back.
+let cacheGeneration = 0;
 
 /** True when getCache resolved to "there is no such content". */
 export function isNotFound(value) {
@@ -55,21 +57,23 @@ export function getCache(url, type = "json") {
 
     if (type !== "json") throw new Error(`Unsupported cache type: ${type}`);
 
+    const generation = cacheGeneration;
+    const settle = (value) => { if (generation === cacheGeneration) cache.set(cacheKey, value); };
     const promise = (async () => {
         try {
             const response = await apiFetch(url);
             // The sentinel rather than a rejection: a missing preview would spam the console on every render.
             if (response.status === 204 || response.status === 404) {
-                cache.set(cacheKey, notFound);
+                settle(notFound);
                 return notFound;
             }
             if (!response.ok) throw new Error(`Failed to fetch content: ${response.status} ${response.statusText}`);
             const text = await response.text();
             const data = text ? JSON.parse(text) : null;
-            cache.set(cacheKey, data);
+            settle(data);
             return data;
         } catch (error) {
-            cache.delete(cacheKey);
+            if (generation === cacheGeneration) cache.delete(cacheKey);
             throw error;
         }
     })();
@@ -78,11 +82,22 @@ export function getCache(url, type = "json") {
     return promise;
 }
 
-/** Forget one URL, in every content type. */
-export function clearCache(url) {
+// Rename, move and delete can take a whole folder, and other tabs change groups too, so every group's contents are dropped rather than working out which paths were touched.
+const GROUP_URL = "/erenodes/get_tag_group?";
+const groupChannel = typeof BroadcastChannel === "function" ? new BroadcastChannel("erenodes-tag-groups") : null;
+groupChannel?.addEventListener("message", () => dropGroupContents());
+
+function dropGroupContents() {
+    cacheGeneration++;
     for (const key of [...cache.keys()]) {
-        if (key.endsWith(`:${url}`)) cache.delete(key);
+        if (key.includes(GROUP_URL)) cache.delete(key);
     }
+}
+
+/** Forget every cached tag group's contents, here and in every other open tab. */
+export function clearGroupCache() {
+    dropGroupContents();
+    groupChannel?.postMessage(null);
 }
 
 // Tag data on a node

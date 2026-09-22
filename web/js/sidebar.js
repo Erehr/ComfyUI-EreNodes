@@ -1,5 +1,5 @@
 import { app } from "../../../scripts/app.js";
-import { getCache, isNotFound, loadStyle, clearMissingCache, isAcceptedImage, extractFromImage, tagsFromResult, forgetVerdicts, installTooltips, getSetting, loadGroupTags, requestJson, toast, confirmDialog, promptDialog, pickFile, trackMarquee, trackPress, HOLD_MS, MOVE_THRESHOLD } from "./util.js";
+import { getCache, isNotFound, loadStyle, clearMissingCache, clearGroupCache, isAcceptedImage, extractFromImage, tagsFromResult, forgetVerdicts, installTooltips, getSetting, loadGroupTags, requestJson, toast, confirmDialog, promptDialog, pickFile, trackMarquee, trackPress, HOLD_MS, MOVE_THRESHOLD } from "./util.js";
 import { SURFACE_CLASS, injectTagStyles, renderTagTile, previewUrl, saveCover,
          TILE_SIZE, TILE_GAP, TILE_SIZES, TILE_RATIOS, tileBoxFor } from "./tagview.js";
 import { showPreviewFor, hidePreviewPanel, setPreviewHandlers } from "./preview.js";
@@ -2356,6 +2356,7 @@ export async function refresh() {
     // A group may have just been created, renamed or deleted, and pills point at it.
     // Re-render them so the verdict is re-fetched now rather than whenever they next happen to redraw.
     clearMissingCache();
+    clearGroupCache();
     for (const node of app.graph?._nodes ?? []) node._ereDom?.render?.();
     if (!state.host) return;
     await ensureTree({ force: true });

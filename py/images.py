@@ -8,6 +8,10 @@ PREVIEW_WIDTH = 480
 PREVIEW_QUALITY = 85
 PREVIEW_EXT = ".webp"
 
+# Pillow only refuses above 2 x MAX_IMAGE_PIXELS (~179M px) and merely warns below that, so a 150 KB PNG could cost ~800 MB to decode.
+# 40M px is well above any generated image and bounds the worst case to a few hundred MB.
+MAX_SOURCE_PIXELS = 40_000_000
+
 
 # Raised when an upload cannot be turned into a preview.
 class PreviewError(Exception):
@@ -29,19 +33,23 @@ def save_preview_image(fileobj, dest_dir, basename):
 
     try:
         with Image.open(fileobj) as image:
+            # open() reads only the header, so this refuses an oversized image before a single pixel is decoded.
+            if image.width * image.height > MAX_SOURCE_PIXELS:
+                raise PreviewError(f"Image too large ({image.width}x{image.height}); the limit is {MAX_SOURCE_PIXELS // 1_000_000}M pixels")
+
             # Some formats (animated WebP/GIF) are multi-frame; a cover is a still, so take the first frame and drop the rest.
             image.seek(0)
 
-            # Palette and alpha modes must go through RGBA or the alpha channel is lost; everything else flattens to RGB.
+            # thumbnail() fits the width and never upscales.
+            box = (PREVIEW_WIDTH, MAX_SOURCE_PIXELS)
+            # Palette and alpha modes must go through RGBA or the alpha channel is lost; resizing a palette image directly would also fall back to nearest-neighbour.
             if image.mode in ("RGBA", "LA", "P", "PA"):
                 converted = image.convert("RGBA")
+                converted.thumbnail(box, Image.LANCZOS)
             else:
+                # Before convert(), which would decode at full size: thumbnail() lets a JPEG decode at reduced scale.
+                image.thumbnail(box, Image.LANCZOS)
                 converted = image.convert("RGB")
-
-            # Never upscale — a source narrower than the target keeps its own size rather than being blown up and re-encoded for nothing.
-            if converted.width > PREVIEW_WIDTH:
-                height = max(1, round(converted.height * PREVIEW_WIDTH / converted.width))
-                converted = converted.resize((PREVIEW_WIDTH, height), Image.LANCZOS)
 
             os.makedirs(dest_dir, exist_ok=True)
             filename = f"{basename}{PREVIEW_EXT}"
@@ -56,6 +64,18 @@ def save_preview_image(fileobj, dest_dir, basename):
         raise
     except Exception as e:
         raise PreviewError(f"Could not convert image: {e}") from e
+
+
+# True when Pillow recognises `fileobj` as an intact image. Reads the header and checksums only, never the pixels.
+def is_image(fileobj):
+    try:
+        from PIL import Image
+        fileobj.seek(0)
+        with Image.open(fileobj) as image:
+            image.verify()
+        return True
+    except Exception:
+        return False
 
 
 # Delete same-named covers in other formats, so a replaced one stops being served — view_file_handler probes extensions in a fixed order.
