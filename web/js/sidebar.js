@@ -10,7 +10,7 @@ import { createTagEditor } from "./tageditor.js";
 import { dedupeTags } from "./parser.js";
 
 // Verbatim from the frontend's Button.vue output, so these match the buttons in the core sidebars: base, then one variant per line.
-const BUTTON_BASE = "relative inline-flex items-center justify-center gap-2 cursor-pointer touch-manipulation whitespace-nowrap appearance-none border-none rounded-md text-sm font-medium font-inter transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50";
+const BUTTON_BASE = "relative inline-flex items-center justify-center gap-2 cursor-pointer touch-manipulation whitespace-nowrap appearance-none border-none rounded-md text-sm font-medium font-inter transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border-default disabled:pointer-events-none disabled:opacity-50";
 const BUTTON_CLASS = `${BUTTON_BASE} bg-transparent text-muted-foreground hover:bg-secondary-background-hover size-8`;
 // The variant the Assets tab puts next to its search box, so the two buttons read as part of the input strip.
 const BUTTON_SECONDARY = `${BUTTON_BASE} bg-secondary-background text-secondary-foreground hover:bg-secondary-background-hover size-8`;
@@ -21,7 +21,7 @@ const MENU_ITEM = `${BUTTON_BASE} bg-transparent text-base-foreground hover:bg-s
 const MENU_SEPARATOR = "my-1 border-b border-border-subtle";
 
 // Text tab classes, copied from the Assets sidebar's tablist.
-const TAB_CLASS = "flex h-8 shrink-0 items-center justify-center cursor-pointer rounded-lg border-none px-2.5 text-sm transition-all duration-200 focus-visible:ring-ring/20 outline-hidden focus-visible:ring-1";
+const TAB_CLASS = "flex h-8 shrink-0 items-center justify-center cursor-pointer rounded-lg border-none px-2.5 text-sm transition-all duration-200 focus-visible:ring-border-default/20 outline-hidden focus-visible:ring-1";
 const TAB_ACTIVE = "bg-interface-menu-component-surface-hovered text-text-primary";
 const TAB_INACTIVE = "bg-transparent text-text-secondary hover:bg-button-hover-surface focus:bg-button-hover-surface";
 
@@ -499,6 +499,8 @@ function clearSelection() {
 
 function syncSelectionClasses() {
     if (!state.host) return;
+    // One row is marked with the neutral fill; the accent means "several", which is what the drag will carry.
+    state.host.classList.toggle("ere-sb-multi", state.selection.size > 1);
     for (const el of state.host.querySelectorAll("[data-ere-key]")) {
         const selected = state.selection.has(el.dataset.ereKey);
         el.classList.toggle("ere-sb-selected", selected);
@@ -1246,9 +1248,12 @@ function makeTreeRow(row, { open = false } = {}) {
     return item;
 }
 
+// TreeExplorerV2Node.vue:49-57, as a muted icon-only button that appears on row hover.
+const BOOKMARK_CLASS = "relative inline-flex items-center justify-center cursor-pointer appearance-none border-none rounded-md bg-transparent text-muted-foreground hover:bg-secondary-background-hover size-5 p-0 mr-1.5 opacity-0 group-hover/tree-node:opacity-100 focus-visible:opacity-100";
+
 function bookmarkButton(path) {
     const on = isBookmarked(path);
-    const btn = el("button", `ere-sb-bookmark ${on ? "ere-sb-bookmark-on" : ""}`);
+    const btn = el("button", `ere-sb-bookmark ${BOOKMARK_CLASS} ${on ? "ere-sb-bookmark-on" : ""}`);
     btn.type = "button";
     btn.title = on ? "Remove bookmark" : "Bookmark";
     btn.setAttribute("aria-label", btn.title);
@@ -1492,6 +1497,7 @@ function render() {
 
         const list = el("ul", TREE_CLASS, body);
         list.setAttribute("role", "tree");
+        list.setAttribute("aria-multiselectable", "true");
         list.setAttribute("aria-label", activeTab().label);
 
         const items = [];
@@ -1514,6 +1520,7 @@ function render() {
     } else {
         const list = el("ul", TREE_CLASS, body);
         list.setAttribute("role", "tree");
+        list.setAttribute("aria-multiselectable", "true");
         list.setAttribute("aria-label", activeTab().label);
         const items = [];
         if (query) {
@@ -1555,6 +1562,7 @@ function tileRowFor(file) {
 function gridBox(body, width, height) {
     const grid = el("ul", `ere-sb-grid ${SURFACE_CLASS}`, body);
     grid.setAttribute("role", "tree");
+    grid.setAttribute("aria-multiselectable", "true");
     grid.setAttribute("aria-label", activeTab().label);
     grid.style.setProperty("--ere-tile-gap", `${TILE_GAP}px`);
     grid.style.setProperty("--ere-tile-w", `${width}px`);
@@ -1624,7 +1632,7 @@ function statusMessage(iconName, heading, body) {
     const wrap = el("div", "no-results-placeholder h-full p-8");
     const inner = el("div", "flex flex-col items-center bg-(--surface-ground) text-center", wrap);
 
-    el("i", `pi ${iconName} mb-4 text-5xl`, inner);
+    el("i", `${iconName.startsWith("icon-[") ? "" : "pi "}${iconName} mb-4 text-5xl`, inner);
     el("h3", "mb-2 text-base-foreground", inner).textContent = heading;
 
     const text = el("p", "mb-4 text-center whitespace-pre-line", inner);
@@ -1681,7 +1689,7 @@ function indexingBanner() {
     const wrap = el("div", "ere-sb-index-banner");
     wrap.dataset.ereIndexProgress = "";
     const line = el("div", "flex items-center gap-2 text-muted-foreground", wrap);
-    el("i", "pi pi-spin pi-spinner", line).style.fontSize = ".75rem";
+    el("i", "icon-[lucide--loader-circle] animate-spin text-xs", line);
     progressParts(line);
     // The bar belongs under the whole line, not squeezed into it beside the text.
     wrap.appendChild(line.querySelector(".ere-sb-progress"));
@@ -1691,7 +1699,7 @@ function indexingBanner() {
 
 /** The full-panel version, for a build a query is waiting on. */
 function indexingMessage() {
-    const { wrap, inner } = statusMessage("pi-spin pi-spinner", "Building tag index",
+    const { wrap, inner } = statusMessage("icon-[lucide--loader-circle] animate-spin", "Building tag index",
         "The first build reads every group once; later ones only re-read what changed.");
     const strip = el("div", "mt-4 flex w-full max-w-64 flex-col items-center gap-2 text-xs text-muted-foreground", inner);
     strip.dataset.ereIndexProgress = "";

@@ -3,25 +3,26 @@ import { loadStyle, apiUrl, requestJson } from "./util.js";
 
 // Colours
 
+/* The values live in tagview.css, which has a light and a dark set; these names are what the elements point at. */
+
 /** Pill / tile background for an active tag, by type. */
 export const TYPE_FILL = {
-    lora: "#415041",       // dark green
-    embedding: "#504149",  // dark purple
-    group: "#504C41",      // dark amber
-    // Prose is not a category of thing, it is the thing itself: near-black, and darker than the
-    // #2b2c2f a Composer body is drawn on so it still reads as a pill there.
-    text: "#262626",
+    lora: "var(--ere-fill-lora)",
+    embedding: "var(--ere-fill-embedding)",
+    group: "var(--ere-fill-group)",
+    // Prose is not a category of thing, it is the thing itself: derived from the surface so it stays one step darker than the body it sits on.
+    text: "var(--ere-fill-text)",
 };
-export const DEFAULT_FILL = "#414650";
+export const DEFAULT_FILL = "var(--ere-fill-tag)";
 
 /** Toggle-row knob colour for an active tag, by type. */
 export const TOGGLE_KNOB = {
-    lora: "#89a189",
-    embedding: "#9b8899",
-    group: "#9b9188",
-    text: "#9b9b9b",
+    lora: "var(--ere-knob-lora)",
+    embedding: "var(--ere-knob-embedding)",
+    group: "var(--ere-knob-group)",
+    text: "var(--ere-knob-text)",
 };
-export const TOGGLE_KNOB_DEFAULT = "#8899bb";
+export const TOGGLE_KNOB_DEFAULT = "var(--ere-knob-tag)";
 
 /** Accent for drag affordances. TYPE_FILL is near-black so pill text stays readable, which makes it useless for a thin outline. */
 export const TYPE_ACCENT = {
@@ -45,14 +46,6 @@ export function accentForTags(tags) {
         else if (seen !== type) return TYPE_ACCENT.mixed;
     }
     return TYPE_ACCENT[seen] ?? DEFAULT_ACCENT;
-}
-
-/** `#rrggbb` -> `r, g, b`, so one accent drives both a border and an rgba fill. */
-export function hexToRgbTriplet(hex) {
-    const m = /^#?([\da-f]{6})$/i.exec(String(hex).trim());
-    if (!m) return "74, 158, 255";
-    const n = parseInt(m[1], 16);
-    return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
 }
 
 // Tile Sizing
@@ -87,15 +80,6 @@ export function tileBoxFor(sizeId, ratioId) {
 
 /** Marks a visual surface that should render tags like a node does. */
 export const SURFACE_CLASS = "ere-surface";
-
-export function fallbackColors() {
-    const LG = window.LiteGraph || {};
-    return {
-        widgetBg: LG.WIDGET_BGCOLOR || "#222",
-        widgetText: LG.WIDGET_TEXT_COLOR || "#DDD",
-        box: LG.NODE_DEFAULT_BOXCOLOR || "#666",
-    };
-}
 
 /** Encode a tag/file name for the /erenodes/view/{type}/{path} route. */
 // Preview bookkeeping.
@@ -140,24 +124,16 @@ export function bumpPreview(type, name) {
 
 /**
  * A single tag pill.
- * @param {object} [opts] colors, stripFolders (basename only), showTriggers.
+ * @param {object} [opts] stripFolders (basename only), showTriggers.
  */
 export function renderTagPill(tag, opts = {}) {
-    const colors = opts.colors ?? fallbackColors();
     const pill = document.createElement("div");
     // A text pill is a paragraph, not a chip — see .ere-text in tagview.css.
     pill.className = "ere-pill" + (tag.active === false ? " inactive" : "")
         + (tag.type === "text" ? " ere-text" : "");
 
-    const fill = TYPE_FILL[tag.type] || DEFAULT_FILL;
-    if (tag.active === false) {
-        pill.style.background = colors.widgetBg;
-        pill.style.borderColor = "#444";
-        pill.style.color = colors.widgetText;
-    } else {
-        pill.style.background = fill;
-        pill.style.borderColor = fill;
-    }
+    // The fill only; the disabled look is a class, so it follows a palette change instead of freezing at the one that was live when the pill was built.
+    if (tag.active !== false) pill.style.setProperty("--ere-fill", TYPE_FILL[tag.type] || DEFAULT_FILL);
 
     let name = displayNameFor(tag, !!opts.stripFolders);
     if (opts.showTriggers !== false && tag.type === 'lora' && tag.triggers?.length > 0) {
@@ -176,31 +152,26 @@ export function renderTagPill(tag, opts = {}) {
 }
 
 /** The on/off knob: a Prompt Toggle row, and a Prompt Composer category header. */
-export function renderSwitchEl(active, type) {
+export function renderSwitchEl(active, type, slide = false) {
     const sw = document.createElement("div");
-    sw.className = "ere-switch";
+    // The offset is a class, not inline left/right: the two cannot be animated into each other.
+    sw.className = "ere-switch" + (active ? " ere-on" : "") + (slide ? " ere-slide" : "");
     const knob = document.createElement("div");
     knob.className = "ere-knob";
-    if (active) {
-        knob.style.background = TOGGLE_KNOB[type] || TOGGLE_KNOB_DEFAULT;
-        knob.style.right = "-2px";
-    } else {
-        knob.style.background = "#888";
-        knob.style.left = "-2px";
-    }
+    knob.style.background = active ? (TOGGLE_KNOB[type] || TOGGLE_KNOB_DEFAULT) : "var(--ere-knob-off)";
     sw.appendChild(knob);
     return sw;
 }
 
 /** A full-width toggle row (Prompt Toggle node). */
 export function renderToggleRowEl(tag, opts = {}) {
-    const colors = opts.colors ?? fallbackColors();
     const row = document.createElement("div");
     row.className = "ere-toggle-row" + (tag.active ? "" : " inactive")
         + (tag.type === "text" ? " ere-text" : "");
-    if (!tag.active) row.style.color = colors.widgetText;
+    row.setAttribute("role", "switch");
+    row.setAttribute("aria-checked", String(!!tag.active));
 
-    row.appendChild(renderSwitchEl(tag.active, tag.type));
+    row.appendChild(renderSwitchEl(tag.active, tag.type, opts.slide));
 
     const label = document.createElement("span");
     label.className = "ere-label";
@@ -232,8 +203,6 @@ export function renderToggleRowEl(tag, opts = {}) {
 
 /** A gallery tile (Prompt Gallery node, and the sidebar's grid view). */
 export function renderTagTile(tag, opts = {}) {
-    const colors = opts.colors ?? fallbackColors();
-
     const tile = document.createElement("div");
     tile.className = "ere-tile" + (tag.active === false ? " inactive" : "");
     // Sized by the caller's layout when it does not say: the sidebar grid gives the cell a width and an aspect ratio.
@@ -258,13 +227,7 @@ export function renderTagTile(tag, opts = {}) {
 
     const nameBar = document.createElement("div");
     nameBar.className = "ere-name";
-    const fill = TYPE_FILL[tag.type] || DEFAULT_FILL;
-    if (tag.active === false) {
-        nameBar.style.background = colors.widgetBg;
-        nameBar.style.color = colors.widgetText;
-    } else {
-        nameBar.style.background = fill;
-    }
+    if (tag.active !== false) nameBar.style.setProperty("--ere-fill", TYPE_FILL[tag.type] || DEFAULT_FILL);
     nameBar.textContent = displayNameFor(tag, opts.stripFolders !== false);
     tile.appendChild(nameBar);
 
@@ -288,12 +251,11 @@ export function renderTagTile(tag, opts = {}) {
 export function renderTagCloud(tags, opts = {}) {
     const wrap = document.createElement("div");
     wrap.className = `${SURFACE_CLASS} ere-cloud ere-flow`;
-    const colors = opts.colors ?? fallbackColors();
     const list = Array.isArray(tags) ? tags.filter(t => t && t.name) : [];
     const max = opts.max ?? Infinity;
 
     for (const tag of list.slice(0, max)) {
-        wrap.appendChild(renderTagPill(tag, { ...opts, colors }));
+        wrap.appendChild(renderTagPill(tag, opts));
     }
     if (list.length > max) {
         const more = document.createElement("div");

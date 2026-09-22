@@ -55,7 +55,7 @@ app.registerExtension({
             // Replaced before attachTagDomWidget, so its render/resize wrappers sit outside:
             // the shared update knows only about one flat tag list.
             node.onUpdateTextWidget = (n) => updateComposer(n || node);
-            node.onRenderComposer = (content, colors) => renderComposer(node, content, colors);
+            node.onRenderComposer = (content) => renderComposer(node, content);
             node.onActionMenu = (e) => openComposerMenu(node, e);
             // The toolbar's "+ Category" (renderButtons) rides the shared button channel.
             const origPillClick = node.onTagPillClick;

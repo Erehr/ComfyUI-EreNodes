@@ -1,7 +1,7 @@
 import { app } from "../../../scripts/app.js";
 import { beginUndoTransaction, endUndoTransaction, loadStyle, insertTagsAsText, caretIndexFromPoint, getElementOrCursorCoords, getTags, setTags, toast, HOLD_MS, MOVE_THRESHOLD } from "./util.js";
 import { ActionContextMenu } from "./contextmenu.js";
-import { accentForTags, hexToRgbTriplet, TYPE_FILL, DEFAULT_FILL, injectTagStyles, renderTagPill } from "./tagview.js";
+import { accentForTags, TYPE_FILL, DEFAULT_FILL, injectTagStyles, renderTagPill } from "./tagview.js";
 
 const PILL_SELECTOR = ".ere-pill, .ere-toggle-row, .ere-tile";
 const SCROLL_EDGE = 24;       // auto-scroll band inside a scrollable tag area
@@ -986,13 +986,11 @@ function setDragAccent(tags) {
     const accent = accentForTags(tags);
     const style = document.documentElement.style;
     style.setProperty("--ere-drag-accent", accent);
-    style.setProperty("--ere-drag-accent-rgb", hexToRgbTriplet(accent));
 }
 
 function clearDragAccent() {
     const style = document.documentElement.style;
     style.removeProperty("--ere-drag-accent");
-    style.removeProperty("--ere-drag-accent-rgb");
 }
 
 function teardownDrag() {

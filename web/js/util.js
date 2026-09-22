@@ -364,6 +364,8 @@ function tipElement() {
     if (!tipEl) {
         tipEl = document.createElement("div");
         tipEl.className = "ere-tip";
+        // Referenced by aria-describedby while shown, since the custom tip takes the `title` away.
+        tipEl.id = "erenodes-tip";
         document.body.appendChild(tipEl);
     }
     return tipEl;
@@ -373,6 +375,7 @@ function showTip(target, value) {
     const el = tipElement();
     el.textContent = value;
     el.classList.add("ere-tip-on");
+    target.setAttribute("aria-describedby", el.id);
     // Measured after it is shown, since the box has no width until then.
     const box = target.getBoundingClientRect();
     const own = el.getBoundingClientRect();
@@ -387,6 +390,7 @@ function hideTip() {
     if (tipFor) {
         tipFor.setAttribute("title", tipFor.dataset.ereTip ?? "");
         delete tipFor.dataset.ereTip;
+        tipFor.removeAttribute("aria-describedby");
         tipFor = null;
     }
     tipEl?.classList.remove("ere-tip-on");

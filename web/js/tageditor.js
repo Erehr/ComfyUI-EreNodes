@@ -137,7 +137,7 @@ export function createTagEditor(opts) {
     host._ereDom = { el: dom, toolbar, scroll, content, render: () => renderTags() };
 
     // ComfyUI's own button classes: these are chrome, and `ere-surface`'s monospace font belongs to tag pills alone.
-    const BTN_BASE = "relative inline-flex items-center justify-center gap-2 cursor-pointer touch-manipulation whitespace-nowrap appearance-none border-none font-medium font-inter transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 h-8 rounded-lg p-2 text-xs";
+    const BTN_BASE = "relative inline-flex items-center justify-center gap-2 cursor-pointer touch-manipulation whitespace-nowrap appearance-none border-none font-medium font-inter transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border-default disabled:pointer-events-none disabled:opacity-50 h-8 rounded-lg p-2 text-xs";
     const BTN_SECONDARY =
         `${BTN_BASE} bg-secondary-background text-base-foreground hover:bg-secondary-background-hover`;
     const BTN_PRIMARY =

@@ -13,9 +13,9 @@
     display: flex;
     flex-direction: column;
     gap: 0;
-    border: 1px solid #444;
-    border-radius: 5px;
-    background: var(--component-node-widget-background, #222);
+    border: 1px solid var(--ere-stroke);
+    border-radius: var(--ere-radius);
+    background: var(--ere-widget-bg);
 }
 /* Bypassed: the tags keep their own states, the whole row just stops emitting. */
 .ere-surface .ere-composer-row.inactive {
@@ -37,7 +37,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: #FFF;
+    color: var(--ere-fg);
 }
 /* Prompt Toggle's knob, mirrored to the right-hand side of the row. */
 .ere-surface .ere-composer-switch {
@@ -49,14 +49,18 @@
 .ere-surface .ere-composer-body {
     min-width: 0;
     padding: 5px;
-    border-top: 1px dashed #4c4c4c;
+    border-top: 1px dashed var(--ere-stroke);
 }
 /* A MultiSelect category needs the panel to read as a panel. Its own shade is the row's, so it
    would disappear into it; one step darker separates them without a second border. */
 /* The same with Toggle rows */ 
 .ere-surface .ere-composer-body .ere-panel,
 .ere-surface .ere-composer-body .ere-toggle-row {
-    background: #2b2c2f;
+    background: var(--ere-inset-bg);
+}
+/* Restated here because the rule above outranks the shared hover in tagview.css. Lifted from the inset, so a row hovers the same whatever type it holds. */
+.ere-surface .ere-composer-body .ere-toggle-row:hover {
+    background: color-mix(in srgb, var(--ere-inset-bg) 88%, var(--contrast-mix-color, #fff));
 }
 /* Multiline: the field *is* the body, so the tint goes edge to edge and the padding with it. */
 .ere-surface .ere-composer-body.ere-composer-text {
@@ -74,7 +78,7 @@
 /* Folded-row counts: the drag ghost's badges, muted the way a disabled pill is, so they
    read as a summary rather than as another row of pills. */
 .ere-surface .ere-composer-head .ere-drag-count {
-    border: 1px solid #444;
+    border: 1px solid var(--ere-stroke);
     opacity: .75;
 }
 
@@ -98,7 +102,7 @@
     margin-left: -1px;
     border-top-left-radius: 0;
     border-bottom-left-radius: 0;
-    font-size: 9px;
+    font-size: var(--text-3xs, 9px);
 }
 
 /* A multiline category: the row's whole body is the field. No border of its own — the row already
@@ -112,29 +116,35 @@
     box-sizing: border-box;
     padding: 10px;
     border: none;
-    background: #2b2c2f;
+    background: var(--ere-inset-bg);
     /* The row's own corners, so the tint does not square off the bottom of it. */
-    border-radius: 0 0 4px 4px;
-    color: var(--input-text, #ddd);
-    font: 12px monospace;
+    border-radius: 0 0 calc(var(--ere-radius) - 1px) calc(var(--ere-radius) - 1px);
+    color: var(--ere-fg);
+    font: 12px var(--ere-pill-font);
     resize: vertical;
+    scrollbar-color: var(--dialog-surface) transparent;
 }
+.ere-surface .ere-composer-body > .ere-textarea::-webkit-scrollbar-thumb {
+    background: var(--dialog-surface);
+}
+/* The native textarea rings on focus (WidgetTextarea.vue); inset, because the row clips. */
 .ere-surface .ere-composer-body > .ere-textarea:focus {
     outline: none;
+    box-shadow: inset 0 0 0 1px var(--component-node-widget-background-highlighted);
 }
 
 /* A drop lands where the placeholder is; the shared outline is drawn behind the row and
    reads as nothing, so tint the row's own border instead. */
 .ere-surface .ere-composer-row.ere-drop-target {
     outline: none;
-    border-color: var(--ere-drag-accent, var(--p-primary-color, #4a9eff));
+    border-color: var(--ere-drag-accent, var(--primary-background));
 }
 /* Same treatment as a sidebar folder, restated because sidebar.css only loads with the
    sidebar and this button is on the node. */
 .ere-surface .ere-composer-add.ere-sb-drop-target {
-    outline: 2px dashed var(--ere-drag-accent, var(--p-primary-color, #4a9eff));
+    outline: 2px dashed var(--ere-drag-accent, var(--primary-background));
     outline-offset: -2px;
-    background: rgba(var(--ere-drag-accent-rgb, 74, 158, 255), .12);
+    background: color-mix(in srgb, var(--ere-drag-accent, var(--primary-background)) 12%, transparent);
 }
 
 /* Row drag reuses dragdrop.css wholesale: .ere-drag-source hides the original,
