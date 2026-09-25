@@ -1,7 +1,6 @@
-import os
 import re
 
-from .prompt import DEFAULT_PREFIX_SEPARATOR, combine_prompt, join_parts
+from .prompt import DEFAULT_PREFIX_SEPARATOR, combine_prompt
 from .prompt_lora_stack import LORA_REGEX, parse_lora_stack, resolve_lora
 
 
@@ -50,29 +49,22 @@ class ErePromptLoraLoader:
         # Prefix first, so a lora named upstream behaves as if it loaded upstream.
         from_prefix = rows_from_prompt(prefix)
         loaded = 0
-        removed_prefix = []
         # One application per lora: the same one named upstream and again here would otherwise be applied twice, at compounded strength.
         seen = set()
-        for is_prefix, rows in ((True, from_prefix), (False, rows_from_prompt(text))):
-            for row in rows:
-                if row["name"] in seen:
-                    continue
-                seen.add(row["name"])
-                model, clip, applied = apply_row(row, model, clip)
-                if not applied:
-                    continue
+        for row in from_prefix + rows_from_prompt(text):
+            if row["name"] in seen:
+                continue
+            seen.add(row["name"])
+            model, clip, applied = apply_row(row, model, clip)
+            if applied:
                 loaded += 1
-                if is_prefix:
-                    removed_prefix.append(row)
 
         # With nothing loaded, removing the tags would delete loras this node only passes through.
         if not loaded:
             return (model, clip, combine_prompt(text, prefix, separator))
 
-        # Own loras carry their chosen triggers in `text` already; prefix ones have none picked.
-        triggers = ", ".join(_triggers_for(removed_prefix))
-        out_prefix = join_parts([strip_lora_tags(prefix), triggers], separator)
-        return (model, clip, combine_prompt(strip_lora_tags(text), out_prefix, separator))
+        # Selected triggers follow their lora tag in both text and prefix, so stripping the tags leaves exactly those.
+        return (model, clip, combine_prompt(strip_lora_tags(text), strip_lora_tags(prefix), separator))
 
 
 # Apply one row, returning the models and whether it was applied.
@@ -97,41 +89,6 @@ def apply_row(row, model, clip):
         return model, clip, False
 
     return model, clip, True
-
-
-# Lazy import: prompt_api pulls in the ComfyUI server, and this module stays runnable alone.
-def _triggers_for(rows):
-    try:
-        from .prompt_api import _read_lora_tags
-    except Exception:
-        return []
-
-    out = []
-    seen = set()
-    for row in rows:
-        found = resolve_lora(row["name"])
-        path = _lora_path(found) if found else None
-        if not path:
-            continue
-        try:
-            triggers = _read_lora_tags(path)
-        except Exception:
-            continue
-        for trigger in triggers or []:
-            name = trigger.get("name") if isinstance(trigger, dict) else trigger
-            key = str(name or "").strip().lower()
-            if key and key not in seen:
-                seen.add(key)
-                out.append(str(name).strip())
-    return out
-
-
-def _lora_path(name):
-    try:
-        import folder_paths
-        return folder_paths.get_full_path("loras", name)
-    except Exception:
-        return None
 
 
 NODE_CLASS_MAPPINGS = {
@@ -187,5 +144,13 @@ if __name__ == "__main__":
 
     # Own loras live in `text` like any other prompt node, and are left alone when none loaded.
     assert n.process("a, <lora:foo>, b", separator=None)[2] == "a, <lora:foo>, b"
+
+    # Loaded loras keep only the triggers the upstream node selected, once each.
+    real_apply = apply_row
+    apply_row = lambda row, m, c: (m, c, True)
+    out = n.process("<lora:own:0.5>, own trigger", model="M", prefix="a, <lora:foo:0.7>, picked trigger, b", separator=None)[2]
+    assert out == "a, picked trigger, b,\n\nown trigger", repr(out)
+    assert n.process("", model="M", prefix="<lora:foo>", separator=None)[2] == ""
+    apply_row = real_apply
 
     print("prompt_lora_loader self-check ok")
