@@ -79,10 +79,6 @@ export class GlobalAutocomplete {
         this.debounce = null;
         this.currentWord = "";
         this.currentWordStart = 0;
-        this.onKeyDown = this.onKeyDown.bind(this);
-        this.onInput = this.onInput.bind(this);
-        this.onBlur = this.onBlur.bind(this);
-        this.onClick = this.onClick.bind(this);
     }
     
     /**
@@ -133,7 +129,8 @@ export class GlobalAutocomplete {
         }
     }
 
-    onKeyDown(e) {
+    // Arrow fields, so each is bound to its instance and can be added and removed as a listener as-is.
+    onKeyDown = (e) => {
         if (this.menu && this.menu.root && this.menu.root.parentElement) {
             // Let DynamicContextMenu handle navigation keys
             if (['ArrowUp', 'ArrowDown', 'Escape'].includes(e.key)) {
@@ -200,13 +197,13 @@ export class GlobalAutocomplete {
                 this.scheduleUpdate();
             }
         }
-    }
+    };
 
     /**
      * Composed input (any IME): keydown reports the keystroke, not the character it produces.
      * Also fires for plain typing, where scheduleUpdate's debounce absorbs it.
      */
-    onInput(e) {
+    onInput = (e) => {
         if (!e.data) return;   // deletions and composition starts carry no data
 
         const lastChar = e.data.slice(-1);
@@ -215,20 +212,20 @@ export class GlobalAutocomplete {
         } else {
             this.scheduleUpdate();
         }
-    }
+    };
 
-    onClick() {
+    onClick = () => {
         this.closeMenu();
-    }
+    };
 
-    onBlur() {
+    onBlur = () => {
         // Use a small timeout to allow a click on the menu to register
         setTimeout(() => {
             if (this.menu && this.menu.root && !this.menu.root.matches(':hover')) {
                 this.closeMenu();
             }
         }, 150);
-    }
+    };
 
     scheduleUpdate() {
         if (this.debounce) {

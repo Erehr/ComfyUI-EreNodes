@@ -25,7 +25,7 @@ It asks, in order:
 | Artists in a subfolder per first letter | yes | Artists only. Digits and symbols share `#`. |
 | Skip artists with fewer posts than | 0 | Artists only. The catalogue has a long tail of artists with very few posts. |
 | Overwrite existing tag groups | no | See below. |
-| Token | — | Your export token from the AnimaDex account page. Input is hidden. Set `ANIMADEX_IMPORT_TOKEN` to skip the question. |
+| Token | — | Your export token from the AnimaDex account page. Input is hidden, asked on every run and never stored. |
 
 It then downloads the catalogue, prints what it would do (new, rewritten, left alone, covers to download) and asks before writing anything — answering no is a dry run.
 

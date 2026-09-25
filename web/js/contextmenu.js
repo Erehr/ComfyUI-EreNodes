@@ -138,7 +138,7 @@ export class DynamicContextMenu {
         this.close();
         this.root = document.createElement("div");
         this.root.className = "litegraph litecontextmenu litemenubar-panel dark";
-        this.root.close = this.close.bind(this);
+        this.root.close = (...args) => this.close(...args);
         Object.assign(this.root.style, {
             left: `${this.event?.clientX ?? 0}px`,
             top: `${this.event?.clientY ?? 0}px`,
@@ -722,7 +722,7 @@ export class FileContextMenu extends DynamicContextMenu {
 
         this.root = document.createElement("div");
         this.root.className = "litegraph litecontextmenu litemenubar-panel dark";
-        this.root.close = this.close.bind(this);
+        this.root.close = (...args) => this.close(...args);
         
         const { clientX: x, clientY: y } = this.event;
         Object.assign(this.root.style, {
@@ -969,7 +969,7 @@ export class TagContextMenu extends DynamicContextMenu {
         this.close();
         this.root = document.createElement("div");
         this.root.className = "litegraph litecontextmenu litemenubar-panel dark";
-        this.root.close = this.close.bind(this);
+        this.root.close = (...args) => this.close(...args);
 
         if (this.positioning?.event) {
             const { clientX: x, clientY: y } = this.positioning.event;
@@ -1260,7 +1260,7 @@ export class TagEditContextMenu extends DynamicContextMenu {
         this.close(); // Close any existing menu
         this.root = document.createElement("div");
         this.root.className = "litegraph litecontextmenu litemenubar-panel dark";
-        this.root.close = this.close.bind(this);
+        this.root.close = (...args) => this.close(...args);
         
         const { clientX: x, clientY: y } = this.event;
         const wide = this.tag.type === 'text';
@@ -1485,9 +1485,9 @@ export class TagEditContextMenu extends DynamicContextMenu {
             await this.init();
         }, type, this.existingTags);
 
-        const originalFileMenuClose = fileMenu.close.bind(fileMenu);
+        const originalFileMenuClose = fileMenu.close;
         fileMenu.close = () => {
-            originalFileMenuClose();
+            originalFileMenuClose.call(fileMenu);
             if (this.root) {
                 this.root.style.display = 'block'; // Show it again if no selection was made
             }

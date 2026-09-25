@@ -369,7 +369,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
                         const originNode = graph.getNodeById(link.origin_id);
                         // By name: the Lora Loader's inputs start with MODEL where every other node starts with prefix.
                         const target = newNode.inputs?.findIndex(input => input.name === this.inputs[i].name);
-                        if (originNode && target >= 0) originNode.connect(link.origin_slot, newNode, target);
+                        if (originNode && target >= 0) originNode.connectSlots(originNode.outputs[link.origin_slot], newNode, newNode.inputs[target]);
                     }
                 }
             }
@@ -384,7 +384,8 @@ export function initializeSharedPromptFunctions(node, textWidget) {
                         const link = graphLink(graph, linkId);
                         if (link) {
                             const targetNode = graph.getNodeById(link.target_id);
-                            if (targetNode) newNode.connect(i, targetNode, link.target_slot);
+                            const input = targetNode?.inputs?.[link.target_slot];
+                            if (input && newNode.outputs?.[i]) newNode.connectSlots(newNode.outputs[i], targetNode, input);
                         }
                     }
                 }

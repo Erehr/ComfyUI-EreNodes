@@ -82,13 +82,86 @@ def apply_row(row, model, clip):
         return model, clip, False
 
     try:
-        from nodes import LoraLoader
-        model, clip = LoraLoader().load_lora(model, clip, found, strength_model, strength_clip)
+        import comfy.sd
+        import comfy.utils
+        import folder_paths
+        lora = comfy.utils.load_torch_file(folder_paths.get_full_path("loras", found), safe_load=True)
+        model, clip = comfy.sd.load_lora_for_models(model, clip, match_anima_blocks(lora, model, row["name"]), strength_model, strength_clip)
     except Exception as e:
         print(f"[EreNodes] Failed to apply LoRA '{row['name']}': {e}")
         return model, clip, False
 
     return model, clip, True
+
+
+# Each Anima generation inserts new transformer blocks between the previous generation's, so an older LoRA's block indices land on the wrong blocks of a newer model.
+# Old block count -> (new block count, indices of the inserted blocks in the new model), from ComfyUI-Anima-Remap's expand manifests (MIT); 40 -> 52 is reconstructed there, not official.
+ANIMA_EXPANSIONS = {
+    28: (40, (2, 5, 8, 11, 14, 17, 21, 24, 27, 30, 33, 36)),
+    40: (52, (3, 7, 11, 15, 19, 23, 27, 31, 35, 39, 43, 47)),
+}
+
+# The main block index in both LoRA key styles: `net.blocks.12.self_attn` and kohya's `lora_unet_blocks_12_self_attn`.
+BLOCK_INDEX = re.compile(r"(?<=\.blocks\.)\d+(?=\.)|(?<=_blocks_)\d+(?=_)")
+
+
+# llm_adapter has its own six blocks that no expansion has touched.
+def _block_match(key):
+    return None if "llm_adapter" in key else BLOCK_INDEX.search(key)
+
+
+def lora_block_count(keys):
+    indices = [int(m.group()) for m in map(_block_match, keys) if m]
+    return max(indices) + 1 if indices else None
+
+
+# Old block index -> new block index across every expansion between the two sizes, or None when no known chain connects them.
+def anima_block_map(source, target):
+    mapping = {i: i for i in range(source)}
+    count = source
+    while count < target and count in ANIMA_EXPANSIONS:
+        count, inserted = ANIMA_EXPANSIONS[count]
+        kept = [i for i in range(count) if i not in inserted]
+        mapping = {old: kept[new] for old, new in mapping.items()}
+    return mapping if count == target else None
+
+
+def remap_lora_blocks(lora, mapping):
+    out = {}
+    for key, value in lora.items():
+        m = _block_match(key)
+        out[key if m is None else f"{key[:m.start()]}{mapping[int(m.group())]}{key[m.end():]}"] = value
+    return out
+
+
+# A LoRA that never touches the last blocks of its generation still belongs to the smallest generation that holds the blocks it does touch.
+def lora_generation(block_count):
+    sizes = sorted({*ANIMA_EXPANSIONS, *(new for new, _ in ANIMA_EXPANSIONS.values())})
+    return next((size for size in sizes if size >= block_count), block_count)
+
+
+# The LoRA as it has to be applied to this model: remapped when it was trained on an older, smaller Anima generation.
+def match_anima_blocks(lora, model, name):
+    import comfy.model_base
+    anima = getattr(comfy.model_base, "Anima", None)
+    if anima is None or not isinstance(getattr(model, "model", None), anima):
+        return lora
+    target = len(model.model.diffusion_model.blocks)
+    source = lora_block_count(lora)
+    if source is None:
+        return lora
+    # Never rounded past the model itself, whose size need not be a known generation.
+    source = min(lora_generation(source), max(source, target))
+    if source == target:
+        return lora
+    # ComfyUI would silently skip the blocks the model lacks and apply a broken remainder.
+    if source > target:
+        raise ValueError(f"trained on a {source}-block Anima model, this one has {target} blocks")
+    mapping = anima_block_map(source, target)
+    if mapping is None:
+        return lora
+    print(f"[EreNodes] Anima LoRA '{name}' remapped from {source} to {target} blocks")
+    return remap_lora_blocks(lora, mapping)
 
 
 NODE_CLASS_MAPPINGS = {
@@ -152,5 +225,18 @@ if __name__ == "__main__":
     assert out == "a, picked trigger, b,\n\nown trigger", repr(out)
     assert n.process("", model="M", prefix="<lora:foo>", separator=None)[2] == ""
     apply_row = real_apply
+
+    # Composed 28 -> 52 must equal ComfyUI-Anima-Remap's expand_manifest_28_52_composed.json.
+    inserted_28_52 = {2, 3, 6, 7, 10, 11, 14, 15, 18, 19, 22, 23, 27, 28, 31, 32, 35, 36, 39, 40, 43, 44, 47, 48}
+    assert list(anima_block_map(28, 52).values()) == [i for i in range(52) if i not in inserted_28_52]
+    assert anima_block_map(28, 40)[2] == 3 and anima_block_map(40, 40) == {i: i for i in range(40)}
+    assert anima_block_map(27, 40) is None and anima_block_map(28, 30) is None
+
+    lora = {"diffusion_model.blocks.27.mlp.layer1.lora_A.weight": 1, "lora_unet_blocks_2_self_attn_q_proj.lora_down.weight": 2,
+            "diffusion_model.llm_adapter.blocks.5.cross_attn.lora_A.weight": 3, "diffusion_model.final_layer.lora_A.weight": 4}
+    assert lora_block_count(lora) == 28
+    assert [lora_generation(n) for n in (20, 28, 29, 40, 41, 60)] == [28, 28, 40, 40, 52, 60]
+    assert remap_lora_blocks(lora, anima_block_map(28, 40)) == {"diffusion_model.blocks.39.mlp.layer1.lora_A.weight": 1, "lora_unet_blocks_3_self_attn_q_proj.lora_down.weight": 2,
+                                                                  "diffusion_model.llm_adapter.blocks.5.cross_attn.lora_A.weight": 3, "diffusion_model.final_layer.lora_A.weight": 4}
 
     print("prompt_lora_loader self-check ok")

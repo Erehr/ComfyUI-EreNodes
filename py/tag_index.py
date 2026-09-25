@@ -101,7 +101,7 @@ def db_path():
 
 
 def _connect():
-    connection = sqlite3.connect(db_path(), timeout=30)
+    connection = sqlite3.Connection(db_path(), timeout=30)
     # Lowercase is enforced on the way in, and with case folding off SQLite can use the index for a 'prefix%' pattern.
     connection.execute("PRAGMA case_sensitive_like=ON")
     try:

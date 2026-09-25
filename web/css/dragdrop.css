@@ -40,6 +40,17 @@
     outline: 1px dashed var(--ere-drag-accent, var(--primary-background));
     outline-offset: 2px;
 }
+/* Replace mode (Shift over another node): every tag the drop will remove turns red. */
+.ere-surface.ere-drop-replace {
+    --ere-replace-color: #e5484d;
+    outline-color: var(--ere-replace-color);
+}
+.ere-surface.ere-drop-replace .ere-drop-zone > [data-ere-index] {
+    outline: 2px solid var(--ere-replace-color);
+    outline-offset: -2px;
+    background: color-mix(in srgb, var(--ere-replace-color) 35%, transparent);
+    opacity: .7;
+}
 .ere-surface.ere-drag-ghost {
     position: fixed;
     left: 0;
