@@ -35,6 +35,12 @@ SUGGEST_LIMIT = 20
 MAX_SUGGEST_LIMIT = 100
 CONTEXT_MAX_GROUPS = 2000
 
+# Statements of the incremental sync.
+INSERT_NAME = "INSERT INTO names(tag) VALUES(?)"
+INSERT_GROUP = "INSERT INTO groups(path, mtime, size) VALUES(?, ?, ?)"
+UPDATE_GROUP = "UPDATE groups SET mtime=?, size=? WHERE id=?"
+DELETE_GROUP_TAGS = "DELETE FROM tags WHERE gid=?"
+
 
 # Sync runs in a worker thread so a first build cannot block the event loop or time out a request; the client polls status instead.
 _LOCK = threading.Lock()
@@ -303,7 +309,7 @@ def _incremental_sync(connection, root, on_disk, stored, stale, removed):
         tid = tids.get(tag)
         if tid is None:
             row = connection.execute("SELECT id FROM names WHERE tag=?", (tag,)).fetchone()
-            tid = tids[tag] = row[0] if row else connection.execute("INSERT INTO names(tag) VALUES(?)", (tag,)).lastrowid
+            tid = tids[tag] = row[0] if row else connection.execute(INSERT_NAME, (tag,)).lastrowid
         return tid
 
     failed, pending = [], 0
@@ -317,11 +323,11 @@ def _incremental_sync(connection, root, on_disk, stored, stale, removed):
         previous = stored.get(path)
         if previous is None:
             # INSERT rather than INSERT OR REPLACE, so an id is never recycled out from under rows that still point at it.
-            gid = connection.execute("INSERT INTO groups(path, mtime, size) VALUES(?, ?, ?)", (path, mtime, size)).lastrowid
+            gid = connection.execute(INSERT_GROUP, (path, mtime, size)).lastrowid
         else:
             gid = previous[0]
-            connection.execute("UPDATE groups SET mtime=?, size=? WHERE id=?", (mtime, size, gid))
-            connection.execute("DELETE FROM tags WHERE gid=?", (gid,))
+            connection.execute(UPDATE_GROUP, (mtime, size, gid))
+            connection.execute(DELETE_GROUP_TAGS, (gid,))
         if tags:
             connection.executemany("INSERT OR IGNORE INTO tags(tid, gid) VALUES(?, ?)", [(intern(tag), gid) for tag in tags])
         pending += 1
