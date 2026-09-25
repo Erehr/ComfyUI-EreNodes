@@ -1108,7 +1108,7 @@ export function renderComposer(node, content) {
     list.dataset.ereComposer = String(node.id);
     // How a row drag resolves the Composer it is over.
     list._ereComposerNode = node;
-    // Same one-shot slide the tag rows get: a category is rebuilt on every render, so only the one that actually flipped animates.
+    // Only the category that flipped: a render rebuilds them all.
     const wasActive = node._erePrevRowActive;
     node._erePrevRowActive = new Map(rows.map((row, i) => [i, row.active !== false]));
     rows.forEach((row, i) => list.appendChild(renderRow(node, row, i, wasActive?.has(i) && wasActive.get(i) !== (row.active !== false))));

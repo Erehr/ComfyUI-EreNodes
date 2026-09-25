@@ -129,12 +129,12 @@ export function parseTextToTagData(text, oldTagData = []) {
 }
 
 /**
- * The same, for text arriving from the clipboard. Booru sites write tags with underscores and the anime checkpoints are trained on the spaced form.
- * Only `tag` pills are converted: a lora, embedding or group name is a filename, and `text` is prose.
+ * The same, for clipboard text: booru sites write tags with underscores.
+ * Only `tag` pills convert, since a lora, embedding or group name is a filename.
  */
 export function parseClipboardTags(text, oldTagData = []) {
     const tags = parseTextToTagData(text, oldTagData).map(tag => tag.type === "tag" && tag.name ? { ...tag, name: tag.name.replace(/_/g, " ") } : tag);
-    // Again after converting, since "white_hair, white hair" only collides once both are spaced.
+    // Again after converting: "white_hair, white hair" only collides once both are spaced.
     return dedupeTags(tags);
 }
 

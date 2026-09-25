@@ -499,7 +499,7 @@ function clearSelection() {
 
 function syncSelectionClasses() {
     if (!state.host) return;
-    // One row is marked with the neutral fill; the accent means "several", which is what the drag will carry.
+    // The accent means several rows; one row is the neutral fill.
     state.host.classList.toggle("ere-sb-multi", state.selection.size > 1);
     for (const el of state.host.querySelectorAll("[data-ere-key]")) {
         const selected = state.selection.has(el.dataset.ereKey);
@@ -1248,7 +1248,7 @@ function makeTreeRow(row, { open = false } = {}) {
     return item;
 }
 
-// TreeExplorerV2Node.vue:49-57, as a muted icon-only button that appears on row hover.
+// TreeExplorerV2Node.vue:49-57.
 const BOOKMARK_CLASS = "relative inline-flex items-center justify-center cursor-pointer appearance-none border-none rounded-md bg-transparent text-muted-foreground hover:bg-secondary-background-hover size-5 p-0 mr-1.5 opacity-0 group-hover/tree-node:opacity-100 focus-visible:opacity-100";
 
 function bookmarkButton(path) {

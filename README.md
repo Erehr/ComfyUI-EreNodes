@@ -64,7 +64,7 @@ ComfyUI-EreNodes provides an intuitive and feature-rich solution for handling pr
 - **Quick Application**: Easy loading of saved tag groups as convenient pills or their content
 - **Import/Export**: Seamless sharing and backup of your tag collections
 - **Choose Where They Live**: Keep tag groups in the node folder or in `ComfyUI/models/tag_groups` so they survive reinstalls and Manager updates
-- **Bulk Import Script**: `scripts/animadex_to_tag_groups.py` builds tag groups (with covers) from the animadex.net character catalogue — a standalone command-line tool for anyone who wants a large character library in one go; see `scripts/README.md`
+- **Bulk Import Script**: `scripts/animadex_import.py` builds tag groups (with covers) from the animadex.net character and artist catalogues — a standalone interactive command-line tool for anyone who wants a large library in one go; see `scripts/README.md`
 
 ### 🗂️ EreNodes Sidebar
 - **Native Sidebar Tab**: Browse tag groups, LoRAs and embeddings in a proper ComfyUI sidebar tab

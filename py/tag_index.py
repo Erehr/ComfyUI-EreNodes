@@ -196,12 +196,12 @@ def _scan(root):
 # Only `tag` entries: lora, embedding and nested group pills are already findable by name in the default path search.
 def _read_tags(abs_path):
     try:
-        # No real tag group comes near this; the cap keeps one hostile file from costing a sync its memory.
+        # No real tag group comes near this; the cap bounds what one hostile file can cost.
         if os.path.getsize(abs_path) > MAX_GROUP_BYTES:
             return None
         with open(abs_path, 'r', encoding='utf-8') as handle:
             data = json.load(handle)
-    # RecursionError is not a ValueError: a deeply nested file raises it from json.load, and uncaught it would abort every sync at that file.
+    # RecursionError is not a ValueError: json.load raises it on a deeply nested file, and it would abort the whole sync.
     except (OSError, ValueError, RecursionError):
         return None
     if not isinstance(data, list):

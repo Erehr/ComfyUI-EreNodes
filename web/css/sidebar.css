@@ -5,7 +5,7 @@
 .ere-sidebar li {
     list-style: none;
 }
-/* One selected row is the neutral fill the Node Library uses (TreeExplorerV2Node.vue); the accent below marks a multi-selection. */
+/* Neutral fill for one row (TreeExplorerV2Node.vue); the accent below means several. */
 .ere-sidebar .ere-sb-selected {
     background: var(--comfy-input-bg);
     border-radius: var(--radius-sm, 4px);
@@ -69,7 +69,7 @@
     outline-offset: -1px;
 }
 
-/* A tile is not a tree node, so the group-hover class on the button cannot reach it; focus-visible is restated in case that variant is not compiled. */
+/* A tile is not a tree node, so the button's group-hover class cannot reach it. */
 .ere-sidebar .ere-sb-tile:hover .ere-sb-bookmark,
 .ere-sidebar .ere-sb-bookmark:focus-visible {
     opacity: 1;

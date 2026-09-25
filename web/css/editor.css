@@ -40,7 +40,7 @@
 .ere-editor-clear:hover {
     background: rgb(0 0 0 / .85);
 }
-/* On a dark scrim in every theme, so the ring is white rather than a token. */
+/* White, not a token: the scrim under it is dark in every theme. */
 .ere-editor-clear:focus-visible {
     outline: 2px solid #fff;
     outline-offset: 1px;

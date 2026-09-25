@@ -8,8 +8,7 @@ PREVIEW_WIDTH = 480
 PREVIEW_QUALITY = 85
 PREVIEW_EXT = ".webp"
 
-# Pillow only refuses above 2 x MAX_IMAGE_PIXELS (~179M px) and merely warns below that, so a 150 KB PNG could cost ~800 MB to decode.
-# 40M px is well above any generated image and bounds the worst case to a few hundred MB.
+# Pillow only refuses above 2 x MAX_IMAGE_PIXELS and merely warns below it, so a 150 KB PNG could cost ~800 MB to decode.
 MAX_SOURCE_PIXELS = 40_000_000
 
 
@@ -33,7 +32,7 @@ def save_preview_image(fileobj, dest_dir, basename):
 
     try:
         with Image.open(fileobj) as image:
-            # open() reads only the header, so this refuses an oversized image before a single pixel is decoded.
+            # open() reads only the header, so nothing is decoded before this.
             if image.width * image.height > MAX_SOURCE_PIXELS:
                 raise PreviewError(f"Image too large ({image.width}x{image.height}); the limit is {MAX_SOURCE_PIXELS // 1_000_000}M pixels")
 
@@ -42,12 +41,12 @@ def save_preview_image(fileobj, dest_dir, basename):
 
             # thumbnail() fits the width and never upscales.
             box = (PREVIEW_WIDTH, MAX_SOURCE_PIXELS)
-            # Palette and alpha modes must go through RGBA or the alpha channel is lost; resizing a palette image directly would also fall back to nearest-neighbour.
+            # Palette and alpha modes must go through RGBA: the alpha is lost otherwise, and a palette image resizes nearest-neighbour.
             if image.mode in ("RGBA", "LA", "P", "PA"):
                 converted = image.convert("RGBA")
                 converted.thumbnail(box, Image.LANCZOS)
             else:
-                # Before convert(), which would decode at full size: thumbnail() lets a JPEG decode at reduced scale.
+                # Before convert(): thumbnail() lets a JPEG decode at reduced scale.
                 image.thumbnail(box, Image.LANCZOS)
                 converted = image.convert("RGB")
 
@@ -66,7 +65,7 @@ def save_preview_image(fileobj, dest_dir, basename):
         raise PreviewError(f"Could not convert image: {e}") from e
 
 
-# True when Pillow recognises `fileobj` as an intact image. Reads the header and checksums only, never the pixels.
+# True when Pillow recognises `fileobj` as an intact image, from the header and checksums alone.
 def is_image(fileobj):
     try:
         from PIL import Image

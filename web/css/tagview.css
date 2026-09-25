@@ -1,14 +1,14 @@
 /* Tag pills, toggle rows, gallery tiles and the extractor image pane.
    Scoped to .ere-surface so every surface that draws a tag — nodes, menu previews, the sidebar — shares one rule set. */
 
-/* Pack tokens split light on :root and dark on .dark-theme, the same way the frontend splits its own. */
+/* Light on :root, dark on .dark-theme, as the frontend splits its own. */
 :root {
     --ere-fill-tag: color-mix(in srgb, #4a9eff 30%, var(--secondary-background-hover, #d9d9d9));
     --ere-fill-lora: color-mix(in srgb, #5fbf6a 30%, var(--secondary-background-hover, #d9d9d9));
     --ere-fill-embedding: color-mix(in srgb, #d2687f 30%, var(--secondary-background-hover, #d9d9d9));
     --ere-fill-group: color-mix(in srgb, #e0a53f 30%, var(--secondary-background-hover, #d9d9d9));
     --ere-pill-fg: var(--base-foreground, #171718);
-    /* One set for both themes: darkening these for the light palette left them muddy, and the knob reads as a type marker rather than as text. */
+    /* One set for both themes: a knob marks a type, it is not text. */
     --ere-knob-tag: #8899bb;
     --ere-knob-lora: #89a189;
     --ere-knob-embedding: #9b8899;
@@ -17,7 +17,7 @@
     --ere-knob-off: #616161;
     --ere-switch-track: var(--interface-stroke, #c1c1c1);
     --ere-pill-font: monospace;
-    /* Declared here, not per surface: a disabled pill is the same colour on a node, in a Composer row and in the sidebar. */
+    /* Not per surface: a disabled pill is one colour everywhere. */
     --ere-inactive-bg: color-mix(in srgb, var(--component-node-widget-background) 88%, #000);
 }
 /* Equal specificity to :root, so this block has to stay after it. */
@@ -32,14 +32,14 @@
 }
 
 .ere-surface {
-    /* Per surface rather than on :root, so a surface that overrides the widget colour also moves the shades derived from it. */
+    /* Per surface, so an override also moves the shades derived from it. */
     --ere-widget-bg: var(--component-node-widget-background);
     --ere-widget-bg-hover: var(--component-node-widget-background-hovered);
     --ere-stroke: var(--node-component-border, #444);
     --ere-fg: var(--component-node-foreground);
     --ere-fg-muted: var(--component-node-foreground-secondary);
     --ere-radius: var(--radius-md, 6px);
-    /* 88% lands on #2b2c2f over the default dark widget colour, and keeps the same step on every other palette. */
+    /* 88% lands on #2b2c2f on the default dark palette, and keeps that step on the others. */
     --ere-inset-bg: color-mix(in srgb, var(--ere-widget-bg) 88%, #000);
     --ere-fill-text: color-mix(in srgb, var(--ere-widget-bg) 78%, #000);
     font: 12px var(--ere-pill-font);
@@ -249,8 +249,7 @@
     user-select: none;
     overflow: hidden;
 }
-/* Every pill answers the pointer, lifted from its own fill so a lora stays green.
-   --contrast-mix-color is #fff on a dark palette and #000 on a light one, so this lightens or darkens as the theme needs. */
+/* Lifted from the pill's own fill, so a lora stays green. */
 .ere-surface .ere-pill:hover {
     background: color-mix(in srgb, var(--ere-fill, var(--ere-fill-tag)) 88%, var(--contrast-mix-color, #fff));
 }
@@ -300,12 +299,10 @@
     height: 14px;
     border-radius: 50%;
 }
-/* 8px is the same travel the old left/right pair produced, so the on and off positions are unchanged. */
 .ere-surface .ere-switch.ere-on .ere-knob {
     transform: translateX(8px);
 }
-/* A transition has nothing to animate from: render() empties the tag area and builds every row again, so the knob is created already in its final place.
-   The renderer marks only the row whose state actually changed, and a keyframe carries it from where it was. */
+/* render() rebuilds every row, so a transition has no previous state to start from. */
 .ere-surface .ere-switch.ere-slide .ere-knob {
     animation: ere-knob-on .12s ease;
 }
@@ -522,15 +519,13 @@
     background: rgb(0 0 0 / .6);
     font-size: var(--text-2xs, 10px);
 }
-/* Autocomplete match, the menu's keyboard cursor, and a menu preview image. */
 .ere-mark {
     background: var(--ere-fill-tag);
     color: var(--ere-pill-fg);
     border-radius: var(--radius-xs, 2px);
 }
-/* Hover and the keyboard cursor are one mechanism in these menus (mouseenter calls setHighlight), so this rule draws both.
-   `!important` because litegraph's own `.litemenu-entry:hover:not(.disabled):not(.separator)` is more specific and would otherwise win on the hovered row.
-   Not --palette-interface-panel-hover-surface: it is a color-mix over optional palette keys, so it resolves to nothing at all on some palettes. */
+/* Hover and the keyboard cursor are one mechanism here: mouseenter calls setHighlight.
+   !important because litegraph's own :hover rule is more specific. */
 .litegraph .litemenu-entry.ere-menu-active {
     background-color: var(--secondary-background-hover, #313235) !important;
     color: var(--content-hover-fg, #fff) !important;
@@ -540,7 +535,6 @@
     border-radius: var(--radius-md, 6px);
     background: var(--base-background);
 }
-/* The strength steppers take the menu's own text colour instead of a fixed white. */
 .ere-menu-step {
     padding: 2px 5px;
     border: none;

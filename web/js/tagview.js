@@ -3,14 +3,14 @@ import { loadStyle, apiUrl, requestJson } from "./util.js";
 
 // Colours
 
-/* The values live in tagview.css, which has a light and a dark set; these names are what the elements point at. */
+/* Values live in tagview.css, one set per theme. */
 
 /** Pill / tile background for an active tag, by type. */
 export const TYPE_FILL = {
     lora: "var(--ere-fill-lora)",
     embedding: "var(--ere-fill-embedding)",
     group: "var(--ere-fill-group)",
-    // Prose is not a category of thing, it is the thing itself: derived from the surface so it stays one step darker than the body it sits on.
+    // Prose is not a category of thing, it is the thing itself: one step darker than the body it sits on.
     text: "var(--ere-fill-text)",
 };
 export const DEFAULT_FILL = "var(--ere-fill-tag)";
@@ -132,7 +132,7 @@ export function renderTagPill(tag, opts = {}) {
     pill.className = "ere-pill" + (tag.active === false ? " inactive" : "")
         + (tag.type === "text" ? " ere-text" : "");
 
-    // The fill only; the disabled look is a class, so it follows a palette change instead of freezing at the one that was live when the pill was built.
+    // Fill only: the disabled look is a class, so it follows a palette change.
     if (tag.active !== false) pill.style.setProperty("--ere-fill", TYPE_FILL[tag.type] || DEFAULT_FILL);
 
     let name = displayNameFor(tag, !!opts.stripFolders);
@@ -154,7 +154,7 @@ export function renderTagPill(tag, opts = {}) {
 /** The on/off knob: a Prompt Toggle row, and a Prompt Composer category header. */
 export function renderSwitchEl(active, type, slide = false) {
     const sw = document.createElement("div");
-    // The offset is a class, not inline left/right: the two cannot be animated into each other.
+    // A class, not inline left/right: those two cannot animate into each other.
     sw.className = "ere-switch" + (active ? " ere-on" : "") + (slide ? " ere-slide" : "");
     const knob = document.createElement("div");
     knob.className = "ere-knob";
