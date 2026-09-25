@@ -23,7 +23,6 @@ from urllib.parse import quote
 
 SITE = "https://animadex.net"
 USER_AGENT = "erenodes-tag-group-import/2"
-TOKEN_ENV = "ANIMADEX_IMPORT_TOKEN"
 
 # Busy, or transient. Anything else (401, 403, 404) is an answer rather than a hiccup, and is not retried.
 RETRY_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
@@ -95,9 +94,6 @@ def ask_out_dir():
             return Path(path).expanduser()
 
 def ask_token():
-    if os.environ.get(TOKEN_ENV):
-        print(f"Using the token from {TOKEN_ENV}.")
-        return os.environ[TOKEN_ENV]
     while True:
         token = getpass.getpass(f"AnimaDex export token (from {SITE}/account, input hidden): ").strip()
         if token:

@@ -447,6 +447,7 @@ function onWindowPointerMove(e) {
         state.drag.lastX = e.clientX;
         state.drag.lastY = e.clientY;
         state.drag.alt = e.altKey;
+        state.drag.shift = e.shiftKey;
         updateDrag(e.clientX, e.clientY);
         e.preventDefault();
         return;
@@ -472,6 +473,7 @@ function onWindowPointerUp(e) {
     if (state.drag) {
         e.stopPropagation();
         state.drag.alt = e.altKey;
+        state.drag.shift = e.shiftKey;
         finishDrag();
     }
     endPointerSession();
@@ -493,20 +495,23 @@ function onDragKey(e) {
     }
     // Alt produces no pointermove, so copy mode is read from the key itself. preventDefault keeps it from moving focus to the browser menu bar.
     if (e.key === "Alt") e.preventDefault();
-    setAlt(e.altKey || e.key === "Alt");
+    setModifiers(e.altKey || e.key === "Alt", e.shiftKey || e.key === "Shift");
 }
 
 function onDragKeyUp(e) {
     if (!state.drag) return;
-    setAlt(e.key === "Alt" ? false : e.altKey);
+    setModifiers(e.key === "Alt" ? false : e.altKey, e.key === "Shift" ? false : e.shiftKey);
 }
 
-function setAlt(alt) {
-    // Key repeat fires continuously while Alt is held — only react to changes.
-    if (!state.drag || state.drag.alt === alt) return;
-    state.drag.alt = alt;
-    applyExternalVariant(state.drag);
-    updateDrag(state.drag.lastX, state.drag.lastY);
+function setModifiers(alt, shift) {
+    const d = state.drag;
+    // Key repeat fires continuously while a key is held — only react to changes.
+    if (!d || (d.alt === alt && d.shift === shift)) return;
+    const altChanged = d.alt !== alt;
+    d.alt = alt;
+    d.shift = shift;
+    if (altChanged) applyExternalVariant(d);
+    updateDrag(d.lastX, d.lastY);
 }
 
 /** Swap an external drag between its two readings: a tag group drops as itself (one pill, so a Gallery node shows its cover), and Alt drops its contents. */
@@ -597,6 +602,8 @@ function beginDrag() {
         lastY: p.y,
         lastKey: null,
         alt: false,
+        shift: false,
+        replace: false,
         copying: false,
         origin: null,
         sidebarZone: null,
@@ -637,6 +644,7 @@ function updateDrag(x, y) {
         setSidebarTarget(d, null);
         setTextTarget(d, textZone, x, y);
         d.target = null;
+        d.replace = false;
         d.dropIndex = null;
         d.lastKey = null;
         setCopyMode(d, d.alt && !d.variants && !!d.sourceNode
@@ -654,6 +662,7 @@ function updateDrag(x, y) {
         highlightTarget(null);
         setSidebarTarget(d, zone);
         d.target = null;
+        d.replace = false;
         d.dropIndex = null;
         d.lastKey = null;
         // Saving pills as a tag group leaves them where they are, so it should not look like a move. A zone that does take them (Composer's "+ Category") opts out.
@@ -679,6 +688,7 @@ function updateDrag(x, y) {
         d.ghost.classList.toggle("ere-no-drop", !canvasDrop);
         highlightTarget(null);
         d.target = null;
+        d.replace = false;
         d.dropIndex = null;
         d.lastKey = null;
         setCopyMode(d, false);
@@ -686,7 +696,18 @@ function updateDrag(x, y) {
     }
 
     d.ghost.classList.remove("ere-no-drop");
-    highlightTarget(targetNode === d.sourceNode ? null : root);
+    // Shift replaces the target's tags; within the source node there is nothing to replace them with.
+    d.replace = d.shift && targetNode !== d.sourceNode;
+    highlightTarget(targetNode === d.sourceNode ? null : root, d.replace);
+    d.target = targetNode;
+    d.targetMode = mode;
+    if (d.replace) {
+        if (d.placeholder.parentNode) d.placeholder.remove();
+        setCopyMode(d, d.alt && !d.variants);
+        d.lastKey = null;
+        d.dropIndex = 0;
+        return;
+    }
     if (d.sizedFor !== container) {
         d.sizedFor = container;
         sizePlaceholder(d, targetNode, container, mode);
@@ -700,9 +721,6 @@ function updateDrag(x, y) {
         d.lastKey = key;
         container.insertBefore(d.placeholder, items[pos] ?? null);
     }
-
-    d.target = targetNode;
-    d.targetMode = mode;
     d.dropIndex = toDataIndex(pos, items);
 }
 
@@ -878,6 +896,8 @@ export function startExternalDrag({ tags, label, altTags = null, altLabel = "", 
         lastY: y,
         lastKey: null,
         alt: false,
+        shift: false,
+        replace: false,
         copying: false,
         sidebarZone: null,
         sidebarDrop: null,
@@ -959,11 +979,12 @@ function setCopyMode(d, copying) {
     d.ghost.classList.toggle("ere-copy", copying);
 }
 
-function highlightTarget(root) {
+function highlightTarget(root, replace = false) {
     for (const el of document.querySelectorAll(".ere-drop-target")) {
-        if (el !== root) el.classList.remove("ere-drop-target");
+        if (el !== root) el.classList.remove("ere-drop-target", "ere-drop-replace");
     }
     root?.classList.add("ere-drop-target");
+    root?.classList.toggle("ere-drop-replace", replace);
 }
 
 function stepAutoScroll() {
@@ -1067,7 +1088,7 @@ async function finishDrag() {
 
 /** Insert tags carried in from outside the graph. */
 async function dropExternal(d) {
-    const targetTags = getTags(d.target);
+    const targetTags = d.replace ? [] : getTags(d.target);
     const existing = new Set(targetTags.map(t => t.name));
 
     const accepted = [];
@@ -1084,6 +1105,7 @@ async function dropExternal(d) {
     if (accepted.length) {
         beginUndoTransaction();
         try {
+            if (d.replace) clearSelectionState(d.target);
             const insertAt = Math.max(0, Math.min(d.dropIndex, targetTags.length));
             targetTags.splice(insertAt, 0, ...accepted);
             await setTags(d.target, targetTags);
@@ -1120,7 +1142,7 @@ async function dropWithinNode(d) {
 
 async function dropAcrossNodes(d) {
     const sourceTags = getTags(d.sourceNode);
-    const targetTags = getTags(d.target);
+    const targetTags = d.replace ? [] : getTags(d.target);
     const existing = new Set(targetTags.map(t => t.name));
 
     const accepted = [];
@@ -1140,6 +1162,7 @@ async function dropAcrossNodes(d) {
         // One undo step for the whole transfer instead of one per node.
         beginUndoTransaction();
         try {
+            if (d.replace) clearSelectionState(d.target);
             const insertAt = Math.max(0, Math.min(d.dropIndex, targetTags.length));
             targetTags.splice(insertAt, 0, ...accepted);
             await setTags(d.target, targetTags);
