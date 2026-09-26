@@ -1,6 +1,9 @@
 import { app } from "../../scripts/app.js";
-import { TagContextMenu } from "./js/contextmenu.js";
-import { getElementOrCursorCoords, getSetting } from "./js/util.js";
+import { FileContextMenu, TagContextMenu, parseFilePrefix } from "./js/contextmenu.js";
+import { parseTextToTagData } from "./js/parser.js";
+import { getElementOrCursorCoords, getSetting, tagsToText } from "./js/util.js";
+
+const MODEL_EXTENSION = /\.(safetensors|ckpt|pt|pth|bin)$/i;
 
 // Helper class for textarea caret operations
 class TextAreaCaretHelper {
@@ -132,8 +135,15 @@ export class GlobalAutocomplete {
     // Arrow fields, so each is bound to its instance and can be added and removed as a listener as-is.
     onKeyDown = (e) => {
         if (this.menu && this.menu.root && this.menu.root.parentElement) {
+            // An open alias flyout listens on the document and has already taken the keys it uses.
+            if (this.menu.currentSubmenu) return;
             // Let DynamicContextMenu handle navigation keys
             if (['ArrowUp', 'ArrowDown', 'Escape'].includes(e.key)) {
+                this.menu.handleKeyboard(e);
+                return;
+            }
+            // Right opens the highlighted tag's aliases; with none it still moves the caret.
+            if (e.key === 'ArrowRight' && this.menu.options[this.menu.highlighted]?.submenu) {
                 this.menu.handleKeyboard(e);
                 return;
             }
@@ -275,7 +285,13 @@ export class GlobalAutocomplete {
             return;
         }
 
-        
+        // Only the prompt's own autocomplete: a caller with its own menu (the sidebar search) is not writing a prompt.
+        const file = !this.attachOptions?.menuClass && parseFilePrefix(currentWord);
+        if (file) {
+            this.openFileBrowser(file.type, file.query);
+            return;
+        }
+
         const getBaseTagName = (rawTag) => {
             let tag = rawTag.trim();
             // Ignore anything that looks like a LORA/embedding tag for this purpose
@@ -300,8 +316,10 @@ export class GlobalAutocomplete {
             return tag;
         };
 
-        const allText = this.attachedElement.value;
-        const existingTags = allText.split(',').map(t => getBaseTagName(t)).filter(Boolean);
+        // Without the word being typed, or a finished word would hide its own suggestion.
+        const value = this.attachedElement.value;
+        const allText = value.slice(0, this.currentWordStart) + value.slice(this.attachedElement.selectionEnd);
+        const existingTags = allText.split(/[,\n]/).map(t => getBaseTagName(t)).filter(Boolean);
 
         this.currentWord = currentWord;
 
@@ -326,6 +344,7 @@ export class GlobalAutocomplete {
                 const { signal } = this.menu.abortController;
 
                 const keyboardHandler = (e) => {
+                    if (this.menu?.currentSubmenu) return;
                     if (this.menu && this.menu.root && this.menu.root.parentElement) {
                         // Only handle specific keys that the menu needs to process internally
                         if (['ArrowUp', 'ArrowDown'].includes(e.key)) {
@@ -406,19 +425,8 @@ export class GlobalAutocomplete {
             ? tagName
             : tagName.replace(/\(/g, '\\(').replace(/\)/g, '\\)');
         
-        const afterCursor = this.helper.getAfterCursor();
-        const trimmedAfter = afterCursor.trim();
-        let shouldAddSeparator = !trimmedAfter.startsWith(',') && !trimmedAfter.startsWith(')') && !trimmedAfter.startsWith(':');
-
-        // Don't add a separator if we're in a single-tag input field / filters with autocomplete
-        if (this.attachedElement.classList.contains('comfy-context-menu-filter')) {
-            shouldAddSeparator = false;
-        }
-
-        const separator = shouldAddSeparator ? ', ' : '';
-        
         this.helper.insertAtCursor(
-            escapedTag + separator,
+            escapedTag + this.separatorAfterCaret(),
             -wordLengthToReplace,
             0
         );
@@ -430,6 +438,45 @@ export class GlobalAutocomplete {
 
         this.attachedElement.focus();
         this.closeMenu();
+    }
+
+    /** ", " after an insert, unless the text already continues with a separator, or the field holds a single term (a menu filter). */
+    separatorAfterCaret(element = this.attachedElement, helper = this.helper) {
+        if (element.classList.contains('comfy-context-menu-filter')) return '';
+        const after = helper.getAfterCursor().trim();
+        return after.startsWith(',') || after.startsWith(')') || after.startsWith(':') ? '' : ', ';
+    }
+
+    /** `<lora:`, `embedding:` or `group:` typed in a prompt: the prefix leaves the text and the file browser opens there with the rest as its filter, then writes the pick back where the prefix was. A group is written as its contents, since plain text has no group syntax. */
+    openFileBrowser(type, query) {
+        // Held here: the browser's own filter can take focus, and the autocomplete may attach elsewhere before a pick.
+        const area = this.attachedElement;
+        const helper = this.helper;
+        const start = this.currentWordStart;
+        this.closeMenu();
+        area.setRangeText("", start, area.selectionEnd, "end");
+        area.dispatchEvent(new Event('input', { bubbles: true }));
+
+        const existing = parseTextToTagData(area.value).map(tag => ({ name: tag.name.replace(MODEL_EXTENSION, ""), type: tag.type }));
+        const coords = getElementOrCursorCoords(area, start);
+        // Where the next pick goes: a shift-pick keeps the browser open and adds after the last one.
+        let at = start;
+        const menu = new FileContextMenu({ clientX: coords.x, clientY: coords.bottom }, async (picked) => {
+            const text = await tagsToText((Array.isArray(picked) ? picked : [picked]).map(tag => ({ ...tag, active: true })), ", ");
+            if (!text) return;
+            area.focus();
+            area.setSelectionRange(at, at);
+            helper.insertAtCursor(text + this.separatorAfterCaret(area, helper), 0, 0);
+            at = area.selectionEnd;
+        }, type, existing);
+        // Typing carries on in the prompt once the browser is gone, picked or not.
+        const closeMenu = menu.close;
+        menu.close = (...args) => {
+            const wasOpen = !!menu.root;
+            closeMenu.apply(menu, args);
+            if (wasOpen) area.focus();
+        };
+        menu.show("", query);
     }
 }
 
@@ -475,6 +522,8 @@ if (typeof app !== "undefined") {
     document.addEventListener("focusin", (e) => {
         if (e.target.tagName !== "TEXTAREA") return;
         if (isExcludedTextarea(e.target)) return;
+        // A text field inside one of our menus (the + menu's "Add Text") holds a sentence, not tags, and a suggestion menu opening over it would close the menu it sits in.
+        if (e.target.closest(".ere-menu-input")) return;
 
         const globalEnabled = getSetting("EreNodes.Autocomplete.Global", true);
         const nodesEnabled = getSetting("EreNodes.Autocomplete.Nodes", true);

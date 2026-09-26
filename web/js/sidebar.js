@@ -86,7 +86,9 @@ const state = {
     selection: new Set(),
     anchor: null,
     cursor: -1,         // index into rows, for the keyboard
+    kbd: false,         // the cursor was last moved by the keyboard, so it is drawn and previewed
     rows: [],
+    sections: [],       // grid view: { start, count, cols() } per grid, for moving up and down a column
     flows: [],
     press: null,
     editor: null,
@@ -570,8 +572,56 @@ function moveCursor(delta) {
     const next = state.cursor < 0
         ? (delta > 0 ? 0 : state.rows.length - 1)
         : Math.min(Math.max(state.cursor + delta, 0), state.rows.length - 1);
-    selectOnly(state.rows[next]);
+    moveTo(next);
+}
+
+/** Put the keyboard cursor on a row: selected, scrolled into view and previewed, as hovering it would. */
+function moveTo(index) {
+    const row = state.rows[index];
+    if (!row) return;
+    state.kbd = true;
+    selectOnly(row);
     revealCursor();
+    // After the window has drawn the row the scroll brought into view.
+    requestAnimationFrame(() => {
+        const el = state.kbd && state.rows[state.cursor] === row ? rowElement(row) : null;
+        if (el && row.type !== "folder") previewRow(el, row);
+        else hidePreviewPanel();
+    });
+}
+
+/** Grid view: up and down keep to the column, and cross into the grid above or below at the same column. */
+function moveGrid(dir) {
+    const at = state.sections.findIndex(s => state.cursor >= s.start && state.cursor < s.start + s.count);
+    const section = state.sections[at];
+    if (!section) { moveCursor(dir); return; }
+    const cols = section.cols();
+    const pos = state.cursor - section.start;
+    const col = pos % cols;
+    const line = Math.floor(pos / cols);
+    if (dir > 0) {
+        if (line < Math.floor((section.count - 1) / cols)) { moveTo(section.start + Math.min(pos + cols, section.count - 1)); return; }
+        const next = state.sections[at + 1];
+        if (next) moveTo(next.start + Math.min(col, next.count - 1));
+        return;
+    }
+    if (line > 0) { moveTo(state.cursor - cols); return; }
+    const prev = state.sections[at - 1];
+    if (!prev) return;
+    const prevCols = prev.cols();
+    moveTo(prev.start + Math.min(Math.floor((prev.count - 1) / prevCols) * prevCols + col, prev.count - 1));
+}
+
+/** The pointer moved: the keyboard cursor gives way to it, and arrows carry on from the row under the pointer. */
+function endKeyboardNav(rowEl) {
+    state.kbd = false;
+    if (state.selection.size <= 1) clearSelection();
+    const key = rowEl?.dataset.ereKey ?? null;
+    state.anchor = key;
+    state.cursor = key ? state.rows.findIndex(r => rowKey(r) === key) : -1;
+    const row = state.rows[state.cursor];
+    if (row && row.type !== "folder") previewRow(rowEl, row);
+    else hidePreviewPanel();
 }
 
 function revealCursor() {
@@ -585,7 +635,7 @@ function revealCursor() {
     state.host?.querySelector(`[data-ere-key="${CSS.escape(key)}"]`)?.scrollIntoView({ block: "nearest" });
 }
 
-/** One level up, for the views that show one at a time. */
+/** One level up, for the views that show one at a time, with the cursor on the folder it came out of. */
 function goUp() {
     const view = state.view[state.tab];
     if (!walksLevels(view)) return false;
@@ -594,6 +644,8 @@ function goUp() {
     state.crumb[state.tab] = path === BOOKMARK_PATH ? "" : path.slice(0, Math.max(path.lastIndexOf("/"), 0));
     state.cursor = -1;
     render();
+    const index = state.rows.findIndex(r => r.type === "folder" && (r.path === path || (path === BOOKMARK_PATH && r.bookmarkRoot)));
+    moveTo(Math.max(index, 0));
     return true;
 }
 
@@ -609,10 +661,9 @@ function typeAhead(key) {
     // Repeating one letter walks the entries starting with it, rather than sticking on the first.
     const from = (repeat || typed.length === 1) ? state.cursor + 1 : 0;
     for (let i = 0; i < rows.length; i++) {
-        const row = rows[(from + i) % rows.length];
-        if ((row.name || "").toLowerCase().startsWith(typed)) {
-            selectOnly(row);
-            revealCursor();
+        const index = (from + i) % rows.length;
+        if ((rows[index].name || "").toLowerCase().startsWith(typed)) {
+            moveTo(index);
             return;
         }
     }
@@ -622,31 +673,26 @@ function onBodyKeyDown(e) {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.target !== e.currentTarget && e.target?.closest?.("input, textarea")) return;
 
+    // Left and right only walk a grid's rows; entering and leaving a folder is Enter and Backspace in every view.
+    const grid = state.view[state.tab] === "grid";
     switch (e.key) {
-        case "ArrowDown": moveCursor(1); break;
-        case "ArrowUp": moveCursor(-1); break;
-        case "Home": if (state.rows.length) { selectOnly(state.rows[0]); revealCursor(); } break;
-        case "End": if (state.rows.length) { selectOnly(state.rows[state.rows.length - 1]); revealCursor(); } break;
+        case "ArrowDown": if (grid && state.cursor >= 0) moveGrid(1); else moveCursor(1); break;
+        case "ArrowUp": if (grid && state.cursor >= 0) moveGrid(-1); else moveCursor(-1); break;
+        case "ArrowRight": if (!grid) return; moveCursor(1); break;
+        case "ArrowLeft": if (!grid) return; moveCursor(-1); break;
+        case "Home": moveTo(0); break;
+        case "End": moveTo(state.rows.length - 1); break;
         case "Enter": {
             const row = state.rows[state.cursor];
-            if (row) onRowActivate(row);
+            if (row) onRowActivate(row, { keyboard: true });
             break;
         }
-        case "ArrowRight": {
-            const row = state.rows[state.cursor];
-            if (row?.type === "folder") onRowActivate(row);
-            break;
-        }
-        case "ArrowLeft":
-            if (!goUp()) {
-                const row = state.rows[state.cursor];
-                if (row?.type === "folder" && state.expanded[state.tab].has(row.path)) toggleFolder(row.path);
-            }
-            break;
         case "Backspace": if (!goUp()) return; break;
         case "Escape":
             clearSelection();
             state.cursor = -1;
+            state.kbd = false;
+            hidePreviewPanel();
             break;
         default:
             // A bare printable character is the start of a name, not a shortcut.
@@ -749,20 +795,26 @@ function anchorRect(el) {
         : row;
 }
 
+/** The tags (and, outside grid view, the image) of an entry, beside its row. */
+function previewRow(el, row) {
+    showPreviewFor({
+        type: row.tab, path: row.path, extension: row.extension,
+        anchor: anchorRect(el),
+        // Grid view already shows the thumbnail on the tile itself.
+        image: state.view[state.tab] !== "grid",
+        // A lora's trained words are informational; a group's tags can be picked out.
+        interactive: row.tab === "group" && row.type === "file",
+    });
+}
+
 function attachHover(el, row) {
     if (row.type === "folder") return;
     el.addEventListener("pointerenter", () => {
-        if (isDragActive()) return;
-        showPreviewFor({
-            type: row.tab, path: row.path, extension: row.extension,
-            anchor: anchorRect(el),
-            // Grid view already shows the thumbnail on the tile itself.
-            image: state.view[state.tab] !== "grid",
-            // A lora's trained words are informational; a group's tags can be picked out.
-            interactive: row.tab === "group" && row.type === "file",
-        });
+        // While the keyboard drives, its preview stays put; the first real pointer move hands over (see buildTreeBody).
+        if (isDragActive() || state.kbd) return;
+        previewRow(el, row);
     });
-    el.addEventListener("pointerleave", () => hidePreviewPanel());
+    el.addEventListener("pointerleave", () => { if (!state.kbd) hidePreviewPanel(); });
 }
 
 // Press
@@ -821,16 +873,27 @@ function attachPress(el, row) {
     el.addEventListener("dblclick", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        onRowActivate(row);
+        if (row.type !== "folder") onRowActivate(row);
     });
 }
 
-/** A click picks, it does not act. Adding is the double click, the menu and the drag, as in a file manager. */
+// A folder opens on the first click, so the second click of a habitual double click must not land on whatever the view has just put under the pointer.
+const DOUBLE_CLICK_MS = 400;
+let folderOpenedAt = 0;
+
+/** A click opens a folder; on an entry it only moves the cursor there. Adding is the double click, the menu and the drag, as in a file manager; Ctrl and Shift still select. */
 function onRowClick(row, e) {
     focusBody();
     if (handleRowSelect(row, e)) return;
     if (e.ctrlKey || e.metaKey) return;   // the body's guard already toggled it
-    selectOnly(row);
+    state.kbd = false;
+    clearSelection();
+    state.anchor = rowKey(row);
+    state.cursor = state.rows.findIndex(r => rowKey(r) === state.anchor);
+    if (row.type === "folder" && Date.now() - folderOpenedAt > DOUBLE_CLICK_MS) {
+        folderOpenedAt = Date.now();
+        onRowActivate(row);
+    }
 }
 
 function selectOnly(row) {
@@ -841,13 +904,14 @@ function selectOnly(row) {
     syncSelectionClasses();
 }
 
-async function onRowActivate(row) {
+async function onRowActivate(row, { keyboard = false } = {}) {
     if (row.type === "folder") {
         // A level-walking view navigates into it; list view expands it where it is.
         if (walksLevels(state.view[state.tab])) {
             state.crumb[state.tab] = row.path;
             state.cursor = -1;
             render();
+            if (keyboard) moveTo(0);
         } else {
             toggleFolder(row.path);
         }
@@ -1372,6 +1436,7 @@ function render() {
     state.flows = [];
     body.textContent = "";
     state.rows = [];
+    state.sections = [];
 
 
     const tree = state.trees[state.tab];
@@ -1440,6 +1505,7 @@ function render() {
         if (folderRows.length || showBookmarkTile) {
             const folders = gridBox(body, TILE_SIZE, TILE_SIZE);
             const items = [];
+            const start = state.rows.length;
             if (showBookmarkTile) addRow(items, bookmarkRow(), r => makeTile(r));
             for (const folder of folderRows) {
                 addRow(items, {
@@ -1448,6 +1514,7 @@ function render() {
                 }, r => makeTile(r));
             }
             tiles += items.length;
+            state.sections.push({ start, count: items.length, cols: () => gridColumns(folders, TILE_SIZE, TILE_GAP) });
             mountFlow(body, folders, items, {
                 lineHeight: TILE_SIZE + TILE_GAP,
                 perLine: () => gridColumns(folders, TILE_SIZE, TILE_GAP),
@@ -1464,8 +1531,10 @@ function render() {
         if (marked.length) {
             const grid = gridBox(body, width, height);
             const items = [];
+            const start = state.rows.length;
             for (const file of marked) addRow(items, tileRowFor(file), r => makeTile(r));
             tiles += items.length;
+            state.sections.push({ start, count: items.length, cols: () => gridColumns(grid, width, TILE_GAP) });
             mountFlow(body, grid, items, {
                 lineHeight: height + TILE_GAP,
                 perLine: () => gridColumns(grid, width, TILE_GAP),
@@ -1477,8 +1546,10 @@ function render() {
         if (remaining.length) {
             const files = gridBox(body, width, height);
             const items = [];
+            const start = state.rows.length;
             for (const file of remaining) addRow(items, tileRowFor(file), r => makeTile(r));
             tiles += items.length;
+            state.sections.push({ start, count: items.length, cols: () => gridColumns(files, width, TILE_GAP) });
             mountFlow(body, files, items, {
                 lineHeight: height + TILE_GAP,
                 perLine: () => gridColumns(files, width, TILE_GAP),
@@ -2235,6 +2306,19 @@ function buildTreeBody(host) {
     // Focusable so the keys below reach it, but not in the tab order.
     content.tabIndex = -1;
     content.addEventListener("keydown", onBodyKeyDown);
+    // Keyboard and pointer are one cursor: the first real move of the pointer ends keyboard navigation. Compared by position, since scrolling the list under a still pointer fires moves too.
+    let pointerAt = "";
+    content.addEventListener("pointermove", (e) => {
+        const at = `${e.clientX},${e.clientY}`;
+        if (at === pointerAt) return;
+        pointerAt = at;
+        if (state.kbd && !isDragActive()) endKeyboardNav(e.target?.closest?.("[data-ere-key]"));
+    });
+    content.addEventListener("focusout", (e) => {
+        if (!state.kbd || content.contains(e.relatedTarget)) return;
+        state.kbd = false;
+        hidePreviewPanel();
+    });
 
     // Tags dragged out of a node land in the root folder when dropped on empty space.
     // Entries dragged within the sidebar do not: the background is everywhere, and would catch a drag released over the row it started on and move it to the root.
@@ -2317,6 +2401,8 @@ async function selectTab(id) {
     clearSelection();
     saveJSON(LS_TAB, id);
     buildChrome(state.host);
+    // The tab button that had focus was rebuilt, so focus goes where a fresh open puts it.
+    state.host?.querySelector(".ere-sb-search")?.focus({ preventScroll: true });
     await ensureTree();
 }
 
@@ -2375,6 +2461,28 @@ export async function refresh() {
     }
 }
 
+/** Ctrl+F anywhere in the sidebar goes to the search; Down from the search or a tab goes to the first entry. */
+function onSidebarKeyDown(e) {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "f") {
+        const search = state.host?.querySelector(".ere-sb-search");
+        if (!search) return;
+        e.preventDefault();
+        e.stopPropagation();
+        search.focus();
+        search.select();
+        return;
+    }
+    if (e.key !== "ArrowDown" || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+    if (!e.target?.classList?.contains("ere-sb-search") && e.target?.getAttribute?.("role") !== "tab") return;
+    // The search's own suggestions take the arrows while they are open.
+    if (searchAutocomplete?.menu?.root) return;
+    if (!state.rows.length) return;
+    e.preventDefault();
+    e.stopPropagation();
+    focusBody();
+    moveTo(0);
+}
+
 // Mount
 
 export function mountSidebar(hostEl) {
@@ -2388,11 +2496,15 @@ export function mountSidebar(hostEl) {
     setPreviewHandlers({ startExternalDrag, onCanvasDrop });
 
     state.host = hostEl;
-    buildChrome(hostEl);
-    // Typing is the first thing most opens are for, as in the core sidebars — but only when a person just opened it, since a restored tab would otherwise take the keyboard from the canvas.
-    if (navigator.userActivation?.isActive !== false) {
-        hostEl.querySelector(".ere-sb-search")?.focus({ preventScroll: true });
+    if (!hostEl._ereKeys) {
+        hostEl._ereKeys = true;
+        hostEl.addEventListener("keydown", onSidebarKeyDown);
     }
+    buildChrome(hostEl);
+    // Typing is the first thing an open is for, as the core sidebars do on mount. Again after a frame, for a host not yet in the document when it is handed over.
+    const focusSearch = () => hostEl.querySelector(".ere-sb-search")?.focus({ preventScroll: true });
+    focusSearch();
+    requestAnimationFrame(() => { if (state.host === hostEl && !hostEl.contains(document.activeElement)) focusSearch(); });
     // Not a forced refetch: state.trees survives unmount and the server compares signatures, so an unchanged answer costs a directory stat per folder and no transfer.
     ensureTree();
     loadBookmarks().then(() => { if (state.host) render(); });

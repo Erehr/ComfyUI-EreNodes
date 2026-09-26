@@ -12,17 +12,20 @@
 }
 .ere-sidebar.ere-sb-multi .ere-sb-selected {
     background: color-mix(in srgb, var(--ere-drag-accent, var(--primary-background)) 18%, transparent);
-    outline: 1px solid var(--ere-drag-accent, var(--primary-background));
-    outline-offset: -1px;
 }
-/* A tile is filled edge to edge by its thumbnail, so the fill goes over it instead of behind it and has to stay translucent. */
+/* A tile is filled edge to edge by its thumbnail, so hover and selection go over it instead of behind it and have to stay translucent.
+   Mixed from the foreground, so they lighten in the dark theme and darken in the light one rather than greying the tile out. */
+.ere-sidebar .ere-sb-tile:hover::after,
 .ere-sidebar .ere-sb-tile.ere-sb-selected::after {
     content: "";
     position: absolute;
     inset: 0;
     border-radius: inherit;
-    background: color-mix(in srgb, var(--comfy-input-bg) 70%, transparent);
+    background: color-mix(in srgb, var(--base-foreground) 8%, transparent);
     pointer-events: none;
+}
+.ere-sidebar .ere-sb-tile.ere-sb-selected::after {
+    background: color-mix(in srgb, var(--base-foreground) 14%, transparent);
 }
 .ere-sidebar.ere-sb-multi .ere-sb-tile.ere-sb-selected::after {
     background: color-mix(in srgb, var(--ere-drag-accent, var(--primary-background)) 18%, transparent);
@@ -109,9 +112,10 @@
     border: none;
     background: transparent;
 }
-.ere-sidebar .ere-sb-tile:not(.ere-sb-selected):not(.ere-sb-folder-tile),
-.ere-sidebar .ere-sb-tile:not(.ere-sb-selected):hover {
-    background: var(--comfy-input-bg);
+/* Every tile, folder or entry, sits on the same card fill so the grid reads as a grid; the overlays above mark hover and selection. */
+.ere-sidebar .ere-sb-tile,
+.ere-sidebar .ere-sb-tile.ere-sb-selected {
+    background: var(--secondary-background);
 }
 /* renderTagTile sets the type fill inline, so lifting the label off the fill needs the weight. */
 .ere-sidebar .ere-sb-tile:hover .ere-name,
@@ -124,11 +128,6 @@
     align-items: center;
     justify-content: center;
     gap: .25rem;
-    border: 1px solid var(--border-default);
-    background: var(--modal-card-background);
-}
-.ere-sidebar .ere-sb-folder-tile:hover {
-    background: var(--modal-card-background-hovered);
 }
 .ere-sidebar .ere-sb-tile-name {
     max-width: 100%;

@@ -715,10 +715,19 @@ export async function insertTagsAsText(el, tags, tagSeparator, at = null) {
     const index = Math.max(0, Math.min(at ?? el.selectionStart ?? el.value.length, el.value.length));
     const before = el.value.slice(0, index);
     const after = el.value.slice(index);
-    // separatorAfter for the same reason the joins use it: after "a sentence." the separator's
-    // own comma is not wanted.
-    const lead = before.trim() && !/[\s,]$/.test(before) ? separatorAfter(separator, before) : "";
-    const trail = after.trim() && !/^[\s,]/.test(after) ? separator : "";
+    // Between two words of a sentence, a separator would split it; the tags go in as words instead.
+    const boundaryBefore = !before.trim() || /[,.;!?\n][ \t]*$/.test(before);
+    const boundaryAfter = !after.trim() || /^[ \t]*[,.;!?\n]/.test(after);
+    let lead, trail;
+    if (!boundaryBefore && !boundaryAfter) {
+        lead = /\s$/.test(before) ? "" : " ";
+        trail = /^\s/.test(after) ? "" : " ";
+    } else {
+        // separatorAfter for the same reason the joins use it: after "a sentence." the separator's
+        // own comma is not wanted.
+        lead = before.trim() && !/[\s,]$/.test(before) ? separatorAfter(separator, before) : "";
+        trail = after.trim() && !/^[\s,]/.test(after) ? separator : "";
+    }
 
     el.setRangeText(lead + text + trail, index, index, "end");
     // The widget (or the Composer row) stores its value off this event, exactly as typing does.
