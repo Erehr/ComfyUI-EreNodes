@@ -1,5 +1,5 @@
 import { app } from "../../../scripts/app.js";
-import { beginUndoTransaction, endUndoTransaction, loadStyle, insertTagsAsText, caretIndexFromPoint, getElementOrCursorCoords, getTags, setTags, toast, HOLD_MS, MOVE_THRESHOLD } from "./util.js";
+import { beginUndoTransaction, endUndoTransaction, loadStyle, insertTagsAsText, caretIndexFromPoint, getElementOrCursorCoords, getTags, setTags, textareaOf, toast, HOLD_MS, MOVE_THRESHOLD } from "./util.js";
 import { ActionContextMenu } from "./contextmenu.js";
 import { accentForTags, TYPE_FILL, DEFAULT_FILL, injectTagStyles, renderTagPill } from "./tagview.js";
 
@@ -636,7 +636,7 @@ function updateDrag(x, y) {
 
     // A textarea that opted in takes the tags as text. Checked first: a multiline surface is
     // deliberately invisible to rootOf(), so there is nothing else here to compete with.
-    const textZone = under?.closest?.("[data-ere-text-drop]");
+    const textZone = textDropZoneAt(under);
     if (textZone) {
         if (d.placeholder.parentNode) d.placeholder.remove();
         d.ghost.classList.remove("ere-no-drop");
@@ -736,6 +736,19 @@ export function markTextDropZone(el, node) {
     if (!el) return;
     el.dataset.ereTextDrop = "1";
     el._ereTextNode = node;
+}
+
+/** The opted-in textarea under the pointer. The Prompt Multiline node's field is also recognised by its node, since in Nodes 2.0 the frontend builds it after the widget is marked. */
+function textDropZoneAt(el) {
+    const marked = el?.closest?.("[data-ere-text-drop]");
+    if (marked || el?.tagName !== "TEXTAREA") return marked ?? null;
+    const id = el.closest("[data-node-id]")?.dataset.nodeId;
+    const node = id != null
+        ? app.graph?.getNodeById?.(id)
+        : app.graph?._nodes?.find(n => n.type === "ErePromptMultiline" && textareaOf(n) === el);
+    if (node?.type !== "ErePromptMultiline") return null;
+    markTextDropZone(el, node);
+    return el;
 }
 
 /**

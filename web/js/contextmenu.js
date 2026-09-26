@@ -717,7 +717,7 @@ export class FileContextMenu extends DynamicContextMenu {
         }
     }
     
-    async show(initialPath = "") {
+    async show(initialPath = "", initialQuery = "") {
         this.close();
 
         this.root = document.createElement("div");
@@ -733,7 +733,7 @@ export class FileContextMenu extends DynamicContextMenu {
         document.body.appendChild(this.root);
         
         this.setupEventListeners();
-        this.updateOptions(initialPath, "");
+        this.updateOptions(initialPath, initialQuery);
     }
     
     async updateOptions(path, query = "") {
@@ -835,6 +835,33 @@ export class FileContextMenu extends DynamicContextMenu {
     }
 }
 
+// Danbooru's tag type prefixes (help:tags), plus e621's extra categories.
+const CATEGORY_PREFIXES = {
+    artist: "artist", art: "artist",
+    character: "character", char: "character",
+    copyright: "copyright", copy: "copyright",
+    general: "general", gen: "general",
+    meta: "meta", species: "species", lore: "lore",
+};
+
+/** A typed search split into the text to match, the category a prefix narrows it to, and what goes in front of the inserted name: `@` filters to artists and stays on the tag, which is how Anima prompts an artist. */
+export function parseTagQuery(raw) {
+    const query = String(raw ?? "").trim();
+    if (query.startsWith("@")) return { query: query.slice(1), category: "artist", insertPrefix: "@" };
+    const m = query.match(/^([a-z]+):(.*)$/i);
+    const category = m && CATEGORY_PREFIXES[m[1].toLowerCase()];
+    return category ? { query: m[2], category, insertPrefix: "" } : { query, category: null, insertPrefix: "" };
+}
+
+/** `<lora:`, `lora:`, `embedding:` and `group:` turn a tag search into the matching file browser. */
+export function parseFilePrefix(raw) {
+    const m = String(raw ?? "").trim().match(/^<?(lora|embedding|group):(.*)$/i);
+    return m ? { type: m[1].toLowerCase(), query: m[2].replace(/>$/, "") } : null;
+}
+
+/** A tag as the CSV spells it, so a prompt's `blue_eyes`, `\(x\)` or `@artist` compares equal to the suggestion. */
+export const tagKey = name => String(name ?? "").trim().replace(/^@/, "").replace(/\\([()])/g, "$1").replace(/_/g, " ").toLowerCase();
+
 // A new context menu for csv tags
 export class TagContextMenu extends DynamicContextMenu {
     constructor(event, onSelectCallback, existingTags = []) {
@@ -843,7 +870,9 @@ export class TagContextMenu extends DynamicContextMenu {
         this.autoHighlight = true;
         // Handle both string arrays (from autocomplete) and object arrays (from other contexts)
         this.existingTags = existingTags;
-        this.currentWord = ""; 
+        this.currentWord = "";
+        this.plainQuery = null;
+        this.insertPrefix = "";
         this.filterBox = null;
         this.searchGeneration = 0;
         this.searchAbortController = null;
@@ -881,13 +910,22 @@ export class TagContextMenu extends DynamicContextMenu {
         this.currentWord = query;
         // renderItems leaves a focused box alone, so a reset to empty has to clear it here.
         if (!query && this.filterBox) this.filterBox.value = "";
+        const parsed = parseTagQuery(query);
+        this.plainQuery = parsed.query;
+        this.insertPrefix = parsed.insertPrefix;
         const { generation, signal } = this.beginSearch();
         let suggestions = [];
         try {
             // Per search, not cached: the menu outlives a settings change.
             const limit = getSetting("EreNodes.Autocomplete.Limit", 20);
-            const tags = await requestJson(`/erenodes/search_tags?query=${encodeURIComponent(query)}&limit=${limit}`, { signal });
-            suggestions = tags.filter(tag => !this.existingTags.some(existingTag => existingTag.name === tag.name && existingTag.type === 'tag'));
+            const present = this.presentKeys();
+            // Asked for extra, since the ones already in the prompt are dropped from what comes back.
+            const params = new URLSearchParams({ query: parsed.query, limit: String(Math.min(100, limit + present.size)) });
+            if (parsed.category) params.set("category", parsed.category);
+            if (parsed.query || parsed.category) {
+                const tags = await requestJson(`/erenodes/search_tags?${params}`, { signal });
+                suggestions = this.withoutPresent(tags, present).slice(0, limit);
+            }
         } catch (error) {
             if (error.name === "AbortError" || !this.isCurrentSearch(generation)) return;
             console.error("[EreNodes] Error searching tags:", error);
@@ -896,23 +934,86 @@ export class TagContextMenu extends DynamicContextMenu {
         if (!this.isCurrentSearch(generation)) return;
         this.updateOptions(suggestions);
     }
-    
+
+    /** Plain tags already in the prompt, as tagKey spells them. The autocomplete passes strings, the + menus pass tag objects. */
+    presentKeys() {
+        const keys = new Set();
+        for (const tag of this.existingTags ?? []) {
+            if (typeof tag === "string") keys.add(tagKey(tag));
+            else if (tag?.name && (tag.type ?? "tag") === "tag") keys.add(tagKey(tag.name));
+        }
+        return keys;
+    }
+
+    /** A suggestion with none of its names in the prompt stays as it is. Otherwise it is dropped, or, by default, carries on as its first unused alias, so the other spellings of a tag stay reachable after one of them is added. */
+    withoutPresent(tags, present) {
+        const offerAliases = getSetting("EreNodes.Autocomplete.UsedTags", "aliases") === "aliases";
+        const out = [];
+        for (const tag of tags ?? []) {
+            const names = [tag.name, ...(tag.aliases ?? [])];
+            const left = names.filter(name => !present.has(tagKey(name)));
+            if (left.length === names.length) out.push(tag);
+            else if (offerAliases && left.length) out.push({ ...tag, name: left[0], aliases: left.slice(1) });
+        }
+        return out;
+    }
+
+    /**
+     * Options for the suggestions, per the alias display setting: aliases listed under their tag, in a flyout off it, or each one a suggestion of its own.
+     * @param {Function} pick  (name, event, index) — the name already carries the `@` a search asked for
+     */
+    suggestionOptions(suggestions, pick) {
+        const mode = getSetting("EreNodes.Autocomplete.Aliases", "grouped");
+        const query = tagKey(this.plainQuery ?? "");
+        const options = [];
+        for (const s of suggestions) {
+            const option = { ...s, type: 'tag', name: this.insertPrefix + s.name };
+            option.callback = (e, index) => pick(option.name, e, index);
+            if (mode === "grouped") {
+                options.push(option);
+                continue;
+            }
+            option.aliases = [];
+            if (mode === "submenu" && s.aliases?.length) {
+                option.submenu = s.aliases.map(alias => ({ name: this.insertPrefix + alias, callback: (e) => pick(this.insertPrefix + alias, e, -1) }));
+            }
+            options.push(option);
+            // Flat: only the aliases the query reached, or a popular tag's dozens of misspellings would bury everything else.
+            if (mode === "flat" && query) {
+                for (const alias of s.aliases ?? []) {
+                    if (!alias.includes(query)) continue;
+                    const aliasOption = { name: this.insertPrefix + alias, count: s.count, category: s.category, aliases: [], type: 'tag' };
+                    aliasOption.callback = (e, index) => pick(aliasOption.name, e, index);
+                    options.push(aliasOption);
+                }
+            }
+        }
+        return options;
+    }
+
     updateOptions(tagSuggestions = []) {
-        const query = this.currentWord;
-        this.options = [];
-
-        const tagOptions = tagSuggestions.map(s => ({
-            ...s,
-            type: 'tag',
-            callback: () => { this.onSelect(s.name); this.close(); }
-        }));
-
-        this.options.push(...tagOptions);
+        const limit = getSetting("EreNodes.Autocomplete.Limit", 20);
+        this.options = this.suggestionOptions(tagSuggestions, (name) => { this.onSelect(name); this.close(); }).slice(0, limit);
         this.renderItems();
     }
 
+    /** Picking a tag inserts it; its alias flyout is opened by hovering or the right arrow, never by the click that means "this one". */
+    onItemSelected(option, event = null, index = -1) {
+        if (option?.type === 'tag' && option.callback && !option.disabled) {
+            this.closeSubmenu();
+            option.callback(event, index);
+            return;
+        }
+        super.onItemSelected(option, event, index);
+    }
+
+    setHighlight(index) {
+        if (this.currentSubmenu && this.currentSubmenu.forIndex !== index) this.closeSubmenu();
+        super.setHighlight(index);
+    }
+
     renderSingleItem(item, option, index) {
-        const query = this.currentWord.toLowerCase().replace(/_/g, ' ');
+        const query = tagKey(this.plainQuery ?? this.currentWord);
 
         if (option.type === 'tag' && (option.count || option.aliases?.length > 0)) {
             // This is a "rich" tag from the database
@@ -920,7 +1021,9 @@ export class TagContextMenu extends DynamicContextMenu {
             if (option.disabled) item.classList.add("disabled");
 
             const displayHTML = this.highlight(option.name, query);
-            let countHTML = option.count ? `<div style="font-size: 0.8em; opacity: 0.7; margin-left: 10px;">(${option.count.toLocaleString()})</div>` : '';
+            // Danbooru's category colours, on the count only; general tags keep the plain one.
+            const category = option.category && option.category !== "general" ? ` ere-tag-count-${option.category}` : "";
+            let countHTML = option.count ? `<div class="ere-tag-count${category}" style="font-size: 0.8em; opacity: 0.7; margin-left: 10px;">(${option.count.toLocaleString()})</div>` : '';
             
             // Limit and prioritize aliases based on relevance to search term
             let aliasesHTML = '';
@@ -934,6 +1037,12 @@ export class TagContextMenu extends DynamicContextMenu {
             
             item.innerHTML = `<div style="display: flex; justify-content: space-between; align-items: center;"><div>${displayHTML}</div>${countHTML}</div>${aliasesHTML}`;
 
+            if (option.submenu) {
+                item.classList.add("has_submenu");
+                item.setAttribute("aria-haspopup", "true");
+                item.setAttribute("aria-expanded", "false");
+            }
+
             item.addEventListener("click", (e) => {
                 e.stopPropagation();
                 e.preventDefault();
@@ -941,7 +1050,9 @@ export class TagContextMenu extends DynamicContextMenu {
             });
 
             item.addEventListener("mouseenter", () => {
-                if (!option.disabled) this.setHighlight(index);
+                if (option.disabled) return;
+                this.setHighlight(index);
+                if (option.submenu) this.openSubmenu(option, index);
             });
         } else {
             // This handles "simple" tags (like add actions) and any other default cases
@@ -1020,16 +1131,27 @@ export class TagIndexContextMenu extends TagContextMenu {
 export class TagContextMenuInsert extends TagContextMenu {
     constructor(event, onSelectCallback, existingTags = []) {
         super(event, onSelectCallback, existingTags);
+        // Right opens a tag's alias submenu from the filter box; with no submenu it still moves the caret.
+        this.filterBoxOverrides = ['ArrowRight'];
         // It opens on "Add Lora" and friends, which must not be armed. updateOptions turns the
         // highlight back on as soon as there is a query to match against.
         this.autoHighlight = false;
         this.show();
     }
 
-    
+
     show() {
-        super.show(); 
+        super.show();
         this.searchTags(""); // This will call this class's updateOptions
+    }
+
+    searchTags(query) {
+        const file = parseFilePrefix(query);
+        if (file) {
+            this.switchToFileMenu(file.type, file.query);
+            return Promise.resolve();
+        }
+        return super.searchTags(query);
     }
 
     /**
@@ -1078,57 +1200,42 @@ export class TagContextMenuInsert extends TagContextMenu {
         // blanket `false` took away.
         this.autoHighlight = !!query;
 
+        // Shift keeps the menu on the same search, so several can be added in a row.
+        const add = (name, e, index) => {
+            const newTag = { name, type: 'tag' };
+            this.onSelect(newTag);
+            this.existingTags.push(newTag);
+
+            if (e?.shiftKey) {
+                this.searchTags(this.currentWord).then(() => {
+                    let newHighlight = index;
+                    if (newHighlight >= this.options.length) {
+                        newHighlight = this.options.length - 1;
+                    }
+                    this.setHighlight(newHighlight);
+                });
+            } else {
+                this.searchTags("");
+            }
+        };
+
         // Build the list of standard tag options first
         const tagOptions = [];
-        const exactMatch = tagSuggestions.some(s => s.name.toLowerCase() === query.toLowerCase());
-        
-        // Offered unless the query is the only, exact match.
-        if (query && (!exactMatch || tagSuggestions.length > 1)) {
-            tagOptions.push({
-                name: `Add tag: "${query}"`,
-                type: 'action',
-                callback: (e, index) => {
-                    const newTag = { name: query, type: 'tag' };
-                    this.onSelect(newTag);
-                    this.existingTags.push(newTag);
+        // What was typed, less a category prefix; an `@` stays, since that is the name it asks for.
+        const typed = this.insertPrefix + (this.plainQuery ?? "");
+        const exactMatch = tagSuggestions.some(s => tagKey(s.name) === tagKey(typed));
 
-                    if (e?.shiftKey) {
-                        this.searchTags(this.currentWord).then(() => {
-                            let newHighlight = index;
-                            if (newHighlight >= this.options.length) {
-                                newHighlight = this.options.length - 1;
-                            }
-                            this.setHighlight(newHighlight);
-                        });
-                    } else {
-                        this.searchTags("");
-                    }
-                }
+        // Offered unless the query is the only, exact match.
+        if (tagKey(typed) && (!exactMatch || tagSuggestions.length > 1)) {
+            tagOptions.push({
+                name: `Add tag: "${typed}"`,
+                type: 'action',
+                callback: (e, index) => add(typed, e, index)
             });
         }
-        
-        // Add the suggestions from the search
-        tagSuggestions.forEach(s => tagOptions.push({
-            ...s,
-            type: 'tag',
-            callback: (e, index) => {
-                const newTag = { name: s.name, type: 'tag' };
-                this.onSelect(newTag);
-                this.existingTags.push(newTag);
 
-                if (e?.shiftKey) {
-                    this.searchTags(this.currentWord).then(() => {
-                        let newHighlight = index;
-                        if (newHighlight >= this.options.length) {
-                            newHighlight = this.options.length - 1;
-                        }
-                        this.setHighlight(newHighlight);
-                    });
-                } else {
-                    this.searchTags("");
-                }
-            }
-        }));
+        // Add the suggestions from the search
+        tagOptions.push(...this.suggestionOptions(tagSuggestions, add).slice(0, getSetting("EreNodes.Autocomplete.Limit", 20)));
         
         // Create our special options that appear at the top of this specific menu
         const specialOptions = [];
@@ -1152,7 +1259,7 @@ export class TagContextMenuInsert extends TagContextMenu {
         this.renderItems();
     }
 
-    switchToFileMenu(type) {
+    switchToFileMenu(type, query = "") {
         this.close();
         const fileMenu = new FileContextMenu(this.positioning.event, (selected) => {
             // The callback can now receive a single object or an array of objects
@@ -1166,7 +1273,7 @@ export class TagContextMenuInsert extends TagContextMenu {
             });
             this.close(); // Close the parent TagContextMenuInsert
         }, type, this.existingTags);
-        fileMenu.show();
+        fileMenu.show("", query);
     }
 }
 

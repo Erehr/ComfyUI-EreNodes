@@ -154,15 +154,52 @@ def invalidate_csv_caches(csv_file):
     _clear_search_cache(csv_file)
     FILTER_MAP_CACHE.pop(csv_file, None)
 
-# One CSV as a single string, a line per row of `name\talias\talias...`, plus each line's start offset and post count.
+# Category names in the order of their codes in TagData.cats.
+CATEGORIES = ("general", "artist", "copyright", "character", "meta", "species", "lore", "contributor", "invalid")
+_CODE = {name: code for code, name in enumerate(CATEGORIES)}
+# Column 2 of a danbooru export, of an e621 export, and of the merged file, which keeps danbooru's numbers and shifts e621's up by 7.
+_DANBOORU = {0: "general", 1: "artist", 3: "copyright", 4: "character", 5: "meta"}
+_E621 = {0: "general", 1: "artist", 2: "contributor", 3: "copyright", 4: "character", 5: "species", 6: "invalid", 7: "meta", 8: "lore"}
+_MERGED = {**_DANBOORU, **{code + 7: name for code, name in _E621.items()}}
+
+
+# The numbering is not named in the file, so it is read off the values used: only the merged file goes past 8, and only e621 uses 2, 6, 7 or 8.
+def _category_scheme(raw_codes):
+    used = set(raw_codes)
+    if used and max(used) > 8:
+        return _MERGED
+    if used & {2, 6, 7, 8}:
+        return _E621
+    return _DANBOORU
+
+
+# One CSV as a single string, a line per row of `name\talias\talias...`, plus each line's start offset, post count and category code.
 # Searching is then str.find in C over one buffer instead of a Python loop over 320k tuples, and one string costs far less memory than a tuple and list per row.
 class TagData:
-    __slots__ = ("hay", "starts", "counts")
+    __slots__ = ("hay", "starts", "counts", "cats", "subsets")
 
-    def __init__(self, hay, starts, counts):
+    def __init__(self, hay, starts, counts, cats):
         self.hay = hay
         self.starts = starts
         self.counts = counts
+        self.cats = cats
+        self.subsets = {}
+
+    # The rows of one category as their own TagData, built on first use, so a filtered search is as fast as an unfiltered one.
+    def subset(self, code):
+        sub = self.subsets.get(code)
+        if sub is None:
+            lines, starts, counts, cats = [], array('q'), array('q'), array('b')
+            offset = 0
+            for row, line in enumerate(self.hay.split("\n")[:-1]):
+                if self.cats[row] == code:
+                    lines.append(line + "\n")
+                    starts.append(offset)
+                    counts.append(self.counts[row])
+                    cats.append(code)
+                    offset += len(line) + 1
+            sub = self.subsets[code] = TagData("".join(lines), starts, counts, cats)
+        return sub
 
 
 def _normalize_field(value):
@@ -172,7 +209,7 @@ def _normalize_field(value):
 
 
 def load_tags_from_csv(csv_path):
-    lines, starts, counts = [], array('q'), array('q')
+    lines, starts, counts, raw_cats = [], array('q'), array('q'), array('q')
     offset = 0
     if csv_path and os.path.isfile(csv_path):
         try:
@@ -187,6 +224,10 @@ def load_tags_from_csv(csv_path):
                         count = int(row[2])
                     except ValueError:
                         continue
+                    try:
+                        raw_cat = int(row[1])
+                    except ValueError:
+                        raw_cat = 0
                     fields = [name]
                     if len(row) >= 4 and row[3]:
                         fields.extend(alias for alias in map(_normalize_field, row[3].split(',')) if alias)
@@ -194,10 +235,13 @@ def load_tags_from_csv(csv_path):
                     lines.append(line)
                     starts.append(offset)
                     counts.append(count)
+                    raw_cats.append(raw_cat)
                     offset += len(line)
         except Exception:
             pass
-    return TagData("".join(lines), starts, counts)
+    scheme = _category_scheme(raw_cats)
+    cats = array('b', (_CODE[scheme.get(raw, "general")] for raw in raw_cats))
+    return TagData("".join(lines), starts, counts, cats)
 
 
 # (mtime, TagData) for a CSV, loaded on first use; None when the file is missing or unreadable.
@@ -235,8 +279,8 @@ def get_tag_data(active_csv=None):
 
 
 # Substring match over tag names and their aliases, in file order, so that "eyes" finds `blue eyes`.
-# The CSVs are sorted by post count descending, so stopping at `limit` hands back the highest-count matches.
-def _search_tags(query, limit):
+# The CSVs are sorted by post count descending, so stopping at `limit` hands back the highest-count matches; an empty query with a category is simply its top rows.
+def _search_tags(query, limit, category=None):
     # Either would match across field or row boundaries in the haystack.
     if "\t" in query or "\n" in query:
         return []
@@ -248,21 +292,23 @@ def _search_tags(query, limit):
     data = get_tag_data(active_csv)
     if data is None:
         return []
+    if category is not None:
+        data = data.subset(_CODE[category])
 
-    cache_key = (active_csv, query, limit)
+    cache_key = (active_csv, query, limit, category)
     with _SEARCH_CACHE_LOCK:
         cached = _SEARCH_CACHE.get(cache_key)
         if cached is not None:
             _SEARCH_CACHE.move_to_end(cache_key)
             return list(cached)
 
-    hay, starts, counts = data.hay, data.starts, data.counts
+    hay, starts, counts, cats = data.hay, data.starts, data.counts, data.cats
     results = []
     seen_tags = set()
     position = 0
     while len(results) < limit:
         hit = hay.find(query, position)
-        if hit < 0:
+        if hit < 0 or hit >= len(hay):
             break
         row = bisect_right(starts, hit) - 1
         end = hay.index("\n", hit)
@@ -273,6 +319,7 @@ def _search_tags(query, limit):
                 'name': tag_name,
                 'count': counts[row],
                 'aliases': aliases,
+                'category': CATEGORIES[cats[row]],
             })
         position = end + 1
 
@@ -292,14 +339,17 @@ async def search_tags(request):
         limit = max(1, min(int(request.query.get("limit", 10)), 100))
     except (TypeError, ValueError):
         limit = 10
+    category = request.query.get("category") or None
+    if category not in _CODE and category is not None:
+        return web.json_response([])
 
-    if not query:
+    if not query and category is None:
         return web.json_response([])
 
     # In a thread: inline, the first search after a restart froze the whole server for the length of the CSV parse, which reads as a stutter somewhere else entirely.
     # Pure Python holds the GIL between switch intervals, so this turns one long freeze into a series of short ones rather than removing them.
     try:
-        results = await asyncio.to_thread(_search_tags, query, limit)
+        results = await asyncio.to_thread(_search_tags, query, limit, category)
     except Exception as e:
         print(f"[EreNodes] search_tags failed: {e}")
         return web.json_response([])

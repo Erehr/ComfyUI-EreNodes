@@ -19,6 +19,14 @@
     --ere-pill-font: monospace;
     /* Not per surface: a disabled pill is one colour everywhere. */
     --ere-inactive-bg: color-mix(in srgb, var(--component-node-widget-background) 88%, #000);
+    /* Danbooru's tag category colours (e621's for species, lore and contributor), on autocomplete counts. */
+    --ere-cat-artist: #c00004;
+    --ere-cat-copyright: #a800aa;
+    --ere-cat-character: #00ab2c;
+    --ere-cat-meta: #fd9200;
+    --ere-cat-species: #ed5d1f;
+    --ere-cat-lore: #228822;
+    --ere-cat-contributor: #808080;
 }
 /* Equal specificity to :root, so this block has to stay after it. */
 .dark-theme {
@@ -29,6 +37,13 @@
     --ere-pill-fg: #fff;
     --ere-knob-off: #888;
     --ere-switch-track: #4a4a4a;
+    --ere-cat-artist: #ff8a8b;
+    --ere-cat-copyright: #c797ff;
+    --ere-cat-character: #35c64a;
+    --ere-cat-meta: #ead084;
+    --ere-cat-species: #ff8a4a;
+    --ere-cat-lore: #5fbf6a;
+    --ere-cat-contributor: #c0c0c0;
 }
 
 .ere-surface {
@@ -519,6 +534,14 @@
     background: rgb(0 0 0 / .6);
     font-size: var(--text-2xs, 10px);
 }
+/* Full opacity: the dimmed count would wash the colour out. */
+.ere-tag-count-artist { color: var(--ere-cat-artist); opacity: 1 !important; }
+.ere-tag-count-copyright { color: var(--ere-cat-copyright); opacity: 1 !important; }
+.ere-tag-count-character { color: var(--ere-cat-character); opacity: 1 !important; }
+.ere-tag-count-meta { color: var(--ere-cat-meta); opacity: 1 !important; }
+.ere-tag-count-species { color: var(--ere-cat-species); opacity: 1 !important; }
+.ere-tag-count-lore { color: var(--ere-cat-lore); opacity: 1 !important; }
+.ere-tag-count-contributor { color: var(--ere-cat-contributor); opacity: 1 !important; }
 .ere-mark {
     background: var(--ere-fill-tag);
     color: var(--ere-pill-fg);

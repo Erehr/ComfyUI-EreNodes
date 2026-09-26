@@ -344,7 +344,7 @@ def main():
     print(f"Wrote {len(writes):,} tag group(s).")
     if covers:
         download_covers(covers)
-    print("\nDone. Make sure Settings -> EreNodes -> Tag Groups Folder points at the folder above.")
+    print("\nDone. Make sure Settings -> EreNodes -> Tag Groups -> Storage folder points at the folder above.")
 
 if __name__ == "__main__":
     try:

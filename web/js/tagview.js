@@ -52,7 +52,7 @@ export function accentForTags(tags) {
 // Shared by the sidebar's grid toggles and the Gallery node's menu, so the two cannot drift.
 
 /** Folder tiles stay small whatever the items do: a folder icon gains nothing from size. */
-export const TILE_SIZE = 96;
+export const TILE_SIZE = 80;
 /** Grid gap, in px, shared with sidebar.css. A large tile spans two small ones plus the gap. */
 export const TILE_GAP = 8;
 
