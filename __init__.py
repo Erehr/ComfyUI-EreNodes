@@ -1,6 +1,7 @@
 # Importing these registers the /erenodes/* API routes as a side effect.
 from .py import prompt_api  # noqa: F401
 from .py import prompt_csv  # noqa: F401
+from .py import booru  # noqa: F401
 
 # No routes of its own (prompt_api owns those), but importing it here surfaces
 # any problem at startup rather than on the first image drop.

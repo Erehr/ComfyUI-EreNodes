@@ -1121,10 +1121,8 @@ async function dropExternal(d) {
             if (d.replace) clearSelectionState(d.target);
             const insertAt = Math.max(0, Math.min(d.dropIndex, targetTags.length));
             targetTags.splice(insertAt, 0, ...accepted);
+            // Not selected afterwards: tags brought in from outside the graph were never a selection, unlike a set moved between nodes.
             await setTags(d.target, targetTags);
-            if (accepted.length > 1) {
-                selectIndices(d.target, accepted.map((_, i) => insertAt + i), targetTags);
-            }
         } finally {
             endUndoTransaction();
         }
