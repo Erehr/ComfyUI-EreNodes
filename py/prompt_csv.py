@@ -176,7 +176,7 @@ def _category_scheme(raw_codes):
 # One CSV as a single string, a line per row of `name\talias\talias...`, plus each line's start offset, post count and category code.
 # Searching is then str.find in C over one buffer instead of a Python loop over 320k tuples, and one string costs far less memory than a tuple and list per row.
 class TagData:
-    __slots__ = ("hay", "starts", "counts", "cats", "subsets")
+    __slots__ = ("hay", "starts", "counts", "cats", "subsets", "meta")
 
     def __init__(self, hay, starts, counts, cats):
         self.hay = hay
@@ -184,6 +184,7 @@ class TagData:
         self.counts = counts
         self.cats = cats
         self.subsets = {}
+        self.meta = None
 
     # The rows of one category as their own TagData, built on first use, so a filtered search is as fast as an unfiltered one.
     def subset(self, code):
@@ -269,6 +270,22 @@ def _load(csv_file):
         cached = TAG_DATA_CACHE[csv_file] = (mtime, load_tags_from_csv(csv_path))
         _clear_search_cache(csv_file)
     return cached
+
+
+# Every name and alias of the active CSV's meta tags (highres, commentary and the like), built once per load.
+# Blocking on a cold cache, like get_tag_data.
+def meta_tag_names():
+    data = get_tag_data()
+    if data is None:
+        return frozenset()
+    if data.meta is None:
+        code = _CODE["meta"]
+        names = set()
+        for row, line in enumerate(data.hay.split("\n")[:-1]):
+            if data.cats[row] == code:
+                names.update(line.split("\t"))
+        data.meta = frozenset(names)
+    return data.meta
 
 
 def get_tag_data(active_csv=None):

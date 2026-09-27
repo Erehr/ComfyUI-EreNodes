@@ -79,9 +79,11 @@ async function loadTags(type, path, extension) {
  * @param {DOMRect} opts.anchor  rect to position against
  * @param {boolean} [opts.image=true]  include the thumbnail
  * @param {boolean} [opts.interactive=false]  let the pointer enter and pick tags (sidebar only; menu previews stay click-through)
+ * @param {Array<object>} [opts.tags]  tags already in hand (a booru post), shown instead of loading a file's
+ * @param {string} [opts.imageUrl]  the image to show when it is not a file's own cover (a booru post)
  */
-export function showPreviewFor({ type, path, extension, anchor, image = true, interactive = false }) {
-    if (!type || !path || !anchor) return hidePreviewPanel();
+export function showPreviewFor({ type, path, extension, anchor, image = true, interactive = false, tags: given = null, imageUrl = null }) {
+    if (!anchor || (!given && (!type || !path))) return hidePreviewPanel();
 
     clearTimeout(hideTimer);
     clearTimeout(showTimer);
@@ -112,11 +114,11 @@ export function showPreviewFor({ type, path, extension, anchor, image = true, in
         });
         img.addEventListener("error", () => { img.hidden = true; });
         if (image) {
-            img.src = previewUrl(type, path);
+            img.src = imageUrl ?? previewUrl(type, path);
             el.appendChild(img);
         }
 
-        const tags = await loadTags(type, path, extension);
+        const tags = given ?? await loadTags(type, path, extension);
         // A slower fetch for a row the pointer already left must not win.
         if (token !== mine) return;
 
