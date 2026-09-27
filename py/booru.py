@@ -1,5 +1,6 @@
-# The Booru sidebar tab's server side: searches Safebooru (safebooru.org), Gelbooru and e621, and relays the first two's thumbnails.
+# The Booru sidebar tab's server side: searches Safebooru (safebooru.org), Gelbooru and e621, and relays thumbnails the browser cannot load or read itself.
 # On the server because neither Safebooru nor Gelbooru answers browsers with CORS headers, and Gelbooru serves images only to requests carrying its own Referer; e621 uses the same route so all three behave alike.
+# Only thumbnails are ever fetched: Gelbooru's image host answers 404 to its larger samples as soon as more than one is requested at a time.
 # Outbound requests go only to the hosts named in SOURCES and RELAY_HOSTS, over https; nothing is written to disk.
 
 import asyncio
@@ -11,6 +12,7 @@ from urllib.parse import urlsplit
 import aiohttp
 import server
 from aiohttp import web
+from aiohttp import ClientSession
 
 from .prompt_csv import meta_tag_names
 
@@ -26,7 +28,7 @@ def _version():
 USER_AGENT = f"EreNodes/{_version()}"
 TIMEOUT = aiohttp.ClientTimeout(total=20)
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
-# Image hosts relayed for the browser, with the Referer each needs. e621's show in the browser directly and are relayed only when a cover is saved from one, since the browser cannot read their bytes.
+# Image hosts relayed for the browser, with the Referer each needs. Gelbooru's thumbnails go through here to be shown at all; the others show directly and come through here only when a cover is saved, since the browser cannot read their bytes.
 RELAY_HOSTS = {"gelbooru.com": "https://gelbooru.com/", "safebooru.org": None, "e621.net": None}
 # A grid page asks for 60 thumbnails at once; Gelbooru allows 10 requests a second per account.
 _IMAGE_SLOTS = asyncio.Semaphore(6)
@@ -37,9 +39,12 @@ _session = None
 def _client():
     global _session
     if _session is None or _session.closed:
-        _session = aiohttp.ClientSession(timeout=TIMEOUT, headers={"User-Agent": USER_AGENT})
+        headers = {"User-Agent": USER_AGENT}
+        _session = ClientSession(
+            timeout=TIMEOUT,
+            headers=headers,
+        )
     return _session
-
 
 def _names(text):
     return [name for name in (text or "").split(" ") if name]
@@ -86,8 +91,6 @@ def _safebooru(data):
         posts.append({
             "id": p["id"],
             "thumb": p["preview_url"],
-            "thumbLarge": p.get("sample_url") or p.get("file_url") or p["preview_url"],
-            "relay": True,
             **_size(p.get("width"), p.get("height")),
             "page": f"https://safebooru.org/index.php?page=post&s=view&id={p['id']}",
             # Uncategorised, like Gelbooru's, and possibly HTML-escaped the same way.
@@ -107,7 +110,6 @@ def _gelbooru(data):
         posts.append({
             "id": p["id"],
             "thumb": p["preview_url"],
-            "thumbLarge": p.get("sample_url") or p["preview_url"],
             "relay": True,
             **_size(p.get("width"), p.get("height")),
             "page": f"https://gelbooru.com/index.php?page=post&s=view&id={p['id']}",
@@ -133,7 +135,6 @@ def _e621(data):
         posts.append({
             "id": p["id"],
             "thumb": preview,
-            "thumbLarge": (p.get("sample") or {}).get("url") or preview,
             **_size((p.get("file") or {}).get("width"), (p.get("file") or {}).get("height")),
             "page": f"https://e621.net/posts/{p['id']}",
             # Lore, meta and invalid tags are left out.
@@ -230,6 +231,38 @@ def _relay_site(url):
     return next((site for site in RELAY_HOSTS if host == site or host.endswith("." + site)), None)
 
 
+# Answers worth one more try: the image hosts shed load with these, and a single retry turns most of them into an image.
+RETRY_STATUS = frozenset({408, 429, 500, 502, 503, 504})
+
+
+class _RelayFailure(Exception):
+    def __init__(self, reason, retry=False, wait=1.0):
+        super().__init__(reason)
+        self.retry = retry
+        self.wait = wait
+
+
+async def _fetch_image(url, referer):
+    async with _IMAGE_SLOTS:
+        async with _client().get(url, headers={"Referer": referer} if referer else None, allow_redirects=False) as response:
+            if response.status != 200:
+                try:
+                    wait = min(float(response.headers.get("Retry-After", 1)), 5.0)
+                except ValueError:
+                    wait = 1.0
+                raise _RelayFailure(f"HTTP {response.status}", retry=response.status in RETRY_STATUS, wait=wait)
+            if not response.content_type.startswith("image/"):
+                raise _RelayFailure(f"not an image ({response.content_type})")
+            # Read to the end in chunks: a single read returns only what has arrived so far, which cut images off partway.
+            chunks, size = [], 0
+            async for chunk in response.content.iter_chunked(256 * 1024):
+                size += len(chunk)
+                if size > MAX_IMAGE_BYTES:
+                    raise _RelayFailure(f"larger than {MAX_IMAGE_BYTES // (1024 * 1024)} MB")
+                chunks.append(chunk)
+            return b"".join(chunks), response.content_type
+
+
 @server.PromptServer.instance.routes.get("/erenodes/booru/image")
 async def booru_image(request):
     url = request.query.get("url", "")
@@ -238,22 +271,20 @@ async def booru_image(request):
         return web.Response(status=400)
     # Without its own Referer, Gelbooru redirects an image request to the post's HTML page.
     referer = RELAY_HOSTS[site]
-    try:
-        async with _IMAGE_SLOTS:
-            async with _client().get(url, headers={"Referer": referer} if referer else None, allow_redirects=False) as response:
-                if response.status != 200 or not response.content_type.startswith("image/"):
-                    return web.Response(status=502)
-                # Read to the end in chunks: a single read returns only what has arrived so far, which cut images off partway.
-                chunks, size = [], 0
-                async for chunk in response.content.iter_chunked(256 * 1024):
-                    size += len(chunk)
-                    if size > MAX_IMAGE_BYTES:
-                        return web.Response(status=502)
-                    chunks.append(chunk)
-                content_type = response.content_type
-    except (aiohttp.ClientError, asyncio.TimeoutError):
-        return web.Response(status=502)
-    return web.Response(body=b"".join(chunks), content_type=content_type, headers={"Cache-Control": "public, max-age=86400"})
+    for attempt in (1, 2):
+        try:
+            data, content_type = await _fetch_image(url, referer)
+            return web.Response(body=data, content_type=content_type, headers={"Cache-Control": "public, max-age=86400"})
+        except _RelayFailure as e:
+            failure = e
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            failure = _RelayFailure(type(e).__name__, retry=True)
+        if attempt == 2 or not failure.retry:
+            break
+        await asyncio.sleep(failure.wait)
+    # Logged, so a tile left blank has a reason somewhere.
+    print(f"[EreNodes] Booru image relay failed ({failure}): {url}")
+    return web.Response(status=502)
 
 
 if __name__ == "__main__":
@@ -265,7 +296,7 @@ if __name__ == "__main__":
     assert _size("700", 990) == {"width": 700, "height": 990} and _size(None, 5) == {}
     assert _blocked_terms(" male focus, , text,-bad ") == ["-male_focus", "-text"] and _blocked_terms(None) == []
     posts, more = _safebooru([{"id": 2, "preview_url": "https://safebooru.org/t.jpg", "sample_url": "", "file_url": "https://safebooru.org/f.png", "tags": "blue_hair 1girl"}])
-    assert posts[0]["thumbLarge"] == "https://safebooru.org/f.png" and [t["name"] for t in posts[0]["tags"]] == ["blue hair", "1girl"] and not more
+    assert posts[0]["thumb"] == "https://safebooru.org/t.jpg" and [t["name"] for t in posts[0]["tags"]] == ["blue hair", "1girl"] and not more
     assert _relay_site("https://img4.gelbooru.com/thumbnails/a.jpg") == "gelbooru.com"
     assert _relay_site("https://safebooru.org/thumbnails/1/a.jpg") == "safebooru.org"
     assert _relay_site("https://static1.e621.net/data/sample/a.jpg") == "e621.net"

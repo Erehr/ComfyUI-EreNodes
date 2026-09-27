@@ -499,7 +499,7 @@ function countLeaves(folder) {
 }
 
 // Booru
-// Searches go through py/booru.py, which also relays Safebooru's and Gelbooru's thumbnails; e621's load straight into <img>.
+// Searches go through py/booru.py, which also relays Gelbooru's thumbnails; Safebooru's and e621's load straight into <img>. Only thumbnails, at every tile size.
 // A post's image is only ever shown, never read, so it cannot be dragged, only its tags.
 
 // Tags a post may carry that are never wanted in a prompt. General tags on the boorus, so leaving out meta tags does not catch them.
@@ -549,9 +549,8 @@ function booruPost(post, hidden) {
     return {
         ...post,
         thumb: relay(post.thumb),
-        thumbLarge: relay(post.thumbLarge),
         // Readable by the page, which a cover upload needs; the grid shows the direct URL where it can.
-        coverSource: post.relay ? relay(post.thumbLarge) : relayUrl(post.thumbLarge),
+        coverSource: relayUrl(post.thumb),
         tags: (post.tags ?? []).filter(tag => !hidden.has(tagKey(tag.name))).map(tag => ({ name: tag.name, type: "tag", active: true, category: tag.category })),
     };
 }
@@ -611,15 +610,13 @@ async function loadBooruPage() {
         const hidden = hiddenBooruTags();
         const added = (data.posts ?? []).map(post => booruPost(post, hidden)).filter(post => !seen.has(post.id));
         b.posts.push(...added);
-        // Fetched now, in the background, so tiles scrolled into view later come straight from the browser cache.
-        const large = state.tileSize.booru === "large";
-        for (const post of added) {
-            const img = new Image();
-            img.decoding = "async";
-            img.src = large ? post.thumbLarge : post.thumb;
-        }
         b.page = page;
         if (!data.more) b.done = true;
+        // A further page is appended to the grid on screen: rebuilding it abandoned every image still loading and queued it again behind the new ones.
+        if (state.tab === "booru" && appendBooruTiles(added)) {
+            fillBooruViewport();
+            return;
+        }
     }
     if (state.tab !== "booru") return;
     const body = bodyEl();
@@ -627,6 +624,26 @@ async function loadBooruPage() {
     render();
     if (body) body.scrollTop = scrollTop;
     fillBooruViewport();
+}
+
+const booruRow = post => ({ type: "file", name: `#${post.id}`, path: `${state.booru.site}/${post.id}`, tab: "booru", post });
+
+// The rows the booru grid on screen was built from, extended as pages are appended, so the keyboard and scrolling see them.
+let booruItems = [];
+
+/** Add tiles to the grid already on screen; false when there is none to add to and a full render is needed. */
+function appendBooruTiles(posts) {
+    const grid = bodyEl()?.querySelector(".ere-sb-masonry");
+    if (!grid) return false;
+    const frag = document.createDocumentFragment();
+    for (const post of posts) {
+        const item = { row: booruRow(post), make: r => makeBooruTile(r) };
+        state.rows.push(item.row);
+        booruItems.push(item);
+        frag.appendChild(item.make(item.row));
+    }
+    grid.appendChild(frag);
+    return true;
 }
 
 /** Keep loading while the grid does not reach past the bottom of the panel, since then there is no scrolling to ask for more. */
@@ -650,14 +667,12 @@ function renderBooru(body) {
         grid.classList.add("ere-sb-masonry");
         grid.style.setProperty("--ere-masonry-row", `${MASONRY_ROW}px`);
         // Not windowed: a windowed grid assumes rows of one height, which masonry has not got.
-        const items = [];
+        booruItems = [];
         const frag = document.createDocumentFragment();
-        for (const post of b.posts) {
-            addRow(items, { type: "file", name: `#${post.id}`, path: `${b.site}/${post.id}`, tab: "booru", post }, r => makeBooruTile(r));
-        }
-        for (const item of items) frag.appendChild(item.make(item.row));
+        for (const post of b.posts) addRow(booruItems, booruRow(post), r => makeBooruTile(r));
+        for (const item of booruItems) frag.appendChild(item.make(item.row));
         grid.appendChild(frag);
-        state.flows.push(plainHandle(grid, items));
+        state.flows.push(plainHandle(grid, booruItems));
     }
     if (b.loading) {
         el("div", "ere-sb-empty", body).textContent = "Loading…";
@@ -681,13 +696,20 @@ function makeBooruTile(row) {
     img.alt = "";
     img.decoding = "async";
     img.draggable = false;
-    // A thumbnail that will not load (a removed file, a blocked host) leaves a tile naming the post; its tags still preview and drag.
+    const src = row.post.thumb;
+    // One more try after a pause, since a busy image host usually answers the second time; after that the tile names the post, and its tags still preview and drag.
+    let retried = false;
     img.addEventListener("error", () => {
+        if (!retried) {
+            retried = true;
+            setTimeout(() => { if (img.isConnected) img.src = `${src}${src.includes("?") ? "&" : "?"}retry=1`; }, 1500);
+            return;
+        }
         img.remove();
         wrap.classList.add("ere-sb-booru-noimg");
         el("div", "ere-sb-tile-name", wrap).textContent = row.name;
-    }, { once: true });
-    img.src = state.tileSize.booru === "large" ? row.post.thumbLarge : row.post.thumb;
+    });
+    img.src = src;
     attachPress(wrap, row);
     attachHover(wrap, row);
     wrap.addEventListener("contextmenu", e => openBooruMenu(row, e));
