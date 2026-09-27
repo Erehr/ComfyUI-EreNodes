@@ -99,11 +99,3 @@ Contributions are welcome. [Report a bug](https://github.com/erehr/ComfyUI-EreNo
 - **[shin131002](https://github.com/shin131002/ComfyUI-Anima-Remap)**: Anima LoRA remapper
 
 Licensed under the [MIT License](LICENSE).
-
-<div align="center">
-
-<img src="web/img/icon.png" alt="Do you kno de promp" width="480">
-
-**If EreNodes helps you, consider giving it a star.**
-
-</div>
