@@ -72,7 +72,7 @@ app.registerExtension({
         {
             id: "EreNodes.Autocomplete.Nodes",
             name: "In EreNodes prompts",
-            tooltip: "Keep autocomplete inside EreNodes prompt nodes (including Prompt Multiline) even when "In every textarea" is off.",
+            tooltip: "Keep autocomplete inside EreNodes prompt nodes (including Prompt Multiline) even when 'In every textarea' is off.",
             type: "boolean",
             defaultValue: true,
         },
