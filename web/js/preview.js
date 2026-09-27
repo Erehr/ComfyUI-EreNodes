@@ -81,8 +81,9 @@ async function loadTags(type, path, extension) {
  * @param {boolean} [opts.interactive=false]  let the pointer enter and pick tags (sidebar only; menu previews stay click-through)
  * @param {Array<object>} [opts.tags]  tags already in hand (a booru post), shown instead of loading a file's
  * @param {string} [opts.imageUrl]  the image to show when it is not a file's own cover (a booru post)
+ * @param {Function} [opts.onTagClick]  called with the tag a plain click lands on (interactive only)
  */
-export function showPreviewFor({ type, path, extension, anchor, image = true, interactive = false, tags: given = null, imageUrl = null }) {
+export function showPreviewFor({ type, path, extension, anchor, image = true, interactive = false, tags: given = null, imageUrl = null, onTagClick = null }) {
     if (!anchor || (!given && (!type || !path))) return hidePreviewPanel();
 
     clearTimeout(hideTimer);
@@ -126,7 +127,7 @@ export function showPreviewFor({ type, path, extension, anchor, image = true, in
             const cloud = renderTagCloud(tags, { max: MAX_PILLS });
             cloud.classList.add("scrollbar-custom");
             el.appendChild(cloud);
-            if (interactive) attachPillPicking(cloud, tags, el);
+            if (interactive) attachPillPicking(cloud, tags, el, onTagClick);
             hasTags = true;
         } else if (type === "group") {
             // An empty group is worth saying; a lora with no trained words is not.
@@ -141,7 +142,7 @@ export function showPreviewFor({ type, path, extension, anchor, image = true, in
 }
 
 /** Selectable, draggable pills, with the same grammar as pills inside a node. */
-function attachPillPicking(cloud, tags, panelEl) {
+function attachPillPicking(cloud, tags, panelEl, onTagClick) {
     const pills = [...cloud.querySelectorAll(".ere-pill:not(.ere-more)")];
     const picked = new Set();
     let anchorIndex = null;
@@ -170,8 +171,12 @@ function attachPillPicking(cloud, tags, panelEl) {
                         origin: { kind: "preview", onCanvasDrop: onCanvasDropFromPreview },
                     });
                 },
-                // A plain click does nothing: toggling here would imply it changes the group.
+                // A plain click does nothing unless the caller gives it a meaning: toggling here would imply it changes the group.
                 onClick: (ev) => {
+                    if (!ev.ctrlKey && !ev.metaKey && !ev.shiftKey) {
+                        if (onTagClick && tags[index]) onTagClick(tags[index]);
+                        return;
+                    }
                     if (ev.ctrlKey || ev.metaKey) {
                         if (picked.has(index)) picked.delete(index);
                         else picked.add(index);

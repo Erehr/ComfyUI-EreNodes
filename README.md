@@ -1,268 +1,109 @@
-# ComfyUI-EreNodes
+<div align="center">
 
-> Prompt management nodes with build in prompt library and tag autocomplete. Prompt tag cloud, multiselect, randomizer, gallery, composer, extractor. Prompt compatible lora loader. Drag and drop across nodes and sidebar library. Nodes 2.0 compatible.
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/banner-dark.webp"><img src="docs/images/banner-light.webp" alt="EreNodes"></picture>
+
+**Tag-based prompting for ComfyUI.** Build prompts from pills you can toggle, drag and reuse, with a built-in prompt library, tag autocomplete, a booru browser and a prompt-aware LoRA loader.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![ComfyUI](https://img.shields.io/badge/ComfyUI-Compatible-brightgreen)](https://github.com/comfyanonymous/ComfyUI) [![Ko-fi](https://img.shields.io/badge/Ko--fi-tip-F16061?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/erehr)
 
-ComfyUI-EreNodes provides an intuitive and feature-rich solution for handling prompts in your ComfyUI workflows. These nodes are designed to work seamlessly together, offering everything from intelligent autocomplete to visual tag management.
+[Features](#features) • [Installation](#installation) • [Settings](docs/settings.md) • [Changelog](docs/changelog.md)
 
-![Image](https://github.com/user-attachments/assets/7701cdb9-cef2-4dc4-8a3b-ed0dc5f164b6)
+</div>
 
-## Table of Contents
+## Features
 
-- [Available Nodes](#-available-nodes)
-- [Key Features](#-key-features)
-- [Compatibility](#-compatibility)
-- [Installation](#-installation)
-- [Getting Started](#-getting-started)
-- [Changelog](#-changelog)
-- [Contributing](#-contributing)
-- [License](#-license)
-- [Acknowledgments](#-acknowledgments)
+### [Prompt nodes](docs/prompt-nodes.md)
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/prompt-nodes-dark.webp"><img src="docs/images/prompt-nodes-light.webp" alt="Prompt nodes" width="100%"></picture>
+
+Cloud, Toggle, MultiSelect, Gallery, Randomizer and Multiline: one tag list, drawn the way you want it. Convert between them any time; chain them through `prefix`.
+
+### [Prompt Composer](docs/prompt-composer.md)
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/prompt-composer-dark.webp"><img src="docs/images/prompt-composer-light.webp" alt="Prompt Composer" width="100%"></picture>
+
+*One Node to rule them all.* Character, outfit, background and quality as collapsible, bypassable categories in a single node, each with its own layout.
+
+### [Tag pills](docs/tag-pills.md)
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/tag-pills-drag-dark.webp"><img src="docs/images/tag-pills-drag-light.webp" alt="Select, drag, drop" width="100%"></picture>
+
+Select them, drag them, drop them. Reorder, move or copy between nodes, replace with Shift, multi-select with Ctrl. Tags, text, LoRAs, embeddings and tag groups all as the same pills.
+
+### [Tag groups](docs/tag-groups.md)
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/tag-groups-dark.webp"><img src="docs/images/tag-groups-light.webp" alt="Tag groups" width="100%"></picture>
+
+Save them, reuse them. Characters, styles and presets as files with cover images, used as one pill or unpacked into tags.
+
+### [Autocomplete](docs/autocomplete.md)
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/autocomplete-dark.webp"><img src="docs/images/autocomplete-light.webp" alt="Autocomplete" width="100%"></picture>
+
+Danbooru and e621 tags in every textarea, with aliases, category filters (`artist:`, `char:`, `@`) and colours, plus `lora:`, `embedding:` and `group:` with previews.
+
+### [Sidebar](docs/sidebar.md)
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/sidebar-dark.webp"><img src="docs/images/sidebar-light.webp" alt="Sidebar" width="100%"></picture>
+
+Your tag groups, LoRAs and embeddings in a native sidebar tab. Hover for tags, drag onto nodes, search the tags inside every group, bookmark the ones you use daily.
+
+### [Booru browser](docs/booru.md)
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/booru-dark.webp"><img src="docs/images/booru-light.webp" alt="Booru browser" width="100%"></picture>
+
+Search Safebooru, Gelbooru or e621 from the sidebar. Hover a post for its tags, click one to search it, drag them into your prompt or save them as a tag group.
+
+### [LoRA loading](docs/lora-loading.md)
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/lora-loader-dark.webp"><img src="docs/images/lora-loader-light.webp" alt="Prompt Lora Loader" width="100%"></picture>
+
+The Prompt Lora Loader applies its own LoRAs and every `<lora:...>` in the incoming prompt, keeps the selected trigger words, and remaps older Anima LoRAs automatically.
+
+### [Prompt Extractor](docs/prompt-nodes.md#prompt-extractor)
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/prompt-extractor-dark.webp"><img src="docs/images/prompt-extractor-light.webp" alt="Prompt Extractor" width="100%"></picture>
+
+Drop a generated image, get its positive prompt back as pills, including tags that were switched off.
 
 ## Nodes
 
-| Node | Description | Key Features |
-|------|-------------|-------------|
-| **Prompt Cloud** | Interactive tag cloud visualization | Dynamic sizing, click-to-select |
-| **Prompt Toggle** | Simple toggleable tag list | Easy enable/disable, clean interface |
-| **Prompt Gallery** | Grid-based visual browser for LoRAs, Embeddings and Tag Groups | Image previews, intuitive selection |
-| **Prompt MultiSelect** | Multi-selection field for tags | Bulk selection, organized lists |
-| **Prompt Randomizer** | Randomize your prompt tags | Manual randomization button, Control after generate |
-| **Prompt Multiline** | Enhanced text input with EreNodes features | Full autocomplete, tag management |
-| **Prompt Extractor** | Recovers the prompt from a generated image as tag pills | Reads ComfyUI + A1111 metadata, positive-only, restores inactive tags |
-| **Prompt Composer** | Several tag clouds in one node, as reorderable categories | Collapsible rows, per-row bypass, acts like a chain of prompt nodes |
-| **Prompt Lora Loader** | Applies LoRAs to MODEL/CLIP with the same tag UI, from its own list and from the prompt | Toggle layout, trigger words, no external nodes, older Anima LoRAs remapped automatically for Anima-2.9B / 3.8B |
+| Node | |
+|------|---|
+| Prompt Cloud, Toggle, MultiSelect, Gallery | [Tag lists in four layouts](docs/prompt-nodes.md) |
+| Prompt Randomizer | [Seeded choice of which tags are on](docs/prompt-nodes.md#prompt-randomizer) |
+| Prompt Multiline | [Textarea with autocomplete and tag drop](docs/prompt-nodes.md#prompt-multiline) |
+| Prompt Composer | [Categories in one node](docs/prompt-composer.md) |
+| Prompt Extractor | [Prompt from an image](docs/prompt-nodes.md#prompt-extractor) |
+| Prompt Lora Loader | [LoRAs from pills and prompt](docs/lora-loading.md#prompt-lora-loader) |
+| Prompt to LoRA Stack | [`LORA_STACK` for other loaders](docs/lora-loading.md) |
+| Prompt Filter | [Keep only known tags](docs/prompt-nodes.md#prompt-filter) |
 
-## Key Features
-
-### Visual Previews
-- **Node Integration**: Direct image previews on Prompt Gallery node
-- **Quick Edit Previews**: Preview support in editing interfaces
-- **Selection Previews**: Visual feedback during file selection
-- **Custom Previews**: Easy custom preview image assignment
-
-### Prompt Extractor
-- **Drop an Image, Get Tags**: Drop any previously generated image on the node and its positive prompt comes back as editable tag pills
-- **Reads Everything**: ComfyUI's embedded graph, the editor workflow, and A1111/Forge parameters in PNG text chunks or JPEG/WebP EXIF
-- **Positive Only**: Traces the graph backwards from the sampler's `positive` input — negatives and unconnected leftover nodes are never picked up
-- **Recovers Toggled-Off Tags**: If the image came from an EreNodes workflow, tags that were switched *off* come back as inactive pills, with their strengths and types intact
-- **Just Tags After That**: Fully editable — toggle, add, reorder, drag into another node, or save as a tag group
-
-### Prompt Composer
-- **Categories, Not Nodes**: Keep character, outfit, background and quality apart in one node instead of four chained ones — each category has its own tag area, ≡ and + buttons
-- **Fold What You Are Not Editing**: Click a category header to collapse it; the layout is saved with the workflow
-- **Bypass a Whole Category**: The switch on the right turns one off without touching a single tag inside it, so switching it back on restores exactly what was there
-- **Drag Categories**: Reorder them by their header, or drag one straight into another Prompt Composer
-- **Same Pills Everywhere**: Tags drag between categories, and in and out of every other prompt node, exactly as they always have
-
-### Tag Groups Management
-- **Favorite Prompts**: Save and organize your most-used prompts with tags, LoRAs, and trigger words
-- **Direct Node Integration**: Create tag groups directly from nodes with subfolder organization
-- **Quick Application**: Easy loading of saved tag groups as convenient pills or their content
-- **Import/Export**: Seamless sharing and backup of your tag collections
-- **Choose Where They Live**: Keep tag groups in the node folder or in `ComfyUI/models/tag_groups` so they survive reinstalls and Manager updates
-- **Bulk Import Script**: `scripts/animadex_import.py` builds tag groups (with covers) from the animadex.net character and artist catalogues — a standalone interactive command-line tool for anyone who wants a large library in one go; see `scripts/README.md`
-
-### EreNodes Sidebar
-- **Native Sidebar Tab**: Browse tag groups, LoRAs and embeddings in a proper ComfyUI sidebar tab
-- **Bookmarks**: Pin the tag groups you reach daily to a folder at the top of the list, and to the top of every search result
-- **Two-Mode Search**: Filter by file and folder name or the tags *inside* every group
-- **Autocomplete in Tag Search**: the search box completes tags as you type, offering only tags your groups actually contain (with counts)
-- **Hover Previews**: Hover any entry to see its thumbnail and its tags, drawn with the exact same pills the nodes use
-- **Drag Both Ways**: Drag an entry onto an existing node to add it — or drag a node's tag pills onto a sidebar folder to open the editor and save them as a new tag group
-- **Group or Contents, Your Choice**: A dragged tag group lands as one pill by default; hold **Alt** to drop its tags instead. The ghost tells you which
-- **Drop an Image to Build a Group**: Drop a generated image anywhere on the tree to create a group from its prompt, with the image kept as the cover
-- **Pick Tags Out of a Preview**: Hover a tag group, move into the preview, select tags you want and drag just those into a prompt node
-- **Booru Tab**: search Safebooru, Gelbooru (with your API key) or e621 from the sidebar, with autocomplete. Hover a post for its tags, drag it onto a node to add them, or save them as a tag group
-
-### Advanced Tag Editing
-- **Missing File Warnings**: LoRA, embedding and tag group pills turn red-bordered when the file they name isn't on disk
-- **Effortless Replacement**: Quick edit tags or replacement of LoRAs, embeddings and Tag Groups
-- **Strength Control**: Precise tag strength adjustment via buttons or intuitive click-dragging
-- **Rich Previews**: Set and view preview images for all content types
-- **Dynamic Triggers**: Toggle LoRA trigger words with familiar tag pill interface
-
-![Image](https://github.com/user-attachments/assets/ef65357f-88cd-4cfd-bf5d-0b9e0a7a0c78)
-
-### Drag & Drop Tag Pills
-- **Reorder by Dragging**: Hold a pill for a moment (or just start moving it) to enter reorder mode — a live placeholder shows exactly where it will land
-- **Move Between Nodes**: Drag pills from one prompt node into another; hold **Alt** while dropping to copy instead of move
-- **Replace Instead of Add**: Hold **Shift** over another node or Composer category to replace its tags with the dropped ones
-- **Multi-Select**: **Ctrl+click** picks individual pills (they don't need to be next to each other), **Ctrl+drag** sweep a selected pill again to drop it, just like Explorer — and **Shift+click** selects a range
-- **Bulk Actions**: Right-click any pill in a selection for Enable / Disable / Toggle / Remove, or save and export just those tags as a group
-- **Works Everywhere**: Cloud, Toggle, MultiSelect, Randomizer and Gallery nodes all share the same behaviour
-
-### Smart Autocomplete
-- **Comprehensive Dictionaries**: Built-in tag lists from Danbooru and e621, plus support for custom CSV files in `ComfyUI/user/__erenodes/autocomplete`
-- **Intelligent Aliases**: Automatic tag alias detection and replacement with canonical terms. Show aliases under their tag, in a submenu, or as suggestions of their own (Settings → EreNodes)
-- **Flexible Search**: Partial matching support, including multi-word tag recognition
-- **Category Filters**: Danbooru's prefixes narrow a search: `artist:` / `art:`, `character:` / `char:`, `copyright:` / `copy:`, `general:` / `gen:`, `meta:` (and e621's `species:`, `lore:`). `@` searches artists and keeps the `@` on the inserted name, for Anima
-- **Category Colours**: the post count takes Danbooru's colour for artist, character, copyright and meta tags
-- **LoRAs, Embeddings and Groups Inline**: type `<lora:` / `lora:`, `embedding:` or `group:` to switch to the file browser, with previews; the pick is written back as `<lora:name:1.0>` or `embedding:name`. A tag group becomes a pill in tag nodes and is unpacked into its tags in a textarea
-- **No Duplicates**: tags already in the prompt are left out, in every textarea as well as in tag nodes; by default their other spellings stay available
-- **Visual Highlighting**: Clear highlighting of filtered terms for enhanced clarity
-
-![Image](https://github.com/user-attachments/assets/42deb9e3-73fa-4891-9ec5-cfbd497f9d9e)
-
-## Compatibility
-
-- **ComfyUI**: registered via standard `NODE_CLASS_MAPPINGS` (works on current and older installs). Node IDs are stable — workflows remain interchangeable.
-- **Subgraphs**: supported. The prefix separator is passed as a real input instead of being read from workflow metadata.
-- **Nodes 2.0 (Vue renderer)**: supported. Tag UI is DOM widgets in both the classic LiteGraph renderer and Nodes 2.0 (same implementation). The old canvas-drawn UI was removed; it remains available in git history.
+All nodes work in the classic canvas and in Nodes 2.0, and inside subgraphs.
 
 ## Installation
 
-### Quick Install (Recommended)
+**ComfyUI Manager:** search for "EreNodes", install, restart ComfyUI.
 
-**Via ComfyUI Manager:**
-1. Open ComfyUI Manager in your ComfyUI interface
-2. Search for "EreNodes" 
-3. Click Install
-4. Restart ComfyUI
-
-### Manual Installation
+**Manual:**
 
 ```bash
-# Navigate to your ComfyUI custom_nodes directory
-cd /path/to/ComfyUI/custom_nodes
-
-# Clone the repository
+cd ComfyUI/custom_nodes
 git clone https://github.com/erehr/ComfyUI-EreNodes.git
-
-# Restart ComfyUI
 ```
 
-## Getting Started
-
-### Basic Usage
-
-**Managing Tag Groups:**
-- Click on any tag nodes ≡ menu button to "Save as Tag Group". Select (or create) folder, type filename and select optional image. 
-- Access saved groups through the ≡ 'Load Tag Group' (loading content of tag group) or + button 'Add tag' (loading tag group as single combined pill)
-- Import/export tag groups for sharing with the community
-
-**LoRA Loading:**
-
-EreNodes provides flexible LoRA loading options to fit different workflow preferences:
-
-| Method | Description | Compatible Nodes | Use Case |
-|--------|-------------|------------------|----------|
-| **Prompt Lora Loader** | Built in. Takes MODEL and CLIP, applies its own LoRAs plus any `<lora:...>` found in the incoming prompt, and passes the prompt on with trigger words. No other pack needed. | — | Best for most workflows |
-| **LoRA Stack** | Use "Prompt to LoRA Stack" node to extract `<lora:name:strength>` tags and connect to stack-compatible nodes | • [Efficiency Nodes](https://github.com/jags111/efficiency-nodes-comfyui)<br>• [ComfyRoll Custom Nodes](https://github.com/Suzie1/ComfyUI_Comfyroll_CustomNodes)<br>• [LoRA Manager](https://github.com/willmiao/ComfyUI-Lora-Manager) | Best for mixing multiple sources of LoRAs |
-| **Direct Loading** | Use nodes that load LoRAs directly from prompt text in place of standard LoRA loaders. | • [LoRA Tag Loader](https://github.com/badjeff/comfyui_lora_tag_loader)<br>• [Impact Wildcard Encode](https://github.com/ltdrdata/ComfyUI-Impact-Pack)<br>• [PCLazyLoRALoader](https://github.com/asagi4/comfyui-prompt-control) | Best for simple workflows or when using wildcards |
-
-The Prompt Lora Loader uses the same pills, drag and drop and right-click menus as every other node. `+ Lora` opens the LoRA picker directly, and `≡ → Layout` switches between Toggle (default), Cloud, MultiSelect and Gallery. Only LoRAs can be dropped on it.
-
-### Pro Tips
-
-- **Search Efficiently**: Use partial matches or space for multi word phrases
-- **Visual Organization**: Set preview images for your most-used ta groups
-- **Quick Edits**: Right-click any tag for instant editing options
-- **Rearrange Fast**: Drag pills to reorder them, or straight into another prompt node — Ctrl+click first to move several at once
-- **Experiment**: Use the Randomizer node to discover new prompt combinations
-- **Convertible**: All tag nodes can be converted to another under ≡ menu
-- **Customize output**: Separators between nodes and individual tags are edited in ≡ → Options, or in node Properties
-
-## Changelog
-
-<details>
-<summary><b>Version 3.8</b> — Booru browser in sidebar tab</summary>
-
-### Version 3.7
-- **New Node: Prompt Lora Loader**: applies LoRAs to MODEL/CLIP with the familiar pill interface, from its own list and from the incoming prompt — no other pack needed
-
-### Version 3.6
-- **Per-category layouts in the Composer**: each category draws as Cloud, Toggle, MultiSelect, Gallery or Multiline, from its ≡ menu —> Layout
-- **Drop tags into a prompt textarea**: pills and tag groups can be dragged into the Prompt Multiline node and Composer multiline category
-- **New `text` tag type**: a pill holding a whole sentences, so tags and natural language prompts can mix in one node
-- **Separators on the node**: tag and node separators are now editable from node ≡ → Options
-
-### Version 3.5
-- **New Node: Prompt Composer**: several tag clouds in one node as reorderable, collapsible categories
-
-### Version 3.4
-- **Sidebar Tag search**: now as alternative mode, automatically indexing cache database in background
-- **Autocomplete on the sidebar search box** (tag mode only): only from actual tags in tag groups (cached)
-- **Prompt randomizer** added missing seed control
-
-### Version 3.3
-- **Tag group editor** in sidebar.
-- **Drop an image on the sidebar**: extracts its prompt *and* keeps the image as the group's cover
-- **Prompt Extractor node** - image drop area prompt extraction
-- **Missing file warnings** - red border on lora / embedding / tag group pills whose file isn't on disk
-
-### Version 3.2
-- **EreNodes sidebar**: native sidebar for managing tag groups / LoRAs / embeddings
-- **Search inside tag groups**: sidebar filter matching file names *and* the tags a group contains
-- **Configurable tag group folder**: node folder (default, unchanged) or in `ComfyUI/models/tag_groups`
-- **Type-coloured drag feedback**: ghost and target highlight during tag drag
-
-### Version 3.1
-- **Drag & drop reorder**: press-and-hold (or move) a tag pill to reorder it, with a live drop placeholder and drag preview
-- **Drag between nodes**: move pills across any pill-based prompt nodes; **Alt** while dropping copies instead of moving, duplicate names are skipped
-- **Multi-select**: **Ctrl+click** toggles individual pills, **Ctrl+drag** rubber-bands a box over them (Explorer-style — re-sweeping a selected pill deselects it), **Shift+click** selects a range, **Esc** or a click outside clears it — a drag started on a selected pill carries the whole set
-- **Selection actions**: right-clicking a selected pill opens bulk Enable / Disable / Toggle / Remove, plus "Save Selected as Tag Group" and "Export Selected"
-- **Quick edit cleanup**: Move Up / Move Down were dropped from the right-click menu now that pills can simply be dragged
-
-### Version 3.0
-- **Nodes 2.0 ready**: tag UI rendered as DOM widgets in both classic and Vue renderers
-- **Subgraph support**: prefix separator is a real (hidden) input; property panel remains the edit surface
-- **Gallery performance**: previews are plain `<img>` elements (browser cache, lazy loading) — no manual bitmap cache needed
-- **Randomizer**: "control after generate" now triggers once per completed prompt (works correctly with queued batches)
-- **Many bug fixes**: global autocomplete attachment, overwrite-confirm dialog, settings sync, stale text on workflow load, safer file-serving routes, gallery previews for filenames with special characters, button tooltips
-
-### Version 2.1
-- **New Node: Prompt Gallery**: Powerful and intuitive grid-based gallery for browsing and selecting tags
-- **Tag Group Image on Save**: You can now set a preview image when saving a Tag Group
-- **Change Image in Quick Edit**: Added the ability to change the preview image directly from the quick edit menu
-- **Performance Boost**: Implemented caching for previews, trigger words, and Tag Group content for a smoother experience
-
-### Version 2.0 - Major Overhaul
-- **Major Refactor**: Major overhaul of the codebase with rebuilt Autocomplete and Quick Edit systems
-
-### Version 1.4 - Enhanced Browsing
-- **New Features**: Folder browser for LoRAs, Embeddings and Tag Groups
-
-### Version 1.3 - Extended Support
-- **New Features**: LoRA and Embedding support for Autocomplete
-
-### Version 1.2 - Core Features
-- **New Features**: Introduced Randomizer node and Autocomplete functionality
-
-### Version 1.1 - Initial Release
-- **Launch**: Published to ComfyUI Registry and Manager
-
-</details>
-
----
+Then restart ComfyUI. The sidebar tab appears in the left bar, and all options are under Settings → EreNodes ([reference](docs/settings.md)).
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-
-## License
-
-This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+Contributions are welcome. [Report a bug](https://github.com/erehr/ComfyUI-EreNodes/issues), [request a feature](https://github.com/erehr/ComfyUI-EreNodes/issues) or join the [discussions](https://github.com/erehr/ComfyUI-EreNodes/discussions).
 
 ## Acknowledgments
 
-Special thanks to the amazing open-source community:
+- **ComfyUI community**, for feedback and support
+- **[ComfyUI-PromptPalette](https://github.com/kambara/ComfyUI-PromptPalette)**: initial inspiration and foundational code
+- **[ComfyUI-EZ-AF-Nodes](https://github.com/ez-af/ComfyUI-EZ-AF-Nodes)**: Prompt Gallery inspiration
+- **[DraconicDragon](https://github.com/DraconicDragon)**: tag lists and data
+- **[ToxesFoxes](https://github.com/ToxesFoxes)**: scrollable tag area
+- **[shin131002](https://github.com/shin131002/ComfyUI-Anima-Remap)**: Anima LoRA remapper
 
-- **ComfyUI Community** - For their continuous support and valuable feedback
-- **[ComfyUI-PromptPalette](https://github.com/kambara/ComfyUI-PromptPalette)** - Initial inspiration and foundational code
-- **[ComfyUI-EZ-AF-Nodes](https://github.com/ez-af/ComfyUI-EZ-AF-Nodes)** - Prompt Gallery node inspiration
-- **[DraconicDragon](https://github.com/DraconicDragon)** - Comprehensive tag lists and data
-- **[ToxesFoxes](https://github.com/ToxesFoxes)** - Scrollable tag area implementation
-- **[shin131002](https://github.com/shin131002/ComfyUI-Anima-Remap)** - Anima lora remapper
-
----
+Licensed under the [MIT License](LICENSE).
 
 <div align="center">
 
-**If you find this project helpful, please consider giving it a star!**
+<img src="web/img/icon.png" alt="Do you kno de promp" width="480">
 
-[Report Bug](https://github.com/erehr/ComfyUI-EreNodes/issues) • [Request Feature](https://github.com/erehr/ComfyUI-EreNodes/issues) • [Discussions](https://github.com/erehr/ComfyUI-EreNodes/discussions)
+**If EreNodes helps you, consider giving it a star.**
 
 </div>
