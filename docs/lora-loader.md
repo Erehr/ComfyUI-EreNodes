@@ -1,6 +1,6 @@
-# LoRA loading
+# LoRA loader
 
-[EreNodes](../README.md) › LoRA loading
+[EreNodes](../README.md) › LoRA loader
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="images/lora-loader-dark.webp"><img src="images/lora-loader-light.webp" alt="Prompt Lora Loader"></picture>
 

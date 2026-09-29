@@ -47,7 +47,7 @@ Your tag groups, LoRAs and embeddings in a native sidebar tab. Hover for tags, d
 
 Search Safebooru, Gelbooru or e621 from the sidebar. Hover a post for its tags, click one to search it, drag them into your prompt or save them as a tag group.
 
-### [LoRA loading](docs/lora-loading.md)
+### [LoRA loader](docs/lora-loader.md)
 <picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/lora-loader-dark.webp"><img src="docs/images/lora-loader-light.webp" alt="Prompt Lora Loader" width="100%"></picture>
 
 The Prompt Lora Loader applies its own LoRAs and every `<lora:...>` in the incoming prompt, keeps the selected trigger words, and remaps older Anima LoRAs automatically.

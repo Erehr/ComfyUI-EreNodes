@@ -16,7 +16,7 @@ Every EreNodes prompt node outputs a `STRING` and shares the same [tag pills](ta
 | **Prompt Multiline** | A plain textarea with autocomplete and tag drop. |
 | **Prompt Composer** | Several categories in one node. See [Prompt Composer](prompt-composer.md). |
 | **Prompt Extractor** | Tags recovered from a dropped image. |
-| **Prompt Lora Loader** | Applies LoRAs to MODEL and CLIP. See [LoRA loading](lora-loading.md). |
+| **Prompt Lora Loader** | Applies LoRAs to MODEL and CLIP. See [LoRA loader](lora-loader.md). |
 
 ## The ≡ and + buttons
 
