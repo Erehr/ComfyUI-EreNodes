@@ -20,7 +20,7 @@ Cloud, Toggle, MultiSelect, Gallery, Randomizer and Multiline: one tag list, dra
 ### [Prompt Composer](docs/prompt-composer.md)
 <picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/prompt-composer-dark.webp"><img src="docs/images/prompt-composer-light.webp" alt="Prompt Composer" width="100%"></picture>
 
-*One Node to rule them all.* Character, outfit, background and quality as collapsible, bypassable categories in a single node, each with its own layout.
+*One Node to rule them all.* Character, outfit, background - or whatever else you can think of as collapsible, bypassable categories in a single node, each with customizable layout. 
 
 ### [Tag pills](docs/tag-pills.md)
 <picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/tag-pills-drag-dark.webp"><img src="docs/images/tag-pills-drag-light.webp" alt="Select, drag, drop" width="100%"></picture>
