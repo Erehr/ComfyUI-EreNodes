@@ -1,6 +1,6 @@
 import { app } from "../../../scripts/app.js";
 import { beginUndoTransaction, endUndoTransaction, loadStyle, insertTagsAsText, caretIndexFromPoint, getElementOrCursorCoords, getTags, setTags, textareaOf, toast, HOLD_MS, MOVE_THRESHOLD } from "./util.js";
-import { ActionContextMenu } from "./contextmenu.js";
+import { ActionContextMenu, stepStrength } from "./contextmenu.js";
 import { accentForTags, TYPE_FILL, DEFAULT_FILL, injectTagStyles, renderTagPill } from "./tagview.js";
 
 const PILL_SELECTOR = ".ere-pill, .ere-toggle-row, .ere-tile";
@@ -1244,7 +1244,21 @@ export function handlePillContextMenu(node, index, e, anchorEvent) {
     const saveable = subset.tags.filter(t => t.type !== 'group').length;
     const anchor = anchorEvent ?? e;
 
+    // Tag groups have no strength of their own.
+    const setStrength = (strengthOf) => applyToSelection(node, t => {
+        if (t.type === 'group') return;
+        t.strength = strengthOf(t);
+        if (Math.abs(t.strength - 1.0) < 0.0001) delete t.strength;
+    });
+    const strength = subset.tags.some(t => t.type !== 'group') ? [{
+        type: 'strength_control',
+        label: () => "Strength",
+        nudge: (delta) => setStrength(t => stepStrength(t.strength, delta)),
+        reset: () => setStrength(() => 1.0),
+    }, null] : [];
+
     new ActionContextMenu(anchor, `${selected.length} tags selected`, [
+        ...strength,
         { name: "Enable", callback: () => applyToSelection(node, t => { t.active = true; }) },
         { name: "Disable", callback: () => applyToSelection(node, t => { t.active = false; }) },
         { name: "Toggle", callback: () => applyToSelection(node, t => { t.active = !t.active; }) },

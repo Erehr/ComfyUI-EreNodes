@@ -92,6 +92,8 @@ const state = {
     rows: [],
     sections: [],       // grid view: { start, count, cols() } per grid, for moving up and down a column
     flows: [],
+    scrollTop: 0,       // tracked while open: a closing panel may already be out of layout, where it reads 0
+    reopenScroll: null, // { tab, top } the next open goes back to
     press: null,
     editor: null,
     viewMenu: null,     // closes the view popover, while one is open
@@ -1721,6 +1723,25 @@ function mountFlow(body, container, items, opts) {
 }
 
 function render() {
+    renderBody();
+    applyReopenScroll();
+}
+
+/** Held until the user touches the list, since opening renders more than once and each rebuild can drop the position. */
+function applyReopenScroll() {
+    const reopen = state.reopenScroll;
+    if (!reopen) return;
+    if (reopen.tab !== state.tab || state.query) {
+        state.reopenScroll = null;
+        return;
+    }
+    const body = bodyEl();
+    if (!body?.isConnected || !state.rows.length || body.scrollTop === reopen.top) return;
+    body.scrollTop = reopen.top;
+    for (const flow of state.flows) flow.repaint();
+}
+
+function renderBody() {
     const host = state.host;
     const body = host?.querySelector(".ere-sb-body-inner");
     if (!body) return;
@@ -2709,8 +2730,14 @@ function buildTreeBody(host) {
         if (state.kbd && !isDragActive()) endKeyboardNav(e.target?.closest?.("[data-ere-key]"));
     });
     content.addEventListener("scroll", () => {
+        if (state.host === host) state.scrollTop = content.scrollTop;
         if (state.tab === "booru" && content.scrollHeight - content.scrollTop - content.clientHeight < content.clientHeight) loadBooruPage();
     }, { passive: true });
+    // The panel is sized after it is handed over, which clamps a scroll set before that; observers run before paint, so no frame shows the top first.
+    new ResizeObserver(applyReopenScroll).observe(content);
+    for (const type of ["wheel", "pointerdown", "keydown", "touchstart"]) {
+        content.addEventListener(type, () => { state.reopenScroll = null; }, { capture: true, passive: true });
+    }
     content.addEventListener("focusout", (e) => {
         if (!state.kbd || content.contains(e.relatedTarget)) return;
         state.kbd = false;
@@ -2918,6 +2945,8 @@ export function unmountSidebar() {
     closeViewMenu();
     for (const flow of state.flows) flow.destroy();
     state.flows = [];
+    // A position in a filtered list means nothing in the whole collection.
+    state.reopenScroll = state.query ? null : { tab: state.tab, top: state.scrollTop };
     // Reopening starts from the whole collection, as the core sidebars do.
     state.query = "";
     state.tagResults = null;

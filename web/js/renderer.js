@@ -80,14 +80,17 @@ function installWheelGuard() {
  * shrinks — see `beginResizeDrag` for what that cost before.
  */
 const resizeDrags = new Set();
-let pointerIsDown = false;
+// The node element whose resize handle (`data-corner`) the pointer went down on; any other press can resize a node too, by changing its content.
+let resizeHandleNode = null;
 let dragTrackingInstalled = false;
 function installResizeDragTracking() {
     if (dragTrackingInstalled) return;
     dragTrackingInstalled = true;
-    window.addEventListener("pointerdown", () => { pointerIsDown = true; }, true);
+    window.addEventListener("pointerdown", (e) => {
+        resizeHandleNode = e.target?.closest?.("[data-corner]")?.closest("[data-node-id]") ?? null;
+    }, true);
     const release = () => {
-        pointerIsDown = false;
+        resizeHandleNode = null;
         const ending = [...resizeDrags];
         resizeDrags.clear();
         for (const end of ending) end();
@@ -624,7 +627,8 @@ export function attachTagDomWidget(node, mode, layoutOf = null) {
             return naturalHeight();
         };
         widget.options.getMaxHeight = () => {
-            if (scrollEnabled()) return undefined;
+            // The legacy canvas gives a node dragged taller than its tags to the tag area, as it does for a native textarea.
+            if (scrollEnabled() || !window.LiteGraph?.vueNodesMode) return undefined;
             if (fitHeight > 0) {
                 return Math.max(scrollMinHeight(), fitHeight - (widget.y ?? 30) - heightBelow() - 4);
             }
@@ -638,8 +642,12 @@ export function attachTagDomWidget(node, mode, layoutOf = null) {
     };
 
 
-    const clampToFitHeight = () => {
-        if (!(fitHeight > 0) || Math.abs(node.size[1] - fitHeight) <= 0.5) return;
+    // Where a legacy drag stops: LiteGraph's computeSize pads the widgets a few px past the fit.
+    const floorHeight = () => Math.max(fitHeight, node.computeSize()[1]);
+
+    // A floor, not a fit: a node the user made taller than its tags stays that tall.
+    const growToFitHeight = () => {
+        if (!(fitHeight > 0) || node.size[1] >= fitHeight - 0.5) return;
         applyingAutoHeight = true;
         try {
             node.setSize([node.size[0], fitHeight]);
@@ -676,16 +684,26 @@ export function attachTagDomWidget(node, mode, layoutOf = null) {
         }
 
         if (scroll.style.maxHeight) scroll.style.maxHeight = "";
-        node._tagAreaCapped = scrolls && !!node.properties?._tagAreaManualHeight;
+        // A height the user dragged: in scroll mode it stands, in fit mode the tags can still push it up.
+        const manual = !!node.properties?._tagAreaManualHeight;
+        node._tagAreaCapped = manual;
 
-        if (scrolls && node.properties?._tagAreaManualHeight) return;
+        if (scrolls && manual) return;
 
         remeasureFitHeight();
-        if (!(fitHeight > 0) || Math.abs(node.size[1] - fitHeight) <= 1) return;
+        if (!(fitHeight > 0)) return;
+        let target = fitHeight;
+        if (manual && node.size[1] > floorHeight() + 1) target = node.size[1];
+        else if (manual) {
+            // The tags reach the chosen height, so they own it again.
+            delete node.properties._tagAreaManualHeight;
+            node._tagAreaCapped = false;
+        }
+        if (Math.abs(node.size[1] - target) <= 1) return;
 
         applyingAutoHeight = true;
         try {
-            node.setSize([node.size[0], fitHeight]);
+            node.setSize([node.size[0], target]);
         } finally {
             applyingAutoHeight = false;
         }
@@ -737,10 +755,7 @@ export function attachTagDomWidget(node, mode, layoutOf = null) {
         el.classList.remove("ere-resizing");
     };
 
-    node.onTagAreaPolicyChanged = () => {
-        if (node.properties && !scrollEnabled()) delete node.properties._tagAreaManualHeight;
-        applyHeightPolicy();
-    };
+    node.onTagAreaPolicyChanged = () => applyHeightPolicy();
 
     node.onFitTagArea = () => {
         if (node.properties) delete node.properties._tagAreaManualHeight;
@@ -750,21 +765,20 @@ export function attachTagDomWidget(node, mode, layoutOf = null) {
         applyHeightPolicy();
     };
 
-    // Fit mode: lock height immediately on every resize (old canvas onResize).
     const origResize = node.onResize;
     node.onResize = function (...args) {
-        const draggedByUser = app.canvas?.resizing_node === node;
-        if (!scrollEnabled() && !applyingAutoHeight && !window.LiteGraph?.vueNodesMode) {
-            clampToFitHeight();
-        } else if (draggedByUser && !applyingAutoHeight && scrollEnabled() && !window.LiteGraph?.vueNodesMode) {
+        // LiteGraph already stops the drag at getMinHeight, so the legacy canvas only has to remember a height the user chose.
+        // In fit mode, dragging back down onto the tags hands the height back to them.
+        if (app.canvas?.resizing_node === node && !applyingAutoHeight && !window.LiteGraph?.vueNodesMode) {
             node.properties = node.properties || {};
-            node.properties._tagAreaManualHeight = true;
+            if (scrollEnabled() || !(fitHeight > 0) || node.size[1] > floorHeight() + 1) node.properties._tagAreaManualHeight = true;
+            else delete node.properties._tagAreaManualHeight;
         }
-        // A resize the user is dragging is handled by containment until they let go; anything
-        // else (a programmatic size change, a collapse) still runs the policy, coalesced to one
-        // pass per frame.
+        // A resize the user drags in scroll mode is handled by containment until they let go.
+        // In fit mode the content height is the floor, so ComfyUI's own clamp stops the drag there, as it does for native nodes.
+        // Anything else (a programmatic size change, a collapse, content growing) still runs the policy, coalesced to one pass per frame.
         if (window.LiteGraph?.vueNodesMode && !applyingAutoHeight) {
-            if (pointerIsDown) beginResizeDrag();
+            if (scrollEnabled() && resizeHandleNode?.contains(el)) beginResizeDrag();
             else syncSize();
         }
         return origResize?.apply(this, args);
@@ -790,7 +804,7 @@ export function attachTagDomWidget(node, mode, layoutOf = null) {
         applyExtractLayout();
         const h = content.offsetHeight;
         if (!scrollEnabled() && Math.abs(h - lastContentH) < 2) {
-            clampToFitHeight();
+            growToFitHeight();
             return;
         }
         syncSize();
