@@ -220,6 +220,16 @@ app.registerExtension({
             defaultValue: DEFAULT_SEPARATOR,
         },
         {
+            id: "EreNodes.Nodes.RemoveDuplicates",
+            name: "Remove duplicate tags from output",
+            tooltip: "When on (default), a tag that appears more than once in a node's prompt — as a pill, inside a tag group, or as a LoRA trigger word — is written once, where it first appears. Turn off to get the prompt exactly as the tags list it.",
+            type: "boolean",
+            defaultValue: true,
+            onChange: () => {
+                for (const node of app.graph?._nodes ?? []) node.onUpdateTextWidget?.(node);
+            },
+        },
+        {
             id: "EreNodes.Nodes.TagAreaScroll",
             name: "Scrollable Tag Area",
             tooltip: "When on, resizing a node smaller than its tags scrolls them. When off (default), the node always grows/shrinks to fit the tags — only width is free.",

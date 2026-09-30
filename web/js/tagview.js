@@ -122,6 +122,21 @@ export function bumpPreview(type, name) {
 
 // Elements
 
+/** A single-mode group names its pick after its own name. */
+function labelFor(tag, stripFolders) {
+    const name = displayNameFor(tag, stripFolders);
+    if (tag.type !== "group" || tag.mode !== "single") return name;
+    const pick = tag.content?.[0];
+    return `${name}: ${pick ? displayNameFor(pick, true) : "none"}`;
+}
+
+/** A lora's trigger words are added to it; a multi-mode group's picks are a part of it. */
+function countBadge(tag) {
+    if (tag.type === "lora" && tag.triggers?.length > 0) return `[+${tag.triggers.length}]`;
+    if (tag.type === "group" && tag.mode === "multi") return `[${tag.content?.length ?? 0}]`;
+    return "";
+}
+
 /**
  * A single tag pill.
  * @param {object} [opts] stripFolders (basename only), showTriggers.
@@ -135,10 +150,9 @@ export function renderTagPill(tag, opts = {}) {
     // Fill only: the disabled look is a class, so it follows a palette change.
     if (tag.active !== false) pill.style.setProperty("--ere-fill", TYPE_FILL[tag.type] || DEFAULT_FILL);
 
-    let name = displayNameFor(tag, !!opts.stripFolders);
-    if (opts.showTriggers !== false && tag.type === 'lora' && tag.triggers?.length > 0) {
-        name += ` [+${tag.triggers.length}]`;
-    }
+    let name = labelFor(tag, !!opts.stripFolders);
+    const badge = countBadge(tag);
+    if (opts.showTriggers !== false && badge) name += ` ${badge}`;
     pill.textContent = name;
 
     const st = strengthText(tag);
@@ -175,12 +189,12 @@ export function renderToggleRowEl(tag, opts = {}) {
 
     const label = document.createElement("span");
     label.className = "ere-label";
-    label.textContent = displayNameFor(tag, false);
+    label.textContent = labelFor(tag, false);
     row.appendChild(label);
 
     // Its own element rather than more label text: a row is name-left / numbers-right, and text
     // inside the ellipsised label cannot be pushed to the far edge.
-    const badge = tag.type === 'lora' && tag.triggers?.length > 0 ? `[+${tag.triggers.length}]` : "";
+    const badge = countBadge(tag);
     const st = strengthText(tag);
     if (badge || st) {
         const meta = document.createElement("span");
@@ -228,11 +242,10 @@ export function renderTagTile(tag, opts = {}) {
     const nameBar = document.createElement("div");
     nameBar.className = "ere-name";
     if (tag.active !== false) nameBar.style.setProperty("--ere-fill", TYPE_FILL[tag.type] || DEFAULT_FILL);
-    nameBar.textContent = displayNameFor(tag, opts.stripFolders !== false);
+    nameBar.textContent = labelFor(tag, opts.stripFolders !== false);
     tile.appendChild(nameBar);
 
-    let infoText = "";
-    if (tag.triggers?.length > 0) infoText += `[+${tag.triggers.length}]`;
+    let infoText = countBadge(tag);
     const st = strengthText(tag);
     if (st) infoText += (infoText ? " " : "") + st.trim();
     if (infoText) {

@@ -3,7 +3,7 @@ import { initializeSharedPromptFunctions, convertMenuItem, optionsMenuItem } fro
 import { attachTagDomWidget } from "./js/renderer.js";
 import { parseTags } from "./js/parser.js";
 import { ActionContextMenu } from "./js/contextmenu.js";
-import { ACCEPTED_IMAGE_TYPES, isAcceptedImage, tagsFromResult, segmentCount, extractFromImage, reExtractByFilename, forgetVerdicts, getTags, setTags, toast, pickFile } from "./js/util.js";
+import { ACCEPTED_IMAGE_TYPES, isAcceptedImage, tagsFromResult, segmentCount, extractFromImage, reExtractByFilename, forgetVerdicts, ensureChecked, isKnownMissing, getTags, setTags, toast, pickFile } from "./js/util.js";
 
 const NODE_TYPE = "ErePromptExtractor";
 
@@ -15,16 +15,35 @@ function setWidget(node, name, value) {
     if (widget) widget.value = value;
 }
 
+/** Without inactive pills, and without loras, embeddings and groups whose file is missing (the red ones). */
+async function withoutUnused(tags) {
+    await ensureChecked(tags);
+    return tags.filter(t => t.active !== false && !isKnownMissing(t));
+}
+
+async function removeUnused(node) {
+    const tags = getTags(node);
+    const kept = await withoutUnused(tags);
+    if (kept.length !== tags.length) await setTags(node, kept);
+}
+
+function setRemoveByDefault(node, on) {
+    if (on) node.properties._extractRemoveInactive = true;
+    else delete node.properties._extractRemoveInactive;
+    if (on) removeUnused(node);
+}
+
 /** Apply an extraction result to the node (merging lives in js/util.js). */
-function applyResult(node, result) {
+async function applyResult(node, result) {
     const existing = getTags(node);
-    const tags = tagsFromResult(result, existing);
+    let tags = tagsFromResult(result, existing);
 
     if (!tags.length) {
         // The node now shows this image; keeping the old pills would claim they came from it.
         const hadTags = existing.length > 0;
         node.properties._tagDataJSON = "[]";
         node._extractSnapshot = "[]";
+        delete node.properties._extractStale;
         node.onUpdateTextWidget?.(node);
         toast("warn", "Nothing to extract",
             (result.error || "No prompt metadata was found in that image.")
@@ -32,17 +51,22 @@ function applyResult(node, result) {
         return false;
     }
 
-    node.properties._tagDataJSON = JSON.stringify(tags);
     // New pills, so re-check against disk rather than trust a verdict cached for the name.
     forgetVerdicts(tags);
+    const extracted = tags.length;
+    if (node.properties._extractRemoveInactive) tags = await withoutUnused(tags);
+    const removed = extracted - tags.length;
+
+    node.properties._tagDataJSON = JSON.stringify(tags);
     // Set before the update, so the change watcher does not fire on this one.
     node._extractSnapshot = node.properties._tagDataJSON;
+    delete node.properties._extractStale;
     node.onUpdateTextWidget?.(node);
 
     const inactive = tags.filter(t => t.active === false).length;
     const nodes = segmentCount(result);
     toast("success", "Prompt extracted",
-        `${tags.length} tag(s)${inactive ? `, ${inactive} inactive` : ""}`
+        `${tags.length} tag(s)${inactive ? `, ${inactive} inactive` : ""}${removed ? `, ${removed} removed` : ""}`
         + `${nodes > 1 ? `, ${nodes} nodes` : ""}`
         + `${result.source ? ` · ${result.source}` : ""}`, 4000);
     return true;
@@ -66,7 +90,7 @@ async function extractFromFile(node, file) {
             node.properties._extractImage = result.filename;
             setWidget(node, "image", result.filename);
         }
-        applyResult(node, result);
+        await applyResult(node, result);
     } catch (e) {
         console.error("[EreNodes] Prompt extraction failed.", e);
         toast("error", "Extraction failed", e.message);
@@ -88,7 +112,7 @@ async function reExtract(node) {
     node._extractBusy = true;
     node._ereDom?.render?.();
     try {
-        applyResult(node, await reExtractByFilename(filename));
+        await applyResult(node, await reExtractByFilename(filename));
     } catch (e) {
         console.error("[EreNodes] Re-extraction failed.", e);
         toast("error", "Extraction failed", e.message);
@@ -99,13 +123,21 @@ async function reExtract(node) {
     }
 }
 
-/** Drop the recorded image once the tags stop matching it: the pills stay editable, and an edited set no longer came from that image. */
+/** Grey the recorded image out while the tags differ from what it gave: the pills stay editable, and an edited set no longer came from that image. */
 function checkExtractDirty(node) {
     if (!node.properties?._extractImage) return;
     if (node._extractSnapshot === undefined) return;
-    if (node.properties._tagDataJSON === node._extractSnapshot) return;
+    const stale = node.properties._tagDataJSON !== node._extractSnapshot;
+    if (stale === !!node.properties._extractStale) return;
 
+    if (stale) node.properties._extractStale = true;
+    else delete node.properties._extractStale;
+    node._ereDom?.render?.();
+}
+
+function clearExtractImage(node) {
     delete node.properties._extractImage;
+    delete node.properties._extractStale;
     node._extractSnapshot = undefined;
     setWidget(node, "image", "");
     node._ereDom?.render?.();
@@ -113,10 +145,12 @@ function checkExtractDirty(node) {
 }
 
 function attachExtractorBehaviour(node) {
-    // A restored node saved its image and tags together, so they match: re-baseline here or the first edit after a reload would not clear the preview.
+    // A restored node saved its image and tags together, so they match: re-baseline here or the first edit after a reload would not grey the preview.
+    // A greyed image is not restored at all: it only lasts for the session it went stale in.
     const origConfigure = node.onConfigure;
     node.onConfigure = function (info) {
         const result = origConfigure?.apply(this, arguments);
+        if (this.properties?._extractStale) clearExtractImage(this);
         const recorded = this.properties?._extractImage;
         if (recorded) {
             setWidget(this, "image", recorded);
@@ -132,11 +166,13 @@ function attachExtractorBehaviour(node) {
         checkExtractDirty(node);
         return result;
     };
-    // onRemoveTags mutates tags without going through onUpdateTextWidget.
+    // Removing inactive tags here also removes missing files, and goes through setTags, which the change watcher sees.
+    // Removing all of them clears the image outright: there is nothing left for it to describe.
     const origRemove = node.onRemoveTags;
-    node.onRemoveTags = function (...args) {
-        const result = origRemove?.apply(this, args);
-        checkExtractDirty(node);
+    node.onRemoveTags = function (mode = 'all', ...rest) {
+        if (mode === 'inactive') return removeUnused(node);
+        const result = origRemove?.call(this, mode, ...rest);
+        if (node.properties?._extractImage) clearExtractImage(node);
         return result;
     };
 
@@ -162,21 +198,25 @@ function attachExtractorBehaviour(node) {
     /** A reduced action menu: no clipboard/import/convert-from-text entries, because */
     node.onActionMenu = (e) => {
         const tagData = getTags(node);
+        const removeByDefault = !!node.properties?._extractRemoveInactive;
         new ActionContextMenu({ clientX: e.clientX, clientY: e.clientY }, node.title, [
-            // Cleared once the tags are edited: the image no longer describes them.
             { name: "Extract Again", callback: () => reExtract(node),
               disabled: !node.properties?._extractImage },
             { name: "Choose Image…", callback: () => node.onExtractPick?.() },
             null,
             { name: "Toggle All Tags", callback: () => node.onToggleTags?.() },
             { name: "Remove All Tags", callback: () => node.onRemoveTags?.() },
-            { name: "Remove Inactive Tags", callback: () => node.onRemoveTags?.('inactive') },
+            // With the option on there is never anything left for it to remove.
+            { name: "Remove Inactive Tags", callback: () => node.onRemoveTags?.('inactive'), disabled: removeByDefault },
             null,
             { name: "Save Tag Group", callback: () => node.onSaveTagGroup?.(e),
               disabled: tagData.filter(t => t.type !== 'group').length < 2 },
             { name: "Export Tags (.json)", callback: () => node.onExportTags?.() },
             null,
-            optionsMenuItem(node),
+            optionsMenuItem(node, [
+                null,
+                { name: "Remove inactive by default", checked: removeByDefault, callback: () => setRemoveByDefault(node, !removeByDefault) },
+            ]),
             convertMenuItem(node),
         ]);
     };

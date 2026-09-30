@@ -2,6 +2,7 @@ import { app } from "../../../scripts/app.js";
 import { getCache, beginUndoTransaction, endUndoTransaction, getSetting, apiFetch, requestJson, toast, promptDialog, pickFile, loadGroupTags } from "./util.js";
 import { renderTagPill, SURFACE_CLASS, injectTagStyles, previewUrl, previewKey, saveCover } from "./tagview.js";
 import { showPreviewFor, hidePreviewPanel } from "./preview.js";
+import { tagKey } from "./parser.js";
 
 // Class on preview <img> elements so cleanup can target them precisely.
 const PREVIEW_CLASS = "ere-menu-preview";
@@ -29,6 +30,13 @@ const MENU_MIN_WIDTH = 160;
 const MENU_MAX_WIDTH = 320;
 // Editing a sentence in a 320px column is editing it through a letterbox.
 const TEXT_MENU_WIDTH = 460;
+
+// A group pill's `mode`: absent is "file", the tags as the group file has them on and off.
+const GROUP_MODES = [
+    { id: "file", label: "File" },
+    { id: "single", label: "Single" },
+    { id: "multi", label: "Multi" },
+];
 
 // A menu can open before any node has mounted a widget, so the tag styles are ensured here too.
 injectTagStyles();
@@ -859,9 +867,6 @@ export function parseFilePrefix(raw) {
     return m ? { type: m[1].toLowerCase(), query: m[2].replace(/>$/, "") } : null;
 }
 
-/** A tag as the CSV spells it, so a prompt's `blue_eyes`, `\(x\)` or `@artist` compares equal to the suggestion. */
-export const tagKey = name => String(name ?? "").trim().replace(/^@/, "").replace(/\\([()])/g, "$1").replace(/_/g, " ").toLowerCase();
-
 // A new context menu for csv tags
 export class TagContextMenu extends DynamicContextMenu {
     constructor(event, onSelectCallback, existingTags = []) {
@@ -1322,7 +1327,7 @@ export class TagEditContextMenu extends DynamicContextMenu {
         if (this.tag.type !== 'group') {
              this.options.push({ name: 'strength', type: 'strength_control' });
         }
-        
+
         // 3.
         // Info Panel (for lora triggers, group contents)
         if (this.isSpecialType) {
@@ -1332,8 +1337,22 @@ export class TagEditContextMenu extends DynamicContextMenu {
                 this.options.push({ type: 'info_panel', content: infoPanelContent, disabled: true });
             }
         }
-        
+
         this.options.push({ type: 'separator' });
+
+        // A group's selection mode, right under the tags it picks from.
+        if (this.tag.type === 'group') {
+            const current = this.tag.mode || "file";
+            this.options.push({
+                name: "Mode",
+                submenu: GROUP_MODES.map(mode => ({
+                    name: mode.label,
+                    checked: mode.id === current,
+                    disabled: mode.id === current,
+                    callback: () => this.setGroupMode(mode.id),
+                })),
+            });
+        }
 
         if (this.isSpecialType) {
             this.options.push({
@@ -1511,7 +1530,7 @@ export class TagEditContextMenu extends DynamicContextMenu {
                 item.className = `litemenu-entry submenu disabled ${SURFACE_CLASS}`;
                 item.style.cssText = "max-width: 100%; display: flex; flex-wrap: wrap; gap: 5px; opacity: 1;";
                 // Apply half opacity only for non-interactive group previews
-                if (this.tag.type === 'group') {
+                if (this.tag.type === 'group' && !this.tag.mode) {
                     item.style.opacity = "0.6";
                 }
                 if (Array.isArray(option.content)) {
@@ -1578,8 +1597,9 @@ export class TagEditContextMenu extends DynamicContextMenu {
             // Update the tag object with the new file info
             this.tag.name = selectedFile.name;
             this.tag.extension = selectedFile.extension;
-            // When switching to a new file, clear any triggers from the old one.
+            // When switching to a new file, clear any triggers or picks from the old one.
             this.tag.triggers = [];
+            if (this.tag.mode) this.tag.content = [];
 
             // First, save the change.
             // The saveCallback from prompt.js will update the node data.
@@ -1627,16 +1647,44 @@ export class TagEditContextMenu extends DynamicContextMenu {
     }
 
     processGroupTags(groupTags) {
+        const members = Array.isArray(groupTags) ? groupTags.filter(t => t?.name) : [];
+        if (!this.tag.mode) return members.map(t => renderTagPill(t));
+
+        // Picks the file no longer has stay listed, so they can still be dropped.
+        const orphans = (this.tag.content || []).filter(c => !members.some(m => m.name === c.name));
+        const all = [...members, ...orphans];
         const pills = [];
-        if (groupTags && Array.isArray(groupTags) && groupTags.length > 0) {
-            // Show all tags, not just active ones
-            groupTags.forEach(tag => {
-                if (tag.name) { // Ensure tag has a name
-                    pills.push(this.createPill(tag, false));
-                }
+        const build = (member) => {
+            const picked = (this.tag.content || []).some(c => c.name === member.name);
+            const el = renderTagPill({ ...member, active: picked });
+            if (orphans.includes(member)) el.classList.add("ere-missing");
+            el.style.cursor = "pointer";
+            el.addEventListener("click", () => {
+                const content = this.tag.content || [];
+                const keep = this.tag.mode === "single" ? [] : content.filter(c => c.name !== member.name);
+                const next = picked ? keep : [...keep, { ...member, active: true }];
+                // File order, not click order: it is the order the prompt gets. A kept pick keeps its stored copy.
+                this.tag.content = all.map(m => next.find(c => c.name === m.name)).filter(Boolean);
+                this.onSelect(this.updateTag());
+                all.forEach((m, i) => { const fresh = build(m); pills[i].replaceWith(fresh); pills[i] = fresh; });
             });
-        }
+            return el;
+        };
+        pills.push(...all.map(build));
         return pills;
+    }
+
+    /** "file" drops the selection entirely; the other two start from nothing picked. */
+    async setGroupMode(mode) {
+        if (mode === "file") {
+            delete this.tag.mode;
+            delete this.tag.content;
+        } else {
+            this.tag.mode = mode;
+            this.tag.content = [];
+        }
+        this.onSelect(this.updateTag());
+        await this.init();
     }
 
     /** A pill for the info panel: a read-only tag from a group, or a lora trigger word whose "active" means "included in the prompt" and toggles on click. */

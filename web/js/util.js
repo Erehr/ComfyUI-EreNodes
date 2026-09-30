@@ -1,6 +1,6 @@
 import { app } from "../../../scripts/app.js";
 import { api } from "../../../scripts/api.js";
-import { parseTags, parseTextToTagData, dedupeTags, formatTag, joinParts, separatorAfter } from "./parser.js";
+import { parseTags, parseTextToTagData, dedupeTags, formatTag, separatorAfter, tagKey } from "./parser.js";
 
 // Server
 
@@ -123,13 +123,17 @@ export async function loadGroupTags(name, extension = "") {
     } catch { return null; }
 }
 
-/** The same, with the pill's own on/off overrides applied, which is what a group contributes when it is unpacked. */
+/** What a group pill unpacks to: every member, and with a selection (`mode`) only the picked ones active, as their stored copies. */
 export async function expandGroup(tag) {
     const contents = await loadGroupTags(tag?.name, tag?.extension);
     if (!contents) return null;
-    return contents
-        .filter(t => t && t.name)
-        .map(t => (tag.modified && Object.hasOwn(tag.modified, t.name) ? { ...t, active: tag.modified[t.name] } : { ...t }));
+    const members = contents.filter(t => t && t.name).map(t => ({ ...t }));
+    if (!tag.mode) return members;
+    const picks = tag.content || [];
+    const out = members.map(m => picks.find(c => c.name === m.name) ?? { ...m, active: false });
+    // Picks the file no longer has.
+    out.push(...picks.filter(c => !members.some(m => m.name === c.name)));
+    return out.map(t => ({ ...t }));
 }
 
 // Dialogs and pickers
@@ -735,9 +739,11 @@ export async function insertTagsAsText(el, tags, tagSeparator, at = null) {
     return true;
 }
 
+// Files are told apart by type; words compare as the CSV spells them, so `blonde_hair` repeats `blonde hair`.
+const outputKey = tag => (tag.type === "lora" || tag.type === "embedding" ? `${tag.type}:${tag.name}` : tagKey(tag.name));
+
 /**
- * The prompt a tag list emits: active tags only, groups expanded from disk, lora triggers
- * appended, strengths formatted, joined with the tag separator.
+ * The prompt a tag list emits: active tags only, groups expanded (from disk, or a pill's own selection), lora triggers appended, strengths formatted, duplicates dropped (setting), joined with the tag separator.
  * @param {string} [tagSeparator]  as stored ("\n" escaped), defaults to ", "
  */
 export async function tagsToText(tagData, tagSeparator) {
@@ -746,67 +752,45 @@ export async function tagsToText(tagData, tagSeparator) {
 
     tagSeparator = (tagSeparator || ", ").replace(/\\n/g, "\n");
 
-    // Content only: joinParts puts the separators between them, and leaves out the one a part
-    // already ends with. Interleaving them by hand is what produced ".," after a sentence.
-    // A `text` tag is a *block*: it goes on its own line, which is what lets parseTextToTagData
-    // recognise it as prose when this text is read back (converting, pasting, extracting).
-    const segments = [];
-    let line = [];
-    const flush = () => {
-        if (line.length) segments.push({ text: joinParts(line, tagSeparator) });
-        line = [];
+    // Flattened first, so a duplicate is caught wherever it came from: a pill, a group member or a lora trigger.
+    // A `text` tag is a *block*: it goes on its own line, which is what lets parseTextToTagData recognise it as prose when this text is read back (converting, pasting, extracting).
+    // Group members stay inline, text ones included.
+    const parts = [];
+    const push = (tag, block = false) => parts.push({ text: formatTag(tag), block, key: outputKey(tag) });
+    const pushWithTriggers = (tag) => {
+        push(tag);
+        if (tag.type === 'lora') for (const trigger of tag.triggers ?? []) push({ name: trigger });
     };
 
     for (const tag of activeTags) {
-        if (tag.type === 'text') {
-            flush();
-            segments.push({ text: formatTag(tag), block: true });
-            continue;
-        }
-        if (tag.type !== 'group') {
-            line.push(formatTag(tag));
-            if (tag.type === 'lora' && tag.triggers?.length > 0) line.push(...tag.triggers);
-            continue;
-        }
-        // A group expands to its contents, in place.
-        flush();
-        try {
-            const groupTagData = await loadGroupTags(tag.name, tag.extension);
-            if (!groupTagData) continue;
-
-            const groupParts = [];
-            for (const gTag of groupTagData.filter(t => t.active && t.name)) {
-                groupParts.push(formatTag(gTag));
-                if (gTag.type === 'lora' && gTag.triggers?.length > 0) groupParts.push(...gTag.triggers);
+        if (tag.type === 'text') push(tag, true);
+        else if (tag.type !== 'group') pushWithTriggers(tag);
+        else {
+            try {
+                const members = tag.mode ? tag.content : await loadGroupTags(tag.name, tag.extension);
+                for (const member of members ?? []) if (member?.active && member.name) pushWithTriggers(member);
+            } catch (error) {
+                console.error(`[EreNodes] Failed to load and parse tag group: ${tag.name}`, error);
             }
-            if (!groupParts.length) continue;
-
-            let groupPart = joinParts(groupParts, tagSeparator);
-            const strength = parseFloat(tag.strength);
-            if (strength && !isNaN(strength) && strength !== 1.0) {
-                groupPart = `(${groupPart}:${strength.toFixed(2)})`;
-            }
-            segments.push({ text: groupPart });
-        } catch (error) {
-            console.error(`[EreNodes] Failed to load and parse tag group: ${tag.name}`, error);
         }
     }
-    flush();
 
-    // Everything is joined with the tag separator, except a boundary touching a text block, which
-    // ends the line instead: the separator's trailing space becomes the newline that keeps the
-    // sentence recognisable on the way back.
+    const seen = new Set();
+    const kept = getSetting("EreNodes.Nodes.RemoveDuplicates", true) ? parts.filter(p => !seen.has(p.key) && seen.add(p.key)) : parts;
+
+    // Joined with the tag separator, except a boundary touching a text block, which ends the line instead: the separator's trailing space becomes the newline that keeps the sentence recognisable on the way back.
+    // separatorAfter leaves out punctuation the previous part already ends with, which is what keeps ".," out after a sentence.
     let out = "";
     let previousBlock = false;
-    for (const segment of segments) {
-        if (!segment.text) continue;
+    for (const part of kept) {
+        if (!part.text) continue;
         if (out) {
-            out += (segment.block || previousBlock)
+            out += (part.block || previousBlock)
                 ? separatorAfter(tagSeparator.replace(/\s+$/, ""), out) + "\n"
                 : separatorAfter(tagSeparator, out);
         }
-        out += segment.text;
-        previousBlock = !!segment.block;
+        out += part.text;
+        previousBlock = part.block;
     }
     return out;
 }

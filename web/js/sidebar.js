@@ -4,10 +4,10 @@ import { SURFACE_CLASS, injectTagStyles, renderTagTile, previewUrl, saveCover,
          TILE_SIZE, TILE_GAP, TILE_SIZES, TILE_RATIOS, tileBoxFor } from "./tagview.js";
 import { showPreviewFor, hidePreviewPanel, setPreviewHandlers } from "./preview.js";
 import { startExternalDrag, isDragActive, injectDragStyles } from "./dragdrop.js";
-import { ActionContextMenu, TagContextMenu, TagIndexContextMenu, tagKey } from "./contextmenu.js";
+import { ActionContextMenu, TagContextMenu, TagIndexContextMenu } from "./contextmenu.js";
 import { GlobalAutocomplete } from "../prompt_autocomplete.js";
 import { createTagEditor } from "./tageditor.js";
-import { dedupeTags } from "./parser.js";
+import { dedupeTags, tagKey } from "./parser.js";
 
 // Verbatim from the frontend's Button.vue output, so these match the buttons in the core sidebars: base, then one variant per line.
 const BUTTON_BASE = "relative inline-flex items-center justify-center gap-2 cursor-pointer touch-manipulation whitespace-nowrap appearance-none border-none rounded-md text-sm font-medium font-inter transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border-default disabled:pointer-events-none disabled:opacity-50";
@@ -572,6 +572,16 @@ function searchBooru(query) {
     if (state.tab === "booru") render();
 }
 
+/** A new search for just this tag, as clicking a tag on a booru site does. */
+function searchBooruTag(tag) {
+    hidePreviewPanel(true);
+    const search = state.host?.querySelector(".ere-sb-search");
+    if (search) search.value = tag.name;
+    searchBooru(tag.name);
+    const body = bodyEl();
+    if (body) body.scrollTop = 0;
+}
+
 /** The next page, appended; called again by the scroll handler until a short page says there is no more. */
 async function loadBooruPage() {
     const b = state.booru;
@@ -658,7 +668,7 @@ function renderBooru(body) {
     const source = booruSource();
     if (!b.query) {
         body.appendChild(statusMessage("pi-search", `Search ${source.label}`,
-            "Type tags, comma separated.\nHover a post to see its tags; drag it onto a node to add them.").wrap);
+            "Type tags, comma separated.\nHover a post to see its tags; drag it onto a node to add them, or click a tag to search for it.").wrap);
         return;
     }
     if (b.posts.length) {
@@ -1079,7 +1089,7 @@ function previewRow(el, row) {
     const image = state.view[state.tab] !== "grid" || state.tileSize[state.tab] !== "large";
     if (row.tab === "booru") {
         // The tile's own thumbnail: already cached, and close enough in size to the preview's.
-        showPreviewFor({ tags: row.post.tags, anchor: anchorRect(el), image, imageUrl: row.post.thumb, interactive: true });
+        showPreviewFor({ tags: row.post.tags, anchor: anchorRect(el), image, imageUrl: row.post.thumb, interactive: true, onTagClick: searchBooruTag });
         return;
     }
     showPreviewFor({
