@@ -38,6 +38,9 @@ const GROUP_MODES = [
     { id: "multi", label: "Multi" },
 ];
 
+/** Rounded to the step grid, so repeated steps do not collect float slop. */
+export const stepStrength = (strength, delta) => parseFloat(((strength ?? 1.0) + delta).toFixed(2));
+
 // A menu can open before any node has mounted a widget, so the tag styles are ensured here too.
 injectTagStyles();
 
@@ -218,6 +221,15 @@ export class DynamicContextMenu {
 
         let currentHighlightIndex = enabledOptions.indexOf(this.highlighted);
         let handled = false;
+
+        const strength = this.options[this.highlighted];
+        if (strength?.type === 'strength_control' && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+            strength.nudge((e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 0.1 : 0.05));
+            const label = this.renderedOptionElements[this.highlighted]?.querySelector("span");
+            if (label) label.textContent = strength.label();
+            e.preventDefault(); e.stopPropagation();
+            return true;
+        }
 
         switch (e.key) {
             case "ArrowUp":
@@ -430,6 +442,50 @@ export class DynamicContextMenu {
                     accept(e.dataTransfer?.files?.[0]);
                 });
                 item.appendChild(pane);
+                break;
+            }
+            case 'strength_control': {
+                // `nudge(delta)` and `reset()` apply the change; `label()` reads it back.
+                item.className = "litemenu-entry submenu";
+                item.style.cssText = "display: flex; justify-content: space-between; align-items: center;";
+                const label = document.createElement("span");
+                label.textContent = option.label();
+                const apply = (change) => { change(); label.textContent = option.label(); };
+                const step = (text, sign) => {
+                    const btn = document.createElement("button");
+                    btn.type = "button";
+                    btn.className = "ere-menu-step";
+                    btn.textContent = text;
+                    btn.onclick = (e) => { e.stopPropagation(); apply(() => option.nudge(sign * (e.shiftKey ? 0.1 : 0.05))); };
+                    return btn;
+                };
+                item.append(step("◀", -1), label, step("▶", 1));
+                item.addEventListener("mouseenter", () => this.setHighlight(index));
+                item.addEventListener("mousedown", (e) => {
+                    // preventDefault also keeps the middle button from starting the browser's autoscroll.
+                    if (e.button === 1) {
+                        e.preventDefault(); e.stopPropagation();
+                        apply(() => option.reset());
+                        return;
+                    }
+                    if (e.button !== 0 || e.target.nodeName === "BUTTON") return;
+                    e.preventDefault(); e.stopPropagation();
+                    const startX = e.clientX;
+                    let steps = 0;
+                    // One undo transaction, or every 5px tick becomes its own step.
+                    beginUndoTransaction();
+                    const onMouseMove = (moveEvent) => {
+                        const next = Math.round((moveEvent.clientX - startX) / 5);
+                        if (next === steps) return;
+                        apply(() => option.nudge((next - steps) * 0.05));
+                        steps = next;
+                    };
+                    window.addEventListener('mousemove', onMouseMove, true);
+                    window.addEventListener('mouseup', () => {
+                        window.removeEventListener('mousemove', onMouseMove, true);
+                        endUndoTransaction();
+                    }, { capture: true, once: true });
+                });
                 break;
             }
             default:
@@ -1325,7 +1381,13 @@ export class TagEditContextMenu extends DynamicContextMenu {
         // 2.
         // Strength Control (not for groups)
         if (this.tag.type !== 'group') {
-             this.options.push({ name: 'strength', type: 'strength_control' });
+            const setStrength = (value) => { this.tag.strength = value; this.onSelect(this.updateTag()); };
+            this.options.push({
+                type: 'strength_control',
+                label: () => `Strength: ${this.tag.strength.toFixed(2)}`,
+                nudge: (delta) => setStrength(stepStrength(this.tag.strength, delta)),
+                reset: () => setStrength(1.0),
+            });
         }
 
         // 3.
@@ -1474,57 +1536,6 @@ export class TagEditContextMenu extends DynamicContextMenu {
 
     renderSingleItem(item, option, index) {
         switch(option.type) {
-            case 'strength_control':
-                item.className = "litemenu-entry submenu";
-                item.style.display = "flex";
-                item.style.justifyContent = "space-between";
-                item.style.alignItems = "center";
-                
-                const textSpan = document.createElement("span");
-                const strengthDisplay = () => `Strength: ${this.tag.strength.toFixed(2)}`;
-                textSpan.textContent = strengthDisplay();
-                
-                const createButton = (text, onClick) => {
-                    const btn = document.createElement("button");
-                    btn.type = "button";
-                    btn.className = "ere-menu-step";
-                    btn.textContent = text;
-                    btn.onclick = (e) => { e.stopPropagation(); onClick(e); };
-                    return btn;
-                };
-
-                const updateDisplay = () => { 
-                    textSpan.textContent = strengthDisplay(); 
-                    this.onSelect(this.updateTag());
-                };
-                const decBtn = createButton("◀", (e) => { this.tag.strength = parseFloat((this.tag.strength - (e.shiftKey ? 0.1 : 0.05)).toFixed(2)); updateDisplay(); });
-                const incBtn = createButton("▶", (e) => { this.tag.strength = parseFloat((this.tag.strength + (e.shiftKey ? 0.1 : 0.05)).toFixed(2)); updateDisplay(); });
-                item.append(decBtn, textSpan, incBtn);
-
-                item.addEventListener("mouseenter", () => {
-                    if (!option.disabled) this.setHighlight(index);
-                });
-
-                // Add drag functionality.
-                // One undo transaction, or every 5px tick becomes its own step.
-                item.addEventListener('mousedown', (e) => {
-                    if (e.button !== 0 || e.target.nodeName === "BUTTON") return;
-                    e.preventDefault(); e.stopPropagation();
-                    let startX = e.clientX, startValue = this.tag.strength;
-                    beginUndoTransaction();
-                    const onMouseMove = (moveEvent) => {
-                        this.tag.strength = parseFloat((startValue + Math.round((moveEvent.clientX - startX) / 5) * 0.05).toFixed(2));
-                        updateDisplay();
-                    };
-                    const onMouseUp = () => {
-                        window.removeEventListener('mousemove', onMouseMove, true);
-                        endUndoTransaction();
-                    };
-                    window.addEventListener('mousemove', onMouseMove, true);
-                    window.addEventListener('mouseup', onMouseUp, { capture: true, once: true });
-                });
-                break;
-            
             case 'info_panel':
                 // ere-surface so createPill's pills pick up the rules the nodes use.
                 item.className = `litemenu-entry submenu disabled ${SURFACE_CLASS}`;
@@ -1570,24 +1581,6 @@ export class TagEditContextMenu extends DynamicContextMenu {
             return true;
         }
 
-        if (this.highlighted !== -1) {
-            const highlightedOption = this.options[this.highlighted];
-            if (highlightedOption.type === 'strength_control') {
-                const step = e.shiftKey ? 0.1 : 0.05;
-                let handled = false;
-                if (e.key === 'ArrowLeft') { this.tag.strength = parseFloat((this.tag.strength - step).toFixed(2)); handled = true; }
-                if (e.key === 'ArrowRight') { this.tag.strength = parseFloat((this.tag.strength + step).toFixed(2)); handled = true; }
-                if (handled) {
-                    // Find the rendered element and update its display
-                    const strengthControlElement = this.root.querySelector('.litemenu-entry[style*="justify-content"] span');
-                    if (strengthControlElement) strengthControlElement.textContent = `Strength: ${this.tag.strength.toFixed(2)}`;
-                    this.onSelect(this.updateTag());
-                    e.preventDefault(); e.stopPropagation();
-                    return true;
-                }
-            }
-        }
-        // Fallback to parent for default navigation (Up/Down from input, etc.)
         return super.handleKeyboard(e);
     }
     

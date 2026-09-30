@@ -21,7 +21,7 @@ LoRA, embedding and tag group pills get a red border when the file they name is 
 ## Click, strength, quick edit
 
 - **Click** a pill to toggle it. Disabled pills stay in the node but are not written to the prompt.
-- **Right-click** for quick edit: rename the tag or pick another file, set the strength (with the − / + buttons, by dragging across the value, or with Left/Right), see a LoRA's trigger words or a group's contents, set a preview image, **Unpack** a group into its tags, or **Remove** it.
+- **Right-click** for quick edit: rename the tag or pick another file, set the strength (with the − / + buttons, by dragging across the value, or with Left/Right; middle-click resets it to 1), see a LoRA's trigger words or a group's contents, set a preview image, **Unpack** a group into its tags, or **Remove** it.
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="images/tag-pills-quick-edit-dark.webp"><img src="images/tag-pills-quick-edit-light.webp" alt="Quick edit"></picture>
 
@@ -46,4 +46,4 @@ LoRA trigger words are listed in the LoRA's quick edit; the selected ones are wr
 - **Shift+click** selects a range.
 - **Esc** or a click outside clears the selection.
 
-A drag started on a selected pill carries the whole selection. Right-click a selected pill for **Enable**, **Disable**, **Toggle**, **Remove Selected**, **Save Selected as Tag Group** and **Export Selected (.json)**.
+A drag started on a selected pill carries the whole selection. Right-click a selected pill for **Strength**, which shifts every selected tag by the same amount and resets them all to 1 on a middle-click (tag groups have none), then **Enable**, **Disable**, **Toggle**, **Remove Selected**, **Save Selected as Tag Group** and **Export Selected (.json)**.
