@@ -4,10 +4,10 @@ import { SURFACE_CLASS, injectTagStyles, renderTagTile, previewUrl, saveCover,
          TILE_SIZE, TILE_GAP, TILE_SIZES, TILE_RATIOS, tileBoxFor } from "./tagview.js";
 import { showPreviewFor, hidePreviewPanel, setPreviewHandlers } from "./preview.js";
 import { startExternalDrag, isDragActive, injectDragStyles } from "./dragdrop.js";
-import { ActionContextMenu, TagContextMenu, TagIndexContextMenu, tagKey } from "./contextmenu.js";
+import { ActionContextMenu, TagContextMenu, TagIndexContextMenu } from "./contextmenu.js";
 import { GlobalAutocomplete } from "../prompt_autocomplete.js";
 import { createTagEditor } from "./tageditor.js";
-import { dedupeTags } from "./parser.js";
+import { dedupeTags, tagKey } from "./parser.js";
 
 // Verbatim from the frontend's Button.vue output, so these match the buttons in the core sidebars: base, then one variant per line.
 const BUTTON_BASE = "relative inline-flex items-center justify-center gap-2 cursor-pointer touch-manipulation whitespace-nowrap appearance-none border-none rounded-md text-sm font-medium font-inter transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border-default disabled:pointer-events-none disabled:opacity-50";

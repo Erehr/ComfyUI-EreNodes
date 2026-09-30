@@ -223,6 +223,10 @@ function renderExtractImage(node) {
         img.src = `/view?filename=${encodeURIComponent(filename)}&type=input&subfolder=`;
         img.addEventListener("error", () => { img.style.display = "none"; });
         pane.appendChild(img);
+        if (node.properties._extractStale) {
+            pane.classList.add("stale");
+            pane.title = "The tags no longer match this image.";
+        }
     } else {
         pane.classList.add("empty");
         const empty = document.createElement("div");

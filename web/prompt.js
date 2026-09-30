@@ -796,6 +796,11 @@ export function initializeSharedPromptFunctions(node, textWidget) {
                 if (editedTag.strength === undefined) {
                     delete finalTag.strength;
                 }
+                // Likewise a group switched back to "all", which has no mode and no content.
+                if (editedTag.mode === undefined) {
+                    delete finalTag.mode;
+                    delete finalTag.content;
+                }
                 // Ensure triggers from editedTag are used, or default to empty if not present in either
                 if (editedTag.hasOwnProperty('triggers')) {
                     finalTag.triggers = editedTag.triggers;

@@ -21,6 +21,16 @@ A tag group is a saved set of pills: tags, text, LoRAs with their strengths, and
 - **Drag from the sidebar**: a group lands as one pill by default; hold **Alt** to drop its tags instead.
 - Typing `group:` in a textarea or the + search picks a group through [autocomplete](autocomplete.md).
 
+## Picking from a group
+
+Right-click a group pill → **Mode** chooses what it adds to the prompt:
+
+- **File** (default): the tags as the group file has them, preview only.
+- **Single**: one tag. Click a tag in the preview - now selector like lora triggers - to pick it.
+- **Multi**: any number of tags.
+
+A group of hair styles, outfits or poses becomes a one-of-many choice without touching the file. The picks are stored in the node with their strengths and trigger words; the group file is not changed. Switching modes clears the picks. Unpacking keeps the whole group, with the picked tags on and the rest off.
+
 ## Editing
 
 Open a group from the [sidebar](sidebar.md) to edit it in place: rename, reorder, toggle and remove tags, add new ones, set or remove the cover.

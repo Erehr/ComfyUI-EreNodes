@@ -69,6 +69,8 @@ Drop a previously generated image on the node and its positive prompt comes back
 - Follows the graph back from the sampler's `positive` input, so negatives and unconnected nodes are never picked up.
 - Images made with EreNodes return their disabled tags as inactive pills, with strength and type intact.
 - **Extract Again** re-reads the same image. After that the tags are ordinary pills: toggle, reorder, drag out, save as a group.
+- Once the tags are edited the image is greyed out: it no longer matches them. It clears on **Remove All Tags**, when another image replaces it, and when the workflow is reloaded.
+- **Remove Inactive Tags** also removes LoRAs, embeddings and tag groups whose file is missing (the red ones). With **≡ → Options → Remove inactive by default** on, that happens to every extraction, and the manual entry is disabled.
 
 ## Prompt Filter
 

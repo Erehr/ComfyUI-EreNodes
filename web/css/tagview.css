@@ -463,6 +463,11 @@
     height: auto;
     object-fit: contain;
 }
+/* The tags were edited after extraction: dimmed like a disabled gallery tile. */
+.ere-surface .ere-extract-pane.stale img {
+    filter: grayscale(0.75);
+    opacity: 0.5;
+}
 .ere-surface .ere-extract-empty {
     padding: 12px;
     font-size: var(--text-2xs, 10px);

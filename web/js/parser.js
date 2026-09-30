@@ -74,6 +74,9 @@ export function formatTag(tag) {
     return tag.name;
 }
 
+/** A tag as the CSV spells it, so a prompt's `blue_eyes`, `\(x\)` or `@artist` compares equal to the suggestion. */
+export const tagKey = name => String(name ?? "").trim().replace(/^@/, "").replace(/\\([()])/g, "$1").replace(/_/g, " ").toLowerCase();
+
 const withExtension = tag => (tag.extension ? `${tag.name}${tag.extension}` : tag.name);
 
 // A tag with no explicit `active` renders as active, so it counts as one here too.
