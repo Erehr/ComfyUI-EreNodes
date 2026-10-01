@@ -2738,6 +2738,10 @@ function buildTreeBody(host) {
     for (const type of ["wheel", "pointerdown", "keydown", "touchstart"]) {
         content.addEventListener(type, () => { state.reopenScroll = null; }, { capture: true, passive: true });
     }
+    // Drags here are ours, started from pointer events; a native one would carry a stray text selection, pictured as the whole visible grid.
+    content.addEventListener("dragstart", (e) => {
+        if (!e.target?.closest?.("input, textarea")) e.preventDefault();
+    });
     content.addEventListener("focusout", (e) => {
         if (!state.kbd || content.contains(e.relatedTarget)) return;
         state.kbd = false;

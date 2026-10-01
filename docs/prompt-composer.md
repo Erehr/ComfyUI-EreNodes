@@ -5,7 +5,7 @@
 > *One Node to rule them all, One Node to tag them,*
 > *One Node to bring them all, and in the prompt bind them.*
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="images/prompt-composer-dark.webp"><img src="images/prompt-composer-light.webp" alt="Prompt Composer"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="images/prompt-composer-dark.webp"><source media="(prefers-color-scheme: light)" srcset="images/prompt-composer-light.webp"><img src="images/prompt-composer-dark.webp" alt="Prompt Composer"></picture>
 
 The Composer holds several categories in one node: character, outfit, background, quality, each with its own tags. It outputs the same prompt a chain of separate prompt nodes would.
 

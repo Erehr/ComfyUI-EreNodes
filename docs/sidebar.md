@@ -2,7 +2,7 @@
 
 [EreNodes](../README.md) › Sidebar
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="images/sidebar-dark.webp"><img src="images/sidebar-light.webp" alt="EreNodes sidebar"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="images/sidebar-dark.webp"><source media="(prefers-color-scheme: light)" srcset="images/sidebar-light.webp"><img src="images/sidebar-dark.webp" alt="EreNodes sidebar"></picture>
 
 A native ComfyUI sidebar tab for your tag groups, LoRAs and embeddings, plus the [Booru browser](booru.md).
 

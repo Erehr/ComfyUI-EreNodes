@@ -2,7 +2,7 @@
 
 [EreNodes](../README.md) › Tag groups
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="images/tag-groups-dark.webp"><img src="images/tag-groups-light.webp" alt="Save them, reuse them"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="images/tag-groups-dark.webp"><source media="(prefers-color-scheme: light)" srcset="images/tag-groups-light.webp"><img src="images/tag-groups-dark.webp" alt="Save them, reuse them"></picture>
 
 A tag group is a saved set of pills: tags, text, LoRAs with their strengths, and embeddings, with an optional cover image. Characters, styles, outfits, quality presets: anything you type more than once.
 
