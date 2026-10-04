@@ -1,6 +1,6 @@
 import { app } from "../../../scripts/app.js";
 import { getCache, beginUndoTransaction, endUndoTransaction, getSetting, apiFetch, requestJson, toast, promptDialog, pickFile, loadGroupTags } from "./util.js";
-import { renderTagPill, SURFACE_CLASS, injectTagStyles, previewUrl, previewKey, saveCover } from "./tagview.js";
+import { renderTagPill, SURFACE_CLASS, injectTagStyles, previewUrl, previewKey, saveCover, coverElement } from "./tagview.js";
 import { showPreviewFor, hidePreviewPanel } from "./preview.js";
 import { tagKey } from "./parser.js";
 
@@ -65,16 +65,21 @@ export class DynamicContextMenu {
         this.clampToViewport();
     }
 
-    /** Keep a menu opened near an edge fully on screen. */
+    /**
+     * Keep a menu opened near an edge fully on screen: moved up and left from where it was opened, as litegraph's ContextMenu does, and scrolled only when it is taller than the viewport.
+     * Measured at 0,0: the litegraph stylesheet caps it at `max-height: -webkit-fill-available`, which for a fixed element is the room below its top, so measured where it was opened a low menu reads as a short scrolling one that already fits.
+     */
     clampToViewport() {
         if (!this.root) return;
-        const rect = this.root.getBoundingClientRect();
-        if (rect.right > window.innerWidth) {
-            this.root.style.left = `${Math.max(0, window.innerWidth - rect.width - 5)}px`;
-        }
-        if (rect.bottom > window.innerHeight) {
-            this.root.style.top = `${Math.max(0, window.innerHeight - rect.height - 5)}px`;
-        }
+        const style = this.root.style;
+        // Where it was opened, kept across re-renders: each clamp starts from there, not from where the last one moved it.
+        this.anchor ??= { left: parseFloat(style.left) || 0, top: parseFloat(style.top) || 0 };
+        style.left = "0px";
+        style.top = "0px";
+        const { width, height } = this.root.getBoundingClientRect();
+        const margin = 5;
+        style.left = `${Math.max(0, Math.min(this.anchor.left, window.innerWidth - width - margin))}px`;
+        style.top = `${Math.max(0, Math.min(this.anchor.top, window.innerHeight - height - margin))}px`;
     }
 
     constructor(event, onSelectCallback) {
@@ -357,6 +362,8 @@ export class DynamicContextMenu {
 
         setTimeout(() => (this.filterBox ?? this.inputBox)?.focus(), 0);
         this.setInitialHighlight();
+        // A re-render changes the size (a folder opened, a filter typed), so the fit is checked again.
+        if (this.clampOnRender !== false) this.clampToViewport();
     }
 
     renderSingleItem(item, option, index) {
@@ -674,48 +681,46 @@ export class DynamicContextMenu {
         this.hidePreview();
         if (!url || !this.root) return;
 
-        this.previewImage = document.createElement('img');
-        this.previewImage.className = `${PREVIEW_CLASS} ere-menu-preview`;
-
-        Object.assign(this.previewImage.style, {
-            position: 'fixed',
-            zIndex: 1001,
-            display: 'block',
-            maxWidth: '256px',
-            maxHeight: '256px',
-        });
-
         // Placed beside the menu once its size is known, flipping to the other side or up when it would leave the viewport.
-        this.previewImage.onload = () => {
-            if (!this.root || !this.root.isConnected) return;
-            this.root.appendChild(this.previewImage);
+        // The cover can swap itself for a <video>, so the element placed is the one handed to onLoad.
+        const cover = coverElement(url, {
+            className: PREVIEW_CLASS,
+            onLoad: (shown) => {
+                if (this.previewImage !== cover || !this.root || !this.root.isConnected) return;
+                Object.assign(shown.style, {
+                    position: 'fixed',
+                    zIndex: 1001,
+                    display: 'block',
+                    maxWidth: '256px',
+                    maxHeight: '256px',
+                });
+                this.root.appendChild(shown);
 
-            const menuRect = this.root.getBoundingClientRect();
-            this.previewImage.style.left = `${menuRect.right + 5}px`;
-            this.previewImage.style.top = `${menuRect.top}px`;
+                const menuRect = this.root.getBoundingClientRect();
+                shown.style.left = `${menuRect.right + 5}px`;
+                shown.style.top = `${menuRect.top}px`;
 
-            const previewRect = this.previewImage.getBoundingClientRect();
-            if (previewRect.right > window.innerWidth) {
-                this.previewImage.style.left = `${menuRect.left - previewRect.width - 5}px`;
-            }
-            if (previewRect.bottom > window.innerHeight) {
-                this.previewImage.style.top = `${window.innerHeight - previewRect.height - 5}px`;
-            }
-            if (previewRect.top < 0) {
-                this.previewImage.style.top = `5px`;
-            }
-        };
-
-        // The route answers 204 when a file has no preview, which fails to decode like any other bad image.
-        this.previewImage.onerror = () => this.hidePreview();
-
-        this.previewImage.src = url;
+                const previewRect = shown.getBoundingClientRect();
+                if (previewRect.right > window.innerWidth) {
+                    shown.style.left = `${menuRect.left - previewRect.width - 5}px`;
+                }
+                if (previewRect.bottom > window.innerHeight) {
+                    shown.style.top = `${window.innerHeight - previewRect.height - 5}px`;
+                }
+                if (previewRect.top < 0) {
+                    shown.style.top = `5px`;
+                }
+            },
+            // The route answers 204 when a file has no preview, which fails to decode like any other bad image.
+            onMissing: () => { if (this.previewImage === cover) this.hidePreview(); },
+        });
+        this.previewImage = cover;
     }
 
     hidePreview() {
         // Only *our* preview images — a menu row may legitimately hold its own.
         if (this.root) {
-            this.root.querySelectorAll(`img.${PREVIEW_CLASS}`).forEach(img => img.remove());
+            this.root.querySelectorAll(`.${PREVIEW_CLASS}`).forEach(cover => cover.remove());
         }
 
         // Clear current instance's preview reference

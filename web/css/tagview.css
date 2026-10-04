@@ -347,13 +347,13 @@
     cursor: pointer;
     user-select: none;
 }
-.ere-surface .ere-tile img {
+.ere-surface .ere-tile :is(img, video) {
     flex: 1;
     min-height: 0;
     width: 100%;
     object-fit: cover;
 }
-.ere-surface .ere-tile.inactive img {
+.ere-surface .ere-tile.inactive :is(img, video) {
     filter: grayscale(0.75);
     opacity: 0.5;
 }

@@ -935,12 +935,13 @@ export function startExternalDrag({ tags, label, altTags = null, altLabel = "", 
     return true;
 }
 
-/** True when the point is over the graph canvas itself. */
+/** True when the point is over the graph itself: the canvas, a Nodes 2.0 node or a DOM widget. */
 function overCanvas(x, y) {
     const canvas = app.canvas?.canvas;
     if (!canvas) return false;
-    const r = canvas.getBoundingClientRect();
-    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    // The canvas runs under the sidebar and the other panels, so its rectangle is not enough: a drop over a panel is a drop on the panel, which cancels it.
+    const under = document.elementFromPoint(x, y);
+    return under === canvas || !!under?.closest?.('[data-testid="transform-pane"], .dom-widget');
 }
 
 /** Visible text of a pill, whatever shape it has. */

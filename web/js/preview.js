@@ -1,8 +1,7 @@
 import { getCache, isNotFound, loadStyle, loadGroupTags, trackMarquee, trackPress } from "./util.js";
-import { injectTagStyles, renderTagCloud, SURFACE_CLASS, previewUrl } from "./tagview.js";
+import { injectTagStyles, renderTagCloud, SURFACE_CLASS, previewUrl, coverElement } from "./tagview.js";
 
 const PANEL_ID = "erenodes-hover-preview";
-const MAX_PILLS = 60;
 /** Long enough that arrowing down a list doesn't fire a request per row, short enough to feel instant when the pointer settles. */
 const HOVER_DELAY = 120;
 
@@ -12,6 +11,8 @@ let showTimer = 0;
 let token = 0;
 
 function injectPreviewStyles() { loadStyle("preview"); }
+// Requested now rather than with the panel: the first hover measures the panel to place it, and without the sheet it is an unpositioned full-width block that places at the top left.
+injectPreviewStyles();
 
 function ensurePanel() {
     if (panel?.isConnected) return panel;
@@ -97,26 +98,27 @@ export function showPreviewFor({ type, path, extension, anchor, image = true, in
         el.classList.toggle("ere-preview-interactive", !!interactive);
 
         // The panel stays hidden until something has actually rendered into it.
-        const img = document.createElement("img");
-        img.className = "ere-preview-img";
-        img.hidden = true;
-
         let hasTags = false;
+        let hasCover = false;
         const revealIfReady = () => {
             if (token !== mine) return;
-            if (!hasTags && img.hidden) return;
+            if (!hasTags && !hasCover) return;
             el.hidden = false;
             position(el, anchor);
         };
-        img.addEventListener("load", () => {
-            if (token !== mine) return;
-            img.hidden = false;
-            revealIfReady();
-        });
-        img.addEventListener("error", () => { img.hidden = true; });
         if (image) {
-            img.src = imageUrl ?? previewUrl(type, path);
-            el.appendChild(img);
+            const cover = coverElement(imageUrl ?? previewUrl(type, path), {
+                className: "ere-preview-img",
+                onLoad: (shown) => {
+                    if (token !== mine) return;
+                    shown.hidden = false;
+                    hasCover = true;
+                    revealIfReady();
+                },
+                onMissing: (shown) => { shown.hidden = true; },
+            });
+            cover.hidden = true;
+            el.appendChild(cover);
         }
 
         const tags = given ?? await loadTags(type, path, extension);
@@ -124,7 +126,7 @@ export function showPreviewFor({ type, path, extension, anchor, image = true, in
         if (token !== mine) return;
 
         if (tags && tags.length) {
-            const cloud = renderTagCloud(tags, { max: MAX_PILLS });
+            const cloud = renderTagCloud(tags);
             cloud.classList.add("scrollbar-custom");
             el.appendChild(cloud);
             if (interactive) attachPillPicking(cloud, tags, el, onTagClick);

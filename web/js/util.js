@@ -94,6 +94,14 @@ function dropGroupContents() {
     }
 }
 
+/** Forget every lora's trained words: their .metadata.json is written by other tools. */
+export function clearLoraMetadataCache() {
+    cacheGeneration++;
+    for (const key of [...cache.keys()]) {
+        if (key.includes("/erenodes/get_lora_metadata?")) cache.delete(key);
+    }
+}
+
 /** Forget every cached tag group's contents, here and in every other open tab. */
 export function clearGroupCache() {
     dropGroupContents();

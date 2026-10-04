@@ -2,7 +2,7 @@
 
 [EreNodes](../README.md) › Prompt nodes
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="images/prompt-nodes-dark.webp"><img src="images/prompt-nodes-light.webp" alt="Prompt nodes"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="images/prompt-nodes-dark.webp"><source media="(prefers-color-scheme: light)" srcset="images/prompt-nodes-light.webp"><img src="images/prompt-nodes-dark.webp" alt="Prompt nodes"></picture>
 
 Every EreNodes prompt node outputs a `STRING` and shares the same [tag pills](tag-pills.md), menus and drag and drop. They differ only in how the tags are laid out.
 
@@ -61,7 +61,7 @@ A textarea for natural-language prompts that still takes part in everything else
 
 ## Prompt Extractor
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="images/prompt-extractor-dark.webp"><img src="images/prompt-extractor-light.webp" alt="Prompt Extractor"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="images/prompt-extractor-dark.webp"><source media="(prefers-color-scheme: light)" srcset="images/prompt-extractor-light.webp"><img src="images/prompt-extractor-dark.webp" alt="Prompt Extractor"></picture>
 
 Drop a previously generated image on the node and its positive prompt comes back as editable pills.
 

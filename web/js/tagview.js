@@ -87,6 +87,8 @@ export const SURFACE_CLASS = "ere-surface";
 // These maps hold the two things it cannot: that a cover does not exist (204 is not heuristically cacheable) and that one was replaced behind an unchanged URL.
 const missingPreviews = new Set();
 const previewVersions = new Map();
+// Moved by a refresh: covers can change behind our back (another tool downloading them), and the browser keeps an old one for its max-age.
+let previewEpoch = 0;
 
 /** A cover's identity, independent of the tile size it happens to be drawn at. */
 export function previewKey(type, name) {
@@ -99,7 +101,64 @@ export function previewUrl(type, name) {
     // Only once a cover has been replaced, so ordinary URLs stay stable and stay cached.
     const version = previewVersions.get(key);
     const url = apiUrl(key);
-    return version ? `${url}?v=${version}` : url;
+    return version || previewEpoch ? `${url}?v=${previewEpoch}.${version || 0}` : url;
+}
+
+/** Re-ask for every cover, including the ones known to be missing. */
+export function forgetPreviews() {
+    missingPreviews.clear();
+    videoPreviews.clear();
+    previewEpoch++;
+}
+
+// Covers known to be clips (.mp4), so later renders build the <video> without failing as an <img> first.
+const videoPreviews = new Set();
+
+function coverVideo(url, className, onLoad, onMissing) {
+    const video = document.createElement("video");
+    video.className = className;
+    video.muted = true;
+    video.playsInline = true;
+    video.disablePictureInPicture = true;
+    video.preload = "metadata";
+    // Until a frame is in, it is an empty 300x150 box.
+    video.style.visibility = "hidden";
+    video.addEventListener("loadeddata", () => {
+        video.style.visibility = "";
+        onLoad?.(video);
+    }, { once: true });
+    video.addEventListener("error", () => onMissing?.(video), { once: true });
+    // Paused at zero a video may draw nothing; a start just past it makes the first frame decode.
+    video.src = `${url}#t=0.001`;
+    return video;
+}
+
+/**
+ * A cover: an <img>, or for a clip a muted <video> paused on its first frame (other tools save Civitai's animated previews as .mp4).
+ * A failed <img> is either a 204 (no cover) or a clip, and only the response type tells them apart, so it asks once and swaps itself out in place.
+ * `onLoad` and `onMissing` get the element that ended up on screen, which is not the returned one after a swap.
+ */
+export function coverElement(url, { className = "", lazy = false, onLoad = null, onMissing = null } = {}) {
+    const key = url.split("?")[0];
+    if (videoPreviews.has(key)) return coverVideo(url, className, onLoad, onMissing);
+    const img = document.createElement("img");
+    img.className = className;
+    img.draggable = false;
+    if (lazy) img.loading = "lazy";
+    img.addEventListener("load", () => onLoad?.(img));
+    img.addEventListener("error", async () => {
+        let clip = false;
+        try {
+            clip = !!(await fetch(url, { method: "HEAD" })).headers.get("content-type")?.startsWith("video/");
+        } catch { /* unreachable is missing */ }
+        if (!clip) return onMissing?.(img);
+        videoPreviews.add(key);
+        const video = coverVideo(url, className, onLoad, onMissing);
+        video.hidden = img.hidden;
+        img.replaceWith(video);
+    }, { once: true });
+    img.src = url;
+    return img;
 }
 
 /** Store a cover for a lora, embedding or tag group, and move its URL so the new bytes are fetched. */
@@ -227,15 +286,13 @@ export function renderTagTile(tag, opts = {}) {
         const key = previewKey(tag.type, tag.name);
         // Nothing behind this URL last time: skip the element rather than fire a request whose answer the browser will not keep. It is absolutely positioned, so an absent one lays out like a hidden one.
         if (!missingPreviews.has(key)) {
-            const img = document.createElement("img");
-            img.loading = "lazy";
-            img.draggable = false;
-            img.src = previewUrl(tag.type, tag.name);
-            img.addEventListener("error", () => {
-                missingPreviews.add(key);
-                img.style.display = "none";
-            });
-            tile.appendChild(img);
+            tile.appendChild(coverElement(previewUrl(tag.type, tag.name), {
+                lazy: true,
+                onMissing: (cover) => {
+                    missingPreviews.add(key);
+                    cover.style.display = "none";
+                },
+            }));
         }
     }
 

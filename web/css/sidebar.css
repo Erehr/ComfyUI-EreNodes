@@ -62,6 +62,13 @@
     }
 }
 /* Focused only so the keyboard reaches it; the selected row is what shows where you are. */
+/* A press on empty space starts the marquee, and must not start a text selection across the list as well. */
+.ere-sidebar .ere-sb-body-inner {
+    user-select: none;
+}
+.ere-sidebar .ere-sb-body-inner :is(input, textarea) {
+    user-select: text;
+}
 .ere-sidebar .ere-sb-body-inner:focus,
 .ere-sidebar .ere-sb-body-inner:focus-visible {
     outline: none;

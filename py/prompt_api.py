@@ -545,8 +545,12 @@ async def create_folder_handler(request):
 PREVIEW_CACHE_SECONDS = 300
 
 
-def _preview_response(image_path):
-    return web.FileResponse(image_path, headers={"Cache-Control": f"public, max-age={PREVIEW_CACHE_SECONDS}"})
+def _preview_response(image_path, content_type=None):
+    headers = {"Cache-Control": f"public, max-age={PREVIEW_CACHE_SECONDS}"}
+    # Set rather than guessed: the client tells a clip from an image by it, and Windows' registry can map extensions oddly.
+    if content_type:
+        headers["Content-Type"] = content_type
+    return web.FileResponse(image_path, headers=headers)
 
 
 @server.PromptServer.instance.routes.get("/erenodes/view/{type}/{path:.*}")
@@ -584,7 +588,17 @@ async def view_file_handler(request):
                 preview_image_path = prospective_path_base + '.preview' + ext
                 if os.path.isfile(preview_image_path):
                     return _preview_response(preview_image_path)
-    
+
+    # A clip only when no image exists, under either name pattern and in any root.
+    for root_dir in base_dirs:
+        prospective_path_base = safe_join(root_dir, path_param, strict=config['strict'])
+        if not prospective_path_base:
+            continue
+        for ext, content_type in images.VIDEO_EXTENSIONS.items():
+            for candidate in (prospective_path_base + ext, prospective_path_base + '.preview' + ext):
+                if os.path.isfile(candidate):
+                    return _preview_response(candidate, content_type)
+
     # 204 rather than 404: "no preview available" is an ordinary answer, and a 404 per coverless tile is a screen of red in the network tab.
     # No Cache-Control either, since a 204 is not reliably cacheable; the repeat requests are stopped client-side by `missingPreviews` in tagview.js.
     return web.Response(status=204)
@@ -692,7 +706,7 @@ def _build_tree(root, extensions, rel="", depth=0, seen=None):
     image_stems = set()
     for entry in entries:
         stem, ext = os.path.splitext(entry.name)
-        if ext.lower() in IMAGE_EXTENSIONS:
+        if ext.lower() in IMAGE_EXTENSIONS or ext.lower() in images.VIDEO_EXTENSIONS:
             image_stems.add(stem[:-8] if stem.endswith(".preview") else stem)
 
     for entry in entries:

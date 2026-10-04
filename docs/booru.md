@@ -2,7 +2,7 @@
 
 [EreNodes](../README.md) › Booru browser
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="images/booru-dark.webp"><img src="images/booru-light.webp" alt="Booru browser"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="images/booru-dark.webp"><source media="(prefers-color-scheme: light)" srcset="images/booru-light.webp"><img src="images/booru-dark.webp" alt="Booru browser"></picture>
 
 The sidebar's Booru tab searches image boards for posts and hands you their tags. It is a tag source, not a downloader: only thumbnails are loaded.
 
@@ -32,6 +32,7 @@ Requests go through the ComfyUI server, since these sites do not answer browser 
 - **Select tags** in the preview (Ctrl+click, Shift+click, drag a box) and drag them onto a node.
 - **Drag the post** onto a prompt node to add all its tags.
 - **Right-click → Add as**: a new prompt node of the type you pick, with the post's tags.
+- **Right-click → Copy tags**: the post's tags as comma-separated text, for any prompt field. With several posts selected, their tags combined.
 - **Right-click → Save as tag group**: the post's tags become a [tag group](tag-groups.md), with its thumbnail as the cover. **Open on …** opens the post on its site.
 
 Tags arrive in the prompt form (`blue hair`, not `blue_hair`). Meta tags such as `highres` and `absurdres` are always left out.

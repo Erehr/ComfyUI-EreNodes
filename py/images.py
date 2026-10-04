@@ -3,6 +3,8 @@ import os
 # Every image format this pack handles: covers it stores, and uploads it reads metadata from.
 # Order matters — view_file_handler probes these in sequence.
 IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp')
+# Covers other tools save as clips, such as a lora manager storing Civitai's animated previews; served after any image, which wins.
+VIDEO_EXTENSIONS = {'.mp4': 'video/mp4', '.webm': 'video/webm'}
 
 PREVIEW_WIDTH = 480
 PREVIEW_QUALITY = 85
