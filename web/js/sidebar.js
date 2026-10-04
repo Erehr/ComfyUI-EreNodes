@@ -1,6 +1,6 @@
 import { app } from "../../../scripts/app.js";
-import { getCache, isNotFound, loadStyle, clearMissingCache, clearGroupCache, isAcceptedImage, extractFromImage, tagsFromResult, forgetVerdicts, installTooltips, getSetting, loadGroupTags, requestJson, apiUrl, toast, confirmDialog, promptDialog, pickFile, trackMarquee, trackPress, HOLD_MS, MOVE_THRESHOLD } from "./util.js";
-import { SURFACE_CLASS, injectTagStyles, renderTagTile, previewUrl, saveCover,
+import { getCache, isNotFound, loadStyle, clearMissingCache, clearGroupCache, clearLoraMetadataCache, isAcceptedImage, extractFromImage, tagsFromResult, forgetVerdicts, installTooltips, getSetting, loadGroupTags, requestJson, apiUrl, toast, tagsToText, confirmDialog, promptDialog, pickFile, trackMarquee, trackPress, HOLD_MS, MOVE_THRESHOLD } from "./util.js";
+import { SURFACE_CLASS, injectTagStyles, renderTagTile, previewUrl, saveCover, forgetPreviews,
          TILE_SIZE, TILE_GAP, TILE_SIZES, TILE_RATIOS, tileBoxFor } from "./tagview.js";
 import { showPreviewFor, hidePreviewPanel, setPreviewHandlers } from "./preview.js";
 import { startExternalDrag, isDragActive, injectDragStyles } from "./dragdrop.js";
@@ -569,9 +569,13 @@ function searchBooru(query) {
     b.seq++;
     clearSelection();
     state.cursor = -1;
+    // A different list starts at its top, including the position a reopen would otherwise put back.
+    state.reopenScroll = null;
     // Started first: it marks the search as loading before its first await, so the redraw shows "Loading…" rather than an empty result.
     loadBooruPage();
     if (state.tab === "booru") render();
+    const body = bodyEl();
+    if (body && state.tab === "booru") body.scrollTop = 0;
 }
 
 /** A new search for just this tag, as clicking a tag on a booru site does. */
@@ -580,8 +584,6 @@ function searchBooruTag(tag) {
     const search = state.host?.querySelector(".ere-sb-search");
     if (search) search.value = tag.name;
     searchBooru(tag.name);
-    const body = bodyEl();
-    if (body) body.scrollTop = 0;
 }
 
 /** The next page, appended; called again by the scroll handler until a short page says there is no more. */
@@ -754,6 +756,7 @@ function openBooruMenu(row, e) {
     }
     new ActionContextMenu(anchor, row.name, [
         addAsMenuItem("Add as", async () => row.post.tags),
+        copyTagsMenuItem(async () => row.post.tags),
         { name: "Save as tag group", callback: () => saveBooruAsGroup(row.post) },
         null,
         { name: `Open on ${booruSource().label}`, callback: () => window.open(row.post.page, "_blank", "noopener") },
@@ -2149,6 +2152,37 @@ function addAsMenuItem(label, collect) {
     };
 }
 
+/** The text a drop into a textarea would write, for anyone using the sidebar without the prompt nodes. A group copies as itself, so only its enabled tags. */
+function copyTagsMenuItem(collect) {
+    return {
+        name: "Copy tags",
+        callback: async () => {
+            const tags = await collect();
+            // Enabled, as a drop into text arrives: text has no off.
+            const text = await tagsToText(tags.map(t => ({ ...t, active: true })), getSetting("EreNodes.Nodes.TagSeparator", ", "));
+            if (!text) return toast("warn", "Nothing to copy", "No enabled tags.");
+            try {
+                await copyText(text);
+                toast("success", "Tags copied", text.length > 120 ? `${text.slice(0, 120)}…` : text);
+            } catch (err) {
+                toast("error", "Copy failed", err.message || String(err));
+            }
+        },
+    };
+}
+
+/** navigator.clipboard only exists in a secure context, and ComfyUI is often opened over plain http on the LAN. */
+async function copyText(text) {
+    if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
+    const area = el("textarea", "", document.body);
+    area.value = text;
+    area.style.cssText = "position: fixed; opacity: 0;";
+    area.select();
+    const ok = document.execCommand("copy");
+    area.remove();
+    if (!ok) throw new Error("The browser refused clipboard access.");
+}
+
 function openRowMenu(row, e) {
     e.preventDefault();
     e.stopPropagation();
@@ -2172,6 +2206,7 @@ function openRowMenu(row, e) {
 
     // Expanded, like click-to-add — see onRowActivate.
     const actions = [addAsMenuItem("Add as", () => tagsForRow(row, { unpack: true }))];
+    if (row.tab === "group") actions.push(copyTagsMenuItem(() => tagsForRow(row)));
 
     if (row.type === "file" && bookmarksApply()) {
         actions.push(null);
@@ -2218,6 +2253,9 @@ function openSelectionMenu(anchor) {
     };
 
     const actions = [addAsMenuItem("Add all as", collect)];
+    if (rows.every(r => r.tab === "group" || r.tab === "booru")) {
+        actions.push(copyTagsMenuItem(async () => dedupeTags((await Promise.all(rows.map(r => tagsForRow(r)))).flat())));
+    }
 
     if (rows.every(r => r.tab === "group")) {
         actions.push(null);
@@ -2421,7 +2459,7 @@ function buildChrome(host) {
         refreshBtn.title = "Refresh";
         refreshBtn.setAttribute("aria-label", "Refresh");
         el("i", "icon-[lucide--refresh-cw] size-4", refreshBtn);
-        refreshBtn.addEventListener("click", () => refresh());
+        refreshBtn.addEventListener("click", () => refresh({ rescan: true }));
     }
 
     // First row: search, or the editor's name field — the same markup minus the magnifier, in the same slot, so the two line up when the panel opens.
@@ -2874,8 +2912,11 @@ async function ensureTree({ force = false } = {}) {
     render();
 }
 
-/** Re-read from disk after an external change (save, rename, delete, migration). */
-export async function refresh() {
+/**
+ * Re-read from disk after an external change (save, rename, delete, migration).
+ * @param {boolean} [rescan]  the Refresh button: also re-fetch every cover and lora's trained words, at the cost of re-downloading the thumbnails once.
+ */
+export async function refresh({ rescan = false } = {}) {
     // The held tree stays on screen while the new one is fetched: dropping it first renders
     // "Loading…" over a list that is about to come back nearly identical.
     // ensureTree({ force }) ignores the cached version anyway, and other tabs re-check on switch.
@@ -2884,6 +2925,11 @@ export async function refresh() {
     // Re-render them so the verdict is re-fetched now rather than whenever they next happen to redraw.
     clearMissingCache();
     clearGroupCache();
+    // Covers and trained words can be written by other tools, such as a lora manager fetching them from Civitai.
+    if (rescan) {
+        forgetPreviews();
+        clearLoraMetadataCache();
+    }
     for (const node of app.graph?._nodes ?? []) node._ereDom?.render?.();
     if (!state.host) return;
     await ensureTree({ force: true });

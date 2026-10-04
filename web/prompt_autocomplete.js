@@ -334,7 +334,9 @@ export class GlobalAutocomplete {
             };
 
             this.menu = new MenuClass(this.attachedElement, onSelect, existingTags);
-            
+            // Placed under the caret by positionMenu, which caps its height to the room there instead of moving it over the text.
+            this.menu.clampOnRender = false;
+
             // Override the menu's positioning and event handling
             this.menu.setupEventListeners = () => {
                 if (this.menu.abortController) {

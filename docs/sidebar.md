@@ -41,7 +41,9 @@ Two modes, switched by the tag search button next to the search box (Tag Groups 
 
 ## Managing files
 
-Right-click an entry for **Add as** (a new prompt node of the type you pick, with the entry's tags), **Bookmark**, **Set Image**, **Edit tag group**, **New tag group here**, **New folder here**, **Rename** and **Delete**. Ctrl+click and Shift+click select several entries, for **Add all as** and **Delete selected**. A single click opens a folder.
+Right-click an entry for **Add as** (a new prompt node of the type you pick, with the entry's tags), **Copy tags** (tag groups: the group's enabled tags as comma-separated text, for any prompt field), **Bookmark**, **Set Image**, **Edit tag group**, **New tag group here**, **New folder here**, **Rename** and **Delete**. Ctrl+click and Shift+click select several entries, for **Add all as**, **Copy tags** and **Delete selected**. A single click opens a folder.
+
+The **Refresh** button re-reads everything from disk, including preview images and LoRA trigger words (`.metadata.json`) that another tool, such as a LoRA manager, has just downloaded.
 
 ## Keyboard
 

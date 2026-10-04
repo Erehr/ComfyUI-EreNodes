@@ -272,8 +272,7 @@ export function createTagEditor(opts) {
         pill.addEventListener("contextmenu", (e) => {
             e.preventDefault();
             e.stopPropagation();
-            const rect = pill.getBoundingClientRect();
-            const anchor = { clientX: rect.left, clientY: rect.bottom + 5 };
+            const anchor = { clientX: e.clientX, clientY: e.clientY };
             if (handlePillContextMenu(host, index, e, anchor)) return;
             host.onTagQuickEdit?.(anchor, host, { label: tag.name, index });
         });

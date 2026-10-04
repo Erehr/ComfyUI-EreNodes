@@ -27,7 +27,9 @@ export function hideNativeWidget(w) {
     else w.options = { hidden: true };
     w.computeSize = () => [0, 0];
     w.computeLayoutSize = () => ({ minHeight: 0, maxHeight: 0, minWidth: 0 });
-    if (!String(w.type ?? "").startsWith("converted-widget")) {
+    // A frontend with Nodes 2.0 skips a hidden widget in both renderers, and there a "converted-widget" is drawn as an input socket row of its own, an empty gap above the tags.
+    // Older ones only skip the widget by that type.
+    if (!("vueNodesMode" in (window.LiteGraph ?? {})) && !String(w.type ?? "").startsWith("converted-widget")) {
         w._ereOrigType = w.type;
         w.type = "converted-widget";
     }
@@ -182,9 +184,8 @@ function attachPillEvents(node, el, tag, index, mode) {
     el.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        // Anchor the quick edit menu to the pill's bottom-left, not the raw cursor position.
-        const rect = el.getBoundingClientRect();
-        const positionEvent = { clientX: rect.left, clientY: rect.bottom + 5 };
+        // At the cursor, as every other menu opens: a gallery tile is too tall to hang one below.
+        const positionEvent = { clientX: e.clientX, clientY: e.clientY };
         // A multi-selection gets bulk actions instead of single-tag editing.
         if (handlePillContextMenu(node, index, e, positionEvent)) return;
         node.onTagQuickEdit?.(positionEvent, node, { label: tag.name, index });
