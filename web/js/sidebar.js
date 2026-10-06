@@ -1,9 +1,9 @@
 import { app } from "../../../scripts/app.js";
-import { getCache, isNotFound, loadStyle, clearMissingCache, clearGroupCache, clearLoraMetadataCache, isAcceptedImage, extractFromImage, tagsFromResult, forgetVerdicts, installTooltips, getSetting, loadGroupTags, requestJson, apiUrl, toast, tagsToText, confirmDialog, promptDialog, pickFile, trackMarquee, trackPress, HOLD_MS, MOVE_THRESHOLD } from "./util.js";
+import { getCache, isNotFound, loadStyle, clearMissingCache, clearGroupCache, clearLoraMetadataCache, isAcceptedImage, extractFromImage, tagsFromResult, forgetVerdicts, installTooltips, getSetting, loadGroupTags, requestJson, apiUrl, toast, tagsToText, confirmDialog, promptDialog, pickFile, trackMarquee, trackPress, isTouch, isSecondFinger, HOLD_MS, MOVE_THRESHOLD } from "./util.js";
 import { SURFACE_CLASS, injectTagStyles, renderTagTile, previewUrl, saveCover, forgetPreviews,
          TILE_SIZE, TILE_GAP, TILE_SIZES, TILE_RATIOS, tileBoxFor } from "./tagview.js";
 import { showPreviewFor, hidePreviewPanel, setPreviewHandlers } from "./preview.js";
-import { startExternalDrag, isDragActive, injectDragStyles } from "./dragdrop.js";
+import { startExternalDrag, isDragActive, injectDragStyles, clientToGraph } from "./dragdrop.js";
 import { ActionContextMenu, TagContextMenu, TagIndexContextMenu } from "./contextmenu.js";
 import { GlobalAutocomplete } from "../prompt_autocomplete.js";
 import { createTagEditor } from "./tageditor.js";
@@ -450,6 +450,16 @@ const deepSearchActive = () => state.tab === "group" && state.tagSearch;
 /** Our own instance: the global one is bound to whichever node textarea has focus, and borrowing it would detach it mid-edit. */
 let searchAutocomplete = null;
 
+/** A booru search excludes a tag written `-tag`, so the minus completes like `@` does: the rest is searched, and the picked tag keeps it. */
+class BooruTagContextMenu extends TagContextMenu {
+    parseQuery(query) {
+        const text = String(query ?? "").trim();
+        if (!text.startsWith("-")) return super.parseQuery(text);
+        const parsed = super.parseQuery(text.slice(1));
+        return { ...parsed, insertPrefix: `-${parsed.insertPrefix}` };
+    }
+}
+
 /** Our own input, so the EreNodes-specific setting governs it — not the global textarea hook someone may have turned off for other packs. */
 function autocompleteEnabled() {
     const global = getSetting("EreNodes.Autocomplete.Global", true);
@@ -465,7 +475,7 @@ function attachSearchAutocomplete(input) {
         searchAutocomplete ??= new GlobalAutocomplete();
         searchAutocomplete.attach(input, {
             // Booru searches complete from the tag CSV: the site's tags, not the ones in your groups.
-            menuClass: booru ? TagContextMenu : TagIndexContextMenu,
+            menuClass: booru ? BooruTagContextMenu : TagIndexContextMenu,
             // A search term is matched literally, so `\(` would be looked up with the backslash in it.
             escapeParens: false,
         });
@@ -777,6 +787,8 @@ function syncSelectionClasses() {
     if (!state.host) return;
     // The accent means several rows; one row is the neutral fill.
     state.host.classList.toggle("ere-sb-multi", state.selection.size > 1);
+    // On touch a selection is selection mode, where a sweep bands rather than scrolls (sidebar.css).
+    state.host.classList.toggle("ere-sb-selecting", state.selection.size > 0);
     for (const el of state.host.querySelectorAll("[data-ere-key]")) {
         const selected = state.selection.has(el.dataset.ereKey);
         el.classList.toggle("ere-sb-selected", selected);
@@ -811,8 +823,8 @@ function handleRowSelect(row, e) {
 // A selection lives until something says otherwise, and these are the somethings — the same set a pill or a category selection answers to. Bound once, on window, in the capture phase: presses on the sidebar's own chrome never reach the tree body, and presses outside it never reach the sidebar at all.
 window.addEventListener("pointerdown", (e) => {
     if (e.button !== 0 || !state.selection.size) return;
-    // Modified presses are selection gestures; rows and the tree body run their own guard; a menu acting on the selection must not have it cleared out from under it.
-    if (e.ctrlKey || e.metaKey || e.shiftKey) return;
+    // Modified presses are selection gestures; rows and the tree body run their own guard; a menu acting on the selection must not have it cleared out from under it; a second finger is a pinch.
+    if (e.ctrlKey || e.metaKey || e.shiftKey || isSecondFinger(e)) return;
     if (e.target?.closest?.(".ere-sb-body-inner, [data-ere-key], .litecontextmenu")) return;
     clearSelection();
 }, true);
@@ -1007,8 +1019,7 @@ function selectedRows() {
  * A press that never moves is not a band — it is the ctrl+click, or a click on nothing.
  * @param {?HTMLElement} rowEl  the row the press landed on, if any
  */
-function beginMarquee(e, scroller, rowEl = null) {
-    const additive = e.ctrlKey || e.metaKey;
+function beginMarquee(e, scroller, rowEl = null, additive = e.ctrlKey || e.metaKey) {
     trackMarquee(e, {
         // Only what the window has drawn can be banded, which is also all that is on screen.
         items: () => [...scroller.querySelectorAll("[data-ere-key]")].map(el => ({ key: el.dataset.ereKey, el })),
@@ -1017,10 +1028,10 @@ function beginMarquee(e, scroller, rowEl = null) {
             state.selection = keys;
             syncSelectionClasses();
         },
-        // A press that never opened a band stays a plain click: ctrl toggles that row, and a press on empty space clears.
+        // A press that never opened a band stays a plain click: ctrl toggles that row, and a press on empty space clears (on touch, how selection mode ends).
         onClick: () => {
             if (rowEl) toggleRowKey(rowEl.dataset.ereKey);
-            else if (!additive) clearSelection();
+            else if (!additive || isTouch(e)) clearSelection();
         },
     });
 }
@@ -1048,13 +1059,9 @@ function createNodeWithTags(tags, nodeType = defaultNodeType(), at = null) {
     if (canvas?.ds) {
         const { scale, offset } = canvas.ds;
         const rect = canvas.canvas.getBoundingClientRect();
-        if (at) {
-            // Client -> graph coordinates, dropping the node's top-left roughly under the cursor.
-            node.pos = [
-                (at.x - rect.left) / scale - offset[0],
-                (at.y - rect.top) / scale - offset[1],
-            ];
-        } else {
+        // The node's top-left roughly under the cursor.
+        if (at) node.pos = clientToGraph(at.x, at.y);
+        else {
             // Nudged, so repeated adds do not stack exactly on top of each other.
             const jitter = ((graph.nodes ?? graph._nodes ?? []).length % 6) * 24;
             node.pos = [
@@ -1164,7 +1171,29 @@ function attachPress(el, row) {
             });
         };
 
-        trackPress(e, { onDrag: begin, onClick: (ev) => onRowClick(row, ev) });
+        const key = rowKey(row);
+        trackPress(e, {
+            onDrag: (session) => {
+                // A row that was selected before the press carries the selection; one the hold just selected goes alone.
+                if (session.added) toggleRowKey(key);
+                begin(session);
+            },
+            // Touch: the hold selects, which on touch is how selection mode starts.
+            onHold: (session) => {
+                if (state.selection.has(key)) return;
+                toggleRowKey(key);
+                session.added = true;
+            },
+            // Touch: a sweep before the hold bands the selection in selection mode; otherwise the list scrolls.
+            onSwipe: (ev, start) => {
+                if (state.selection.size) beginMarquee({ clientX: start.x, clientY: start.y }, el.closest(".ere-sb-body-inner") ?? el, null, true);
+            },
+            onClick: (ev) => {
+                // On touch a list holding a selection is in selection mode: a tap picks, as Ctrl+click does.
+                if (isTouch(e) && state.selection.size) toggleRowKey(key);
+                else onRowClick(row, ev);
+            },
+        });
     });
 
     el.addEventListener("dblclick", (e) => {
@@ -2796,8 +2825,10 @@ function buildTreeBody(host) {
         if (e.button !== 0) return;
         const rowEl = e.target?.closest?.("[data-ere-key]");
         if (rowEl && !(e.ctrlKey || e.metaKey)) return;
+        // On touch empty space scrolls the list, except in selection mode, where it bands the selection as Ctrl does.
+        if (isTouch(e) && !state.selection.size) return;
         e.stopPropagation();
-        beginMarquee(e, content, rowEl);
+        beginMarquee(e, content, rowEl, e.ctrlKey || e.metaKey || isTouch(e));
     }, true);
     // Right-click on background (not on a row) offers folder management.
     // Rows stop propagation in their own handler, so this only sees empty space.

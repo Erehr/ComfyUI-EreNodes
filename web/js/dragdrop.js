@@ -1,5 +1,5 @@
 import { app } from "../../../scripts/app.js";
-import { beginUndoTransaction, endUndoTransaction, loadStyle, insertTagsAsText, caretIndexFromPoint, getElementOrCursorCoords, getTags, setTags, textareaOf, toast, HOLD_MS, MOVE_THRESHOLD } from "./util.js";
+import { beginUndoTransaction, endUndoTransaction, loadStyle, insertTagsAsText, caretIndexFromPoint, getElementOrCursorCoords, getTags, setTags, textareaOf, toast, HOLD_MS, MOVE_THRESHOLD, TOUCH_SELECT_MS, TOUCH_MENU_MS, TOUCH_SLOP, isTouch, lastPressWasTouch, touchFeedback, swallowNextClick, claimTouch, isSecondFinger } from "./util.js";
 import { ActionContextMenu, stepStrength } from "./contextmenu.js";
 import { accentForTags, TYPE_FILL, DEFAULT_FILL, injectTagStyles, renderTagPill } from "./tagview.js";
 
@@ -112,6 +112,24 @@ function renderedIndices(node) {
     return [...content.querySelectorAll("[data-ere-index]")].map(el => Number(el.dataset.ereIndex));
 }
 
+function toggleSelected(node, index) {
+    const s = selOf(node, true);
+    clearAllSelections(node);   // selection stays scoped to one node
+    const tags = getTags(node);
+    if (s.indices.has(index)) {
+        s.indices.delete(index);
+        s.names.delete(index);
+    } else if (tags[index]) {
+        s.indices.add(index);
+        s.names.set(index, tags[index].name);
+    }
+    s.anchor = index;
+    trackSelection(node);
+    applySelectionClasses(node);
+}
+
+const hasSelection = (node) => !!node?._ereSel?.indices.size;
+
 /**
  * Selection-aware click handling, called before the renderer forwards a click.
  * @returns {boolean} true when the click was consumed here.
@@ -119,19 +137,9 @@ function renderedIndices(node) {
 export function handlePillSelectClick(node, index, e) {
     const s = selOf(node, true);
 
-    if (e.ctrlKey || e.metaKey) {
-        clearAllSelections(node);   // selection stays scoped to one node
-        const tags = getTags(node);
-        if (s.indices.has(index)) {
-            s.indices.delete(index);
-            s.names.delete(index);
-        } else if (tags[index]) {
-            s.indices.add(index);
-            s.names.set(index, tags[index].name);
-        }
-        s.anchor = index;
-        trackSelection(node);
-        applySelectionClasses(node);
+    // On touch a node holding a selection is in selection mode: a tap picks, as Ctrl+click does.
+    if (e.ctrlKey || e.metaKey || (lastPressWasTouch() && s.indices.size)) {
+        toggleSelected(node, index);
         return true;
     }
 
@@ -334,7 +342,9 @@ function buildExternalGhost(tags, label) {
 
 function endPointerSession() {
     if (state.pending?.timer) clearTimeout(state.pending.timer);
+    if (state.pending?.menuTimer) clearTimeout(state.pending.menuTimer);
     state.pending = null;
+    claimTouch(false);
     if (state.marquee) {
         state.marquee.el?.remove();
         document.body.classList.remove("ere-marquee-active");
@@ -367,13 +377,18 @@ function abortCanvasGesture() {
 
 function beginMarqueePress(node, root, e) {
     startPointerSession();
-    const additive = e.ctrlKey || e.metaKey;
+    // On touch a node holding a selection is in selection mode, where a sweep adds to it as Ctrl does.
+    const touch = isTouch(e);
+    const additive = e.ctrlKey || e.metaKey || (touch && hasSelection(node));
     state.marquee = {
         node, root,
         startX: e.clientX, startY: e.clientY,
         // Ctrl XORs against the existing selection; a plain band replaces it, like Explorer.
         base: additive ? getSelectedIndices(node) : [],
+        // What a band given up on goes back to.
+        original: getSelectedIndices(node),
         additive,
+        touch,
         // A plain press on empty space that never becomes a band still clears the selection on release.
         onPill: !!e.target?.closest?.(PILL_SELECTOR),
         el: null,
@@ -381,8 +396,82 @@ function beginMarqueePress(node, root, e) {
     };
 }
 
+/** A touch press on a pill: held, it selects; held on, it opens the pill's menu; held and moved, it drags. See TOUCH_SELECT_MS. */
+function onPillTouchDown(node, el, index, mode, e) {
+    if (state.drag) return;
+    startPointerSession();
+    const p = state.pending = {
+        node, el, index, mode, touch: true,
+        startX: e.clientX, startY: e.clientY,
+        x: e.clientX, y: e.clientY,
+        wasSelected: isPillSelected(node, index),
+        added: false,
+        held: false,
+    };
+    p.timer = setTimeout(() => {
+        if (state.pending !== p) return;
+        p.held = true;
+        claimTouch(true);
+        touchFeedback();
+        if (!p.wasSelected) {
+            toggleSelected(node, index);
+            p.added = true;
+        }
+    }, TOUCH_SELECT_MS);
+    p.menuTimer = setTimeout(() => {
+        if (state.pending !== p) return;
+        // Asking for the menu, not for the selection the hold made on the way.
+        undoTouchSelect(p);
+        endPointerSession();
+        swallowNextClick();
+        // The pill's own handler: quick edit, or the bulk menu for a pill in a selection.
+        el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: p.startX, clientY: p.startY }));
+    }, TOUCH_MENU_MS);
+}
+
+/** A second finger is ComfyUI's pinch and pan: whatever the first one started here gives way, and leaves things as they were. */
+function abortTouchGesture() {
+    if (state.pending?.touch) undoTouchSelect(state.pending);
+    const m = state.marquee;
+    if (m?.active) selectIndices(m.node, m.original);
+    if (state.drag) cancelDrag();
+    endPointerSession();
+}
+
+function undoTouchSelect(p) {
+    if (!p.added) return;
+    p.added = false;
+    toggleSelected(p.node, p.index);
+}
+
+/** A touch press that moved before its hold: a sweep in selection mode, otherwise a drag of that pill at once, as a node is dragged. */
+function onPillTouchSwipe(p, e) {
+    if (!hasSelection(p.node)) {
+        claimTouch(true);
+        beginDrag();
+        return;
+    }
+    clearTimeout(p.timer);
+    clearTimeout(p.menuTimer);
+    state.pending = null;
+    const m = state.marquee = {
+        node: p.node, root: rootOf(p.el),
+        startX: p.startX, startY: p.startY,
+        base: getSelectedIndices(p.node),
+        original: getSelectedIndices(p.node),
+        additive: true,
+        touch: true,
+        onPill: true,
+        el: null,
+        active: false,
+    };
+    activateMarquee(m);
+    updateMarquee(m, e.clientX, e.clientY);
+}
+
 function activateMarquee(m) {
     m.active = true;
+    claimTouch(true);
     abortCanvasGesture();
     m.el = document.createElement("div");
     m.el.className = "ere-marquee";
@@ -456,7 +545,19 @@ function onWindowPointerMove(e) {
     if (!p) return;
     p.x = e.clientX;
     p.y = e.clientY;
-    if (Math.hypot(e.clientX - p.startX, e.clientY - p.startY) > MOVE_THRESHOLD) beginDrag();
+    const moved = Math.hypot(e.clientX - p.startX, e.clientY - p.startY);
+    if (!p.touch) {
+        if (moved > MOVE_THRESHOLD) beginDrag();
+        return;
+    }
+    if (moved <= TOUCH_SLOP) return;
+    if (!p.held) {
+        onPillTouchSwipe(p, e);
+        return;
+    }
+    // A pill that was selected before the press carries the selection; one the hold just selected goes alone.
+    undoTouchSelect(p);
+    beginDrag();
 }
 
 function onWindowPointerUp(e) {
@@ -466,10 +567,12 @@ function onWindowPointerUp(e) {
         e.stopPropagation();
         clickSuppressed = true;
         setTimeout(() => { clickSuppressed = false; }, 50);
-    } else if (m && !m.onPill && !m.additive) {
-        // Plain press on empty tag area that never became a band: deselect.
+    } else if (m && !m.onPill && (!m.additive || m.touch)) {
+        // Plain press on empty tag area that never became a band: deselect. On touch that is how selection mode ends.
         clearSelectionState(m.node);
     }
+    // A hold that selected ends in a click, which would toggle the pill it just selected.
+    if (state.pending?.touch && state.pending.held) swallowNextClick();
     if (state.drag) {
         e.stopPropagation();
         state.drag.alt = e.altKey;
@@ -935,8 +1038,16 @@ export function startExternalDrag({ tags, label, altTags = null, altLabel = "", 
     return true;
 }
 
+/** A client point in graph coordinates. */
+export function clientToGraph(x, y) {
+    const canvas = app.canvas;
+    const rect = canvas.canvas.getBoundingClientRect();
+    const { scale, offset } = canvas.ds;
+    return [(x - rect.left) / scale - offset[0], (y - rect.top) / scale - offset[1]];
+}
+
 /** True when the point is over the graph itself: the canvas, a Nodes 2.0 node or a DOM widget. */
-function overCanvas(x, y) {
+export function overCanvas(x, y) {
     const canvas = app.canvas?.canvas;
     if (!canvas) return false;
     // The canvas runs under the sidebar and the other panels, so its rectangle is not enough: a drop over a panel is a drop on the panel, which cancels it.
@@ -1227,6 +1338,16 @@ function selectionSubset(node) {
     return { tags: indices.map(i => tags[i]), indices };
 }
 
+// The pill quick edit is open on, highlighted for as long as the menu is up.
+let editing = null;
+window.addEventListener("erenodes:quick-edit-closed", () => {
+    const e = editing;
+    editing = null;
+    // Unless the selection has moved on since (a tag picked in another node), it was only ever the edit's.
+    const selected = e && getSelectedIndices(e.node);
+    if (selected?.length === 1 && selected[0] === e.index) clearSelectionState(e.node);
+});
+
 /**
  * Right-clicking a pill inside a multi-selection opens bulk actions instead of the single-tag quick edit.
  * @returns {boolean} true when the selection menu was opened.
@@ -1234,12 +1355,12 @@ function selectionSubset(node) {
 export function handlePillContextMenu(node, index, e, anchorEvent) {
     const selected = getSelectedIndices(node);
 
-    if (!selected.includes(index)) {
-        // Right-clicking outside the selection drops it, then edits normally.
-        clearSelectionState(node);
+    // One tag: quick edit, with that pill highlighted as the one being edited. Right-clicking outside the selection drops it first.
+    if (!selected.includes(index) || selected.length < 2) {
+        selectIndices(node, [index]);
+        editing = { node, index };
         return false;
     }
-    if (selected.length < 2) return false;   // one tag: quick edit is more useful
 
     const subset = selectionSubset(node);
     const saveable = subset.tags.filter(t => t.type !== 'group').length;
@@ -1296,6 +1417,10 @@ export function markDropZone(container, layout = "flow") {
 
 /** Single entry point for presses on a pill. Bound on `window` in the capture phase: the widget root only stops events while they bubble, too late for ComfyUI's own capture-phase handlers — ctrl+drag armed the canvas box-select from the same gesture. */
 function onGlobalPointerDown(e) {
+    if (isSecondFinger(e)) {
+        abortTouchGesture();
+        return;
+    }
     // Menus live outside the widget, so a press in one reads as "somewhere else" and would clear the selection out from under the bulk action being clicked.
     if (e.target?.closest?.(".litecontextmenu")) return;
 
@@ -1324,6 +1449,8 @@ function onGlobalPointerDown(e) {
     // Explorer style: empty space bands without a modifier, a pill bands only with Ctrl/Cmd.
     // Either way a press that never moves stays a plain click.
     if (!inToolbar && (!onPill || e.ctrlKey || e.metaKey)) {
+        // On touch, empty space is only a band in selection mode; otherwise the finger is ComfyUI's (it may be the first of a pinch).
+        if (isTouch(e) && !hasSelection(node)) return;
         e.stopPropagation();
         e.stopImmediatePropagation();
         beginMarqueePress(node, root, e);
@@ -1338,7 +1465,7 @@ function onGlobalPointerDown(e) {
 
     e.stopPropagation();
     e.stopImmediatePropagation();
-    onPillPointerDown(node, pill, Number(pill.dataset.ereIndex), mode, e);
+    (isTouch(e) ? onPillTouchDown : onPillPointerDown)(node, pill, Number(pill.dataset.ereIndex), mode, e);
 }
 
 let globalsInstalled = false;

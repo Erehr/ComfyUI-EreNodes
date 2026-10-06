@@ -71,6 +71,8 @@
     display: flex;
     flex-direction: column;
     gap: 5px;
+    /* A long press is ours (select, then quick edit or drag); iOS would also offer to save the image or copy the text. */
+    -webkit-touch-callout: none;
 }
 /* While a Nodes 2.0 resize drag is in flight (see beginResizeDrag): the tag area reports no
    intrinsic height, so it cannot act as a floor for ComfyUI's per-pointermove clamp. It is still

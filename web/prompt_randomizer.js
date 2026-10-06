@@ -19,9 +19,9 @@ app.registerExtension({
             initializeSharedPromptFunctions(this, textWidget);
             attachTagDomWidget(this, "randomizer");
 
-            // Python widgets exist before onNodeCreated, so these would sit above the tag area. Serialized order is unaffected — the tag widget is `serialize: false`, so values still come out as text, separator, seed, control.
+            // Python widgets exist before onNodeCreated, so these would sit above the tag area. Serialized order is unaffected — the tag widget is `serialize: false`, so values still come out as text, separator, seed, control, sequential.
             const linked = this.widgets.filter(
-                w => w.name === "seed" || w.name === "control_after_generate");
+                w => w.name === "seed" || w.name === "control_after_generate" || w.name === "sequential");
             if (linked.length) {
                 this.widgets = this.widgets.filter(w => !linked.includes(w)).concat(linked);
             }
@@ -47,6 +47,17 @@ app.registerExtension({
                 control.afterQueued = function (...args) {
                     const result = origAfterQueued?.apply(this, args);
                     node.onSeedChanged?.();
+                    return result;
+                };
+            }
+
+            // Applied at once, so what is on screen is what this seed gives in the new order.
+            const sequential = this.widgets?.find(w => w.name === "sequential");
+            if (sequential) {
+                const origCallback = sequential.callback;
+                sequential.callback = function (...args) {
+                    const result = origCallback?.apply(this, args);
+                    node.onApplySeed?.(seedWidget?.value);
                     return result;
                 };
             }

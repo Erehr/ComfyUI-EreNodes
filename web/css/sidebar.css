@@ -69,6 +69,14 @@
 .ere-sidebar .ere-sb-body-inner :is(input, textarea) {
     user-select: text;
 }
+/* Touch selection mode: a finger sweeping the list bands the selection, so the browser must not take it as a scroll. Read at the press, so it is set before one. */
+.ere-sidebar.ere-sb-selecting .ere-sb-body-inner {
+    touch-action: none;
+}
+/* A long press is ours (select, then drag); iOS would also offer to save the image or copy the text. */
+.ere-sidebar {
+    -webkit-touch-callout: none;
+}
 .ere-sidebar .ere-sb-body-inner:focus,
 .ere-sidebar .ere-sb-body-inner:focus-visible {
     outline: none;

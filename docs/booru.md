@@ -21,7 +21,7 @@ Requests go through the ComfyUI server, since these sites do not answer browser 
 ## Searching
 
 - Type tags, comma separated, and press **Enter**. Spaces become underscores; `-tag` excludes a tag.
-- The search box autocompletes from your tag list; picking a suggestion searches straight away.
+- The search box autocompletes from your tag list; picking a suggestion searches straight away. A term started with `-` completes too, and keeps the `-` on the picked tag.
 - **Sort and page** button: **Latest**, **Top rated** or **Random**, and the page to start from. Remembered per source until ComfyUI restarts. Enter re-rolls a random sort.
 - More posts load as you scroll.
 

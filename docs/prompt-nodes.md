@@ -36,6 +36,8 @@ Every EreNodes prompt node outputs a `STRING` and shares the same [tag pills](ta
 
 Every prompt node has an optional `prefix` input. Connect another prompt node's output to it and the upstream prompt is placed before this node's tags, so nodes chain into one prompt.
 
+Drag a prompt node by its title onto the midpoint of a link between two prompt nodes: when a ring shows on the midpoint and the node fades, release and it is inserted into the chain there. If it was already chained elsewhere, that gap closes as deleting it would. A [Composer](prompt-composer.md) category dragged onto a midpoint is inserted the same way, as a new node; several selected categories are chained in order.
+
 - **Tag separator**: what goes between tags, `, ` by default.
 - **Node separator**: what goes between the prefix and this node's tags, `,\n\n` by default. A prefix that already ends in punctuation does not get it twice.
 
@@ -51,6 +53,7 @@ The randomizer keeps the number of enabled tags and lets a seed pick which ones 
 
 - **Dice button**: roll a new arrangement now.
 - **seed** and **control after generate**: ComfyUI's standard seed widgets. Set to randomize or increment and every queued prompt gets a new arrangement; typing an earlier seed back in restores that arrangement.
+- **sequential**: a toggle under the seed. On, each seed enables the next tags in pill order instead of a random pick. With **increment**, a run walks the list without repeats: one enabled LoRA out of seven, queued seven times, tests each once.
 
 ## Prompt Multiline
 

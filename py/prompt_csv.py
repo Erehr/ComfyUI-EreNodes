@@ -295,7 +295,43 @@ def get_tag_data(active_csv=None):
     return loaded[1] if loaded else None
 
 
-# Substring match over tag names and their aliases, in file order, so that "eyes" finds `blue eyes`.
+# What a word in a tag starts after, besides the start of a name or alias: "gym" finds `fitness gym` and "shirt" `t-shirt`, but "ness" does not find `fitness`, as booru sites complete.
+_WORD_STARTS = (" ", "(", "-", "/", ":")
+
+
+# Rows with a name or alias that is exactly the query, in file order.
+def _exact_rows(data, query):
+    hay = data.hay
+    rows = []
+    if hay.startswith(query + "\t") or hay.startswith(query + "\n"):
+        rows.append(0)
+    for before in ("\n", "\t"):
+        for after in ("\t", "\n"):
+            pattern = before + query + after
+            position = 0
+            while (hit := hay.find(pattern, position)) >= 0:
+                rows.append(bisect_right(data.starts, hit + 1) - 1)
+                position = hit + 1
+    return sorted(set(rows))
+
+
+# Every position where the query starts a word of a name or alias, in file order: one C-level find per kind of word start, merged, so a short query does not walk every mid-word hit in Python.
+def _word_hits(hay, query):
+    if hay.startswith(query):
+        yield 0
+    patterns = [(sep + query, len(sep)) for sep in ("\n", "\t") + _WORD_STARTS]
+    nexts = [hay.find(pattern) for pattern, _ in patterns]
+    while True:
+        live = [(hit, i) for i, hit in enumerate(nexts) if hit >= 0]
+        if not live:
+            return
+        hit, i = min(live)
+        pattern, skip = patterns[i]
+        nexts[i] = hay.find(pattern, hit + 1)
+        yield hit + skip
+
+
+# Word-start match over tag names and their aliases, so that "eyes" finds `blue eyes`, with any exact name or alias first.
 # The CSVs are sorted by post count descending, so stopping at `limit` hands back the highest-count matches; an empty query with a category is simply its top rows.
 def _search_tags(query, limit, category=None):
     # Either would match across field or row boundaries in the haystack.
@@ -322,23 +358,32 @@ def _search_tags(query, limit, category=None):
     hay, starts, counts, cats = data.hay, data.starts, data.counts, data.cats
     results = []
     seen_tags = set()
-    position = 0
-    while len(results) < limit:
-        hit = hay.find(query, position)
-        if hit < 0 or hit >= len(hay):
-            break
-        row = bisect_right(starts, hit) - 1
-        end = hay.index("\n", hit)
+
+    # By name, not row: the merged danbooru+e621 file can hold a tag twice.
+    def add(row):
+        end = hay.index("\n", starts[row])
         tag_name, *aliases = hay[starts[row]:end].split("\t")
-        if tag_name not in seen_tags:
-            seen_tags.add(tag_name)
-            results.append({
-                'name': tag_name,
-                'count': counts[row],
-                'aliases': aliases,
-                'category': CATEGORIES[cats[row]],
-            })
-        position = end + 1
+        if tag_name in seen_tags:
+            return
+        seen_tags.add(tag_name)
+        results.append({
+            'name': tag_name,
+            'count': counts[row],
+            'aliases': aliases,
+            'category': CATEGORIES[cats[row]],
+        })
+
+    if query:
+        for row in _exact_rows(data, query):
+            add(row)
+        hits = _word_hits(hay, query)
+    else:
+        hits = iter(starts)
+    for hit in hits:
+        if len(results) >= limit:
+            break
+        add(bisect_right(starts, hit) - 1)
+    del results[limit:]
 
     with _SEARCH_CACHE_LOCK:
         _SEARCH_CACHE[cache_key] = results

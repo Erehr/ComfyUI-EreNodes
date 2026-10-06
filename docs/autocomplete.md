@@ -12,7 +12,7 @@ Built-in Danbooru and e621 lists, with post counts and aliases. Put your own CSV
 
 ## Searching
 
-- Partial matches, and multi-word tags matched by any of their words.
+- Matches from the start of any word: `gym` finds `fitness gym`, `shirt` finds `t-shirt`, but `ness` does not find `fitness`. A tag (or alias) that is exactly what you typed comes first.
 - Tags already in the prompt are left out, in textareas as well as in tag nodes. By default a used tag stays reachable through its remaining aliases.
 - An alias is replaced by its canonical tag when picked.
 

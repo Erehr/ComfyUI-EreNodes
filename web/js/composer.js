@@ -1,9 +1,9 @@
 import { app } from "../../../scripts/app.js";
 import { initializeSharedPromptFunctions } from "../prompt.js";
-import { captureUndoState, beginUndoTransaction, endUndoTransaction, loadStyle, ensureChecked, tagsToText, insertTagsAsText, getTags, trackMarquee, HOLD_MS, MOVE_THRESHOLD } from "./util.js";
+import { captureUndoState, beginUndoTransaction, endUndoTransaction, loadStyle, ensureChecked, tagsToText, insertTagsAsText, getTags, trackMarquee, HOLD_MS, MOVE_THRESHOLD, TOUCH_SELECT_MS, TOUCH_SLOP, isTouch, lastPressWasTouch, touchFeedback, swallowNextClick, claimTouch, isSecondFinger } from "./util.js";
 import { parseTags, parseTextToTagData, parseClipboardTags, joinPrompt, looksLikeProse, DEFAULT_SEPARATOR } from "./parser.js";
 import { SURFACE_CLASS, renderSwitchEl } from "./tagview.js";
-import { markTextDropZone, clearAllSelections, pruneSelection, buildCountBadges, isDragActive } from "./dragdrop.js";
+import { markTextDropZone, clearAllSelections, pruneSelection, buildCountBadges, isDragActive, clientToGraph, overCanvas } from "./dragdrop.js";
 import { renderTagBody, hideNativeWidget } from "./renderer.js";
 import { ActionContextMenu, TagContextMenuInsert } from "./contextmenu.js";
 
@@ -474,6 +474,326 @@ async function moveRows(sourceNode, indices, targetNode, index, copy = false) {
     }
 }
 
+// Categories and Prompt Nodes
+// A category is a prompt node drawn inside a Composer, so either can become the other: a category dragged onto bare canvas, or a prompt node dragged onto a Composer's categories.
+
+const NODE_FOR_LAYOUT = {
+    cloud: "ErePromptCloud",
+    toggle: "ErePromptToggle",
+    multiselect: "ErePromptMultiSelect",
+    gallery: "ErePromptGallery",
+    multiline: "ErePromptMultiline",
+};
+
+// The Randomizer draws as a MultiSelect and the Extractor as a Cloud; their seed and image have no place in a category.
+const LAYOUT_FOR_NODE = {
+    ...Object.fromEntries(Object.entries(NODE_FOR_LAYOUT).map(([layout, type]) => [type, layout])),
+    ErePromptRandomizer: "multiselect",
+    ErePromptExtractor: "cloud",
+};
+
+/** Categories as prompt nodes, the first with its title bar at the client point `x, y`, the rest stacked below, chained into `link` when dropped on its midpoint. Moved out unless `copy`. */
+async function rowsToNodes(sourceNode, indices, x, y, copy, link = null) {
+    const rows = getRows(sourceNode);
+    const picked = indices.map(i => rows[i]).filter(Boolean);
+    const graph = app.canvas?.graph ?? app.graph;
+    if (!picked.length || !graph) return;
+    dropRowSelection(sourceNode);
+    clearAllSelections();
+
+    beginUndoTransaction();
+    try {
+        let [gx, gy] = clientToGraph(x, y);
+        // `pos` is the body's corner; the title bar sits above it.
+        gy += window.LiteGraph?.NODE_TITLE_HEIGHT ?? 30;
+        const created = [];
+        for (const row of picked) {
+            const node = window.LiteGraph?.createNode(NODE_FOR_LAYOUT[row.layout]);
+            if (!node) continue;
+            graph.add(node);
+            created.push(node);
+            node.pos = [gx, gy];
+            node.title = row.title || node.title;
+            // A switched-off category is bypassed rather than muted: a chain through it still reaches what follows.
+            if (row.active === false) node.mode = MODE_BYPASS;
+            if (sourceNode.properties?._tagSeparator != null) node.properties._tagSeparator = sourceNode.properties._tagSeparator;
+            if (row.layout === "multiline") {
+                const text = node.widgets?.find(w => w.name === "text");
+                if (text) text.value = row.text || "";
+            } else {
+                node.properties._tagDataJSON = JSON.stringify(row.tags);
+            }
+            await node.onUpdateTextWidget?.(node);
+            gy += (node.size?.[1] ?? 200) + 30;
+        }
+        if (link && created.length) chainIntoLink(created, link);
+        if (!copy) {
+            const drop = new Set(indices);
+            setRows(sourceNode, rows.filter((_, i) => !drop.has(i)));
+            await commit(sourceNode);
+        }
+        graph.setDirtyCanvas(true, true);
+    } finally {
+        endUndoTransaction();
+    }
+}
+
+// LiteGraph's node modes: a bypassed node passes its input through, a muted one ("never") does not run. Either is what a switched-off category is.
+const MODE_NEVER = 2;
+const MODE_BYPASS = 4;
+const isSwitchedOff = (node) => node.mode === MODE_BYPASS || node.mode === MODE_NEVER;
+
+/** A prompt node as the categories it becomes: one, or all of a Composer's. A switched-off node arrives switched off. */
+function rowsFromNode(node, count) {
+    const off = isSwitchedOff(node);
+    if (node.type === "ErePromptComposer") return getRows(node).map(row => (off ? { ...row, active: false } : row));
+    const layout = LAYOUT_FOR_NODE[node.type];
+    const defaultTitle = window.LiteGraph?.registered_node_types?.[node.type]?.title;
+    const title = node.title && node.title !== defaultTitle ? node.title : `Category ${count + 1}`;
+    const row = makeRow(title, layout === "multiline" ? [] : getTags(node), layout);
+    if (layout === "multiline") row.text = node.widgets?.find(w => w.name === "text")?.value || "";
+    row.active = !off;
+    return [row];
+}
+
+/** The nodes' categories go in at `index`, in order, and the nodes go: each one's prefix input is relinked to what its output fed, as a native delete does. */
+async function nodesIntoComposer(nodes, composer, index) {
+    const target = getRows(composer);
+    const rows = [];
+    for (const node of nodes) rows.push(...rowsFromNode(node, target.length + rows.length));
+    target.splice(Math.min(index, target.length), 0, ...rows);
+    beginUndoTransaction();
+    try {
+        setRows(composer, target);
+        for (const node of nodes) {
+            node.connectInputToOutput?.();
+            node.graph?.remove(node);
+        }
+        await commit(composer);
+    } finally {
+        endUndoTransaction();
+    }
+}
+
+// ComfyUI has no node-onto-node drop, so a press on one of our prompt nodes is watched until the node moves: that is a node drag, in either renderer.
+// Two things take it, each only once its cue shows, so overlapping nodes by accident changes nothing: a Composer's categories (the placeholder), and the midpoint of a link into a prompt node's prefix (a ring on the marker).
+// `nodes` is what the drag carries, settled on its first move: the pressed node, or the whole selection it belongs to; null when that selection is not all prompt nodes.
+const nodeDrag = { node: null, nodes: undefined, start: null, target: null, index: 0, link: null, placeholder: null, marker: null, faded: false };
+
+// Nodes 2.0 binds the node's own opacity (bypass, mute) in its inline style and rewrites it every frame of a drag, so the fade is a rule the re-render cannot touch.
+const fadeStyle = document.createElement("style");
+document.head.appendChild(fadeStyle);
+
+// Screen pixels around a link's midpoint marker, which is itself 8px: a node being dragged is aimed less finely than a click.
+const LINK_REACH_PX = 16;
+
+const vueElementOf = (node) => document.querySelector(`[data-node-id="${node.id}"]`);
+const isPromptNode = (item) => item?.type in LAYOUT_FOR_NODE || item?.type === "ErePromptComposer";
+
+function pressedNode(e) {
+    const graph = app.canvas?.graph;
+    if (!graph) return null;
+    const vueNode = e.target?.closest?.("[data-node-id]");
+    if (vueNode) {
+        // A press on a widget is the widget's, not a drag of the node.
+        if (e.target.closest(".lg-node-widgets, .erenodes-dom, button, input, textarea")) return null;
+        return graph.getNodeById(vueNode.dataset.nodeId);
+    }
+    if (e.target !== app.canvas.canvas) return null;
+    return graph.getNodeOnPos(...clientToGraph(e.clientX, e.clientY)) ?? null;
+}
+
+/** What a drag of `pressed` carries, in reading order: left to right, then top to bottom, which is how a chain is read. */
+function draggedNodes(pressed) {
+    const selected = [...(app.canvas?.selectedItems ?? [])];
+    if (!selected.includes(pressed)) return [pressed];
+    // A selection with anything else in it is a layout being moved, not prompt nodes being put away.
+    if (!selected.every(isPromptNode)) return null;
+    return selected.sort((a, b) => a.pos[0] - b.pos[0] || a.pos[1] - b.pos[1]);
+}
+
+function setNodesFaded(nodes, faded) {
+    if (nodeDrag.faded === faded) return;
+    nodeDrag.faded = faded;
+    fadeStyle.textContent = faded
+        ? nodes.map(node => `.lg-node[data-node-id="${CSS.escape(String(node.id))}"]`).join(", ") + " { opacity: 0.4 !important; }"
+        : "";
+    // The classic canvas draws a ghost node translucent; in Nodes 2.0 a ghost also stops pointer events, which would end the drag.
+    for (const node of nodes) {
+        if (vueElementOf(node)) continue;
+        if (faded) node.flags.ghost = true;
+        else delete node.flags.ghost;
+        if (node._ereDom?.el) node._ereDom.el.style.opacity = faded ? "0.4" : "";
+    }
+    app.canvas?.setDirty?.(true, true);
+}
+
+function clearNodeDropTarget() {
+    nodeDrag.placeholder?.remove();
+    nodeDrag.marker?.remove();
+    nodeDrag.target = null;
+    nodeDrag.link = null;
+    if (nodeDrag.nodes) setNodesFaded(nodeDrag.nodes, false);
+}
+
+/** Where a prompt node chains: its prefix input and its STRING output. */
+function chainPorts(node) {
+    const prefix = node.inputs?.findIndex(i => i.name === "prefix") ?? -1;
+    const output = node.outputs?.findIndex(o => o.type === "STRING") ?? -1;
+    return prefix >= 0 && output >= 0 ? { prefix, output } : null;
+}
+
+/** A STRING link into a prompt node's prefix, drawn on screen, whose midpoint is under the point and which none of `dragged` is an end of. Empty `dragged` for categories, which become prompt nodes on the drop. */
+function linkUnder(x, y, dragged = []) {
+    const canvas = app.canvas;
+    const graph = canvas?.graph;
+    if (!graph || !dragged.every(chainPorts)) return null;
+    const [gx, gy] = clientToGraph(x, y);
+    const reach = LINK_REACH_PX / canvas.ds.scale;
+    const own = new Set(dragged.map(node => String(node.id)));
+    for (const link of canvas.renderedPaths ?? []) {
+        if (link.type !== "STRING" || !link._pos || link.target_id == null) continue;
+        if (own.has(String(link.origin_id)) || own.has(String(link.target_id))) continue;
+        if (Math.hypot(link._pos[0] - gx, link._pos[1] - gy) > reach) continue;
+        if (graph.getNodeById(link.target_id)?.inputs?.[link.target_slot]?.name !== "prefix") continue;
+        return link;
+    }
+    return null;
+}
+
+function showLinkMarker(link) {
+    const marker = nodeDrag.marker ??= Object.assign(document.createElement("div"), { className: "ere-link-drop" });
+    const { scale, offset } = app.canvas.ds;
+    const rect = app.canvas.canvas.getBoundingClientRect();
+    marker.style.left = `${rect.left + (link._pos[0] + offset[0]) * scale}px`;
+    marker.style.top = `${rect.top + (link._pos[1] + offset[1]) * scale}px`;
+    if (!marker.isConnected) document.body.appendChild(marker);
+}
+
+/** Unlinked prompt nodes chained, in order, between the link's two ends. */
+function chainIntoLink(nodes, link) {
+    // Read before connecting: the first connect replaces this very link.
+    const { origin_id, origin_slot, target_id, target_slot } = link;
+    const graph = nodes[0]?.graph;
+    const origin = graph?.getNodeById(origin_id);
+    const target = graph?.getNodeById(target_id);
+    if (!origin || !target) return;
+    let from = origin;
+    let slot = origin_slot;
+    for (const node of nodes) {
+        const ports = chainPorts(node);
+        if (!ports) continue;
+        from.connect(slot, node, ports.prefix);
+        from = node;
+        slot = ports.output;
+    }
+    from.connect(slot, target, target_slot);
+}
+
+/** The nodes go between the link's two ends, in order, out of wherever they were chained before, whose gaps close as a delete would close them. */
+function nodesIntoLink(nodes, link) {
+    const graph = nodes[0]?.graph;
+    if (!graph || !nodes.every(chainPorts)) return;
+    beginUndoTransaction();
+    try {
+        for (const node of nodes) {
+            node.connectInputToOutput?.();
+            node.inputs.forEach((_, i) => node.disconnectInput(i));
+            node.outputs.forEach((_, i) => node.disconnectOutput(i));
+        }
+        chainIntoLink(nodes, link);
+        graph.setDirtyCanvas(true, true);
+        // Only links changed, which nothing of ours records, so the step is asked for here.
+        captureUndoState();
+    } finally {
+        endUndoTransaction();
+    }
+}
+
+/** The Composer whose categories are under the point, and where among them the nodes would land. */
+function composerUnder(x, y, dragged) {
+    for (const node of [...(app.canvas?.graph?._nodes ?? [])].reverse()) {
+        if (node.type !== "ErePromptComposer" || dragged.includes(node) || node.flags?.collapsed) continue;
+        const area = node._ereDom?.scroll;
+        const list = node._ereDom?.content?.querySelector(".ere-composer");
+        if (!area?.isConnected || !list) continue;
+        const r = area.getBoundingClientRect();
+        if (x < r.left || x > r.right || y < r.top || y > r.bottom) continue;
+        const items = [...list.children].filter(el => el.classList.contains("ere-composer-row"));
+        let index = items.length;
+        for (let i = 0; i < items.length; i++) {
+            const box = items[i].getBoundingClientRect();
+            if (y < box.top + box.height / 2) { index = i; break; }
+        }
+        return { node, list, items, index };
+    }
+    return null;
+}
+
+window.addEventListener("pointerdown", (e) => {
+    clearNodeDropTarget();
+    nodeDrag.node = null;
+    nodeDrag.nodes = undefined;
+    if (e.button !== 0 || rowDrag.active || isDragActive()) return;
+    const node = pressedNode(e);
+    if (!isPromptNode(node)) return;
+    nodeDrag.node = node;
+    nodeDrag.start = [...node.pos];
+    nodeDrag.startRect = vueElementOf(node)?.getBoundingClientRect() ?? null;
+}, true);
+
+/** Nodes 2.0 moves the element through its layout store, which can reach `node.pos` later than the screen. */
+function nodeHasMoved(node) {
+    if (node.pos[0] !== nodeDrag.start[0] || node.pos[1] !== nodeDrag.start[1]) return true;
+    const now = nodeDrag.startRect && vueElementOf(node)?.getBoundingClientRect();
+    return !!now && (Math.abs(now.left - nodeDrag.startRect.left) > 0.5 || Math.abs(now.top - nodeDrag.startRect.top) > 0.5);
+}
+
+window.addEventListener("pointermove", (e) => {
+    const node = nodeDrag.node;
+    if (!node || !nodeHasMoved(node)) return;
+    // Settled on the first move, once the press has had its say on the selection.
+    if (nodeDrag.nodes === undefined) nodeDrag.nodes = draggedNodes(node);
+    const nodes = nodeDrag.nodes;
+    if (!nodes) return;
+    const under = composerUnder(e.clientX, e.clientY, nodes);
+    const link = under ? null : linkUnder(e.clientX, e.clientY, nodes);
+    if (!under && !link) {
+        clearNodeDropTarget();
+        return;
+    }
+    if (link) {
+        nodeDrag.placeholder?.remove();
+        nodeDrag.target = null;
+        nodeDrag.link = link;
+        showLinkMarker(link);
+        setNodesFaded(nodes, true);
+        return;
+    }
+    nodeDrag.marker?.remove();
+    nodeDrag.link = null;
+    if (!nodeDrag.placeholder) {
+        nodeDrag.placeholder = document.createElement("div");
+        nodeDrag.placeholder.className = "ere-drop-placeholder ere-composer-placeholder";
+    }
+    // A folded category's height: what a node arrives as is a new row under its title.
+    nodeDrag.placeholder.style.height = `${under.items[0]?.querySelector(".ere-composer-head")?.offsetHeight || 28}px`;
+    under.list.insertBefore(nodeDrag.placeholder, under.items[under.index] ?? null);
+    nodeDrag.target = under.node;
+    nodeDrag.index = under.index;
+    setNodesFaded(nodes, true);
+}, { capture: true, passive: true });
+
+window.addEventListener("pointerup", () => {
+    const { nodes, target, index, link } = nodeDrag;
+    clearNodeDropTarget();
+    nodeDrag.node = null;
+    nodeDrag.nodes = undefined;
+    // After the renderer has finished its own drag end, which still refers to the nodes.
+    if (nodes && target) setTimeout(() => nodesIntoComposer(nodes, target, index), 0);
+    else if (nodes && link) setTimeout(() => nodesIntoLink(nodes, link), 0);
+}, true);
+
 // A pill drag that *rests* on a folded category opens it, rather than dropping into something the
 // user cannot see. Its pills are already rendered inside the hidden body, so dropping the class is
 // enough for the drag layer to find them — no re-render mid-drag.
@@ -573,23 +893,29 @@ function beginRowSelectPress(node, index, e) {
     }
 
     const base = selectionNode === node ? selectedRowIndices(node) : [];
-    const list = node._ereDom?.content?.querySelector(".ere-composer");
+    // A ctrl press that never moved is a plain ctrl+click: toggle this one.
+    sweepRows(node, e, base, () => toggleRowSelected(node, index, base));
+}
 
-    trackMarquee(e, {
+/** A rubber band over the headers from `from`, XOR against `base`. */
+function sweepRows(node, from, base, onClick = null) {
+    const list = node._ereDom?.content?.querySelector(".ere-composer");
+    trackMarquee(from, {
         items: () => [...(list?.children ?? [])]
             .filter(el => el.classList?.contains("ere-composer-row"))
             .map(el => ({ key: Number(el.dataset.ereRow), el })),
         base,
         onChange: (keys) => setRowSelection(node, [...keys]),
-        // A ctrl press that never moved is a plain ctrl+click: toggle this one.
-        onClick: () => {
-            const next = new Set(base);
-            if (next.has(index)) next.delete(index);
-            else next.add(index);
-            setRowSelection(node, [...next]);
-            selectionAnchor = index;
-        },
+        onClick,
     });
+}
+
+function toggleRowSelected(node, index, base = selectedRowIndices(node)) {
+    const next = new Set(base);
+    if (next.has(index)) next.delete(index);
+    else next.add(index);
+    setRowSelection(node, [...next]);
+    selectionAnchor = index;
 }
 
 /** Right-click inside a selection: what applies to all of them. */
@@ -615,9 +941,25 @@ function openSelectionMenu(node, indices, e) {
 // A press anywhere that is not a category header drops the selection, the way a press outside a tag area drops a pill selection.
 window.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
+    // A second finger is ComfyUI's pinch and pan: what the first one started here gives way, and the selection stays.
+    if (isSecondFinger(e)) {
+        abortRowTouch();
+        return;
+    }
     if (e.target?.closest?.(".ere-composer-head, .litecontextmenu")) return;
     clearRowSelection();
 }, true);
+
+function abortRowTouch() {
+    const p = rowDrag.pending;
+    if (p?.touch && p.added) setRowSelection(p.node, selectedRowIndices(p.node).filter(i => i !== p.rowIndex));
+    teardownRowDrag();
+    endRowSession();
+    // A node dragged onto a Composer or a link mid-pinch must not land in it when the fingers lift.
+    clearNodeDropTarget();
+    nodeDrag.node = null;
+    nodeDrag.nodes = undefined;
+}
 
 window.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || !selectionNode) return;
@@ -642,6 +984,7 @@ function consumeRowClick() {
 function endRowSession() {
     if (rowDrag.pending?.timer) clearTimeout(rowDrag.pending.timer);
     rowDrag.pending = null;
+    claimTouch(false);
     window.removeEventListener("pointermove", onRowPointerMove, true);
     window.removeEventListener("pointerup", onRowPointerUp, true);
     window.removeEventListener("pointercancel", onRowPointerCancel, true);
@@ -669,6 +1012,7 @@ function beginRowPress(node, rowIndex, rowEl, head, e) {
     if (e.target?.closest?.("button, .ere-switch")) return;
     // Otherwise the press selects the header text instead of dragging the row.
     e.preventDefault();
+    if (isTouch(e)) return beginRowTouchPress(node, rowIndex, rowEl, head, e);
 
     // Pressing a selected category carries the whole selection; pressing any other drops it.
     const indices = isRowSelected(node, rowIndex) ? selectedRowIndices(node) : [rowIndex];
@@ -686,6 +1030,52 @@ function beginRowPress(node, rowIndex, rowEl, head, e) {
     window.addEventListener("pointercancel", onRowPointerCancel, true);
     window.addEventListener("keydown", onRowKey, true);
     window.addEventListener("keyup", onRowKeyUp, true);
+}
+
+/** A touch press on a header: held, it selects the category; held and moved, it drags; moved at once, it sweeps the selection in selection mode. See TOUCH_SELECT_MS. */
+function beginRowTouchPress(node, rowIndex, rowEl, head, e) {
+    endRowSession();
+    const p = rowDrag.pending = {
+        node, rowIndex, indices: null, rowEl, head,
+        startX: e.clientX, startY: e.clientY, x: e.clientX, y: e.clientY,
+        alt: false, touch: true, held: false, added: false,
+    };
+    p.timer = setTimeout(() => {
+        if (rowDrag.pending !== p) return;
+        p.held = true;
+        claimTouch(true);
+        touchFeedback();
+        if (isRowSelected(node, rowIndex)) return;
+        setRowSelection(node, [...(selectionNode === node ? selectedRowIndices(node) : []), rowIndex]);
+        selectionAnchor = rowIndex;
+        p.added = true;
+    }, TOUCH_SELECT_MS);
+    window.addEventListener("pointermove", onRowPointerMove, true);
+    window.addEventListener("pointerup", onRowPointerUp, true);
+    window.addEventListener("pointercancel", onRowPointerCancel, true);
+}
+
+function onRowTouchMove(p, e) {
+    if (Math.hypot(e.clientX - p.startX, e.clientY - p.startY) <= TOUCH_SLOP) return;
+    if (!p.held) {
+        // Moved before the hold: a sweep in selection mode, otherwise a drag of this category at once, as a node is dragged.
+        if (selectionNode === p.node) {
+            endRowSession();
+            sweepRows(p.node, { clientX: p.startX, clientY: p.startY }, selectedRowIndices(p.node));
+            return;
+        }
+        claimTouch(true);
+        p.indices = [p.rowIndex];
+        clearRowSelection();
+        startRowDrag();
+        return;
+    }
+    // A category that was selected before the press carries the selection; one the hold just selected goes alone.
+    if (p.added) setRowSelection(p.node, selectedRowIndices(p.node).filter(i => i !== p.rowIndex));
+    const selected = isRowSelected(p.node, p.rowIndex);
+    p.indices = selected ? selectedRowIndices(p.node) : [p.rowIndex];
+    if (!selected) clearRowSelection();
+    startRowDrag();
 }
 
 function startRowDrag() {
@@ -756,11 +1146,19 @@ function updateRowDrag(x, y) {
         ?? under?.closest?.(".erenodes-dom")?.querySelector?.(".ere-composer");
     if (!list?._ereComposerNode) {
         d.placeholder.remove();
-        d.ghost.classList.add("ere-no-drop");
         d.target = null;
-        setRowCopyMode(d, false);
+        // Bare canvas takes the categories as prompt nodes of their own, chained into a link when on its midpoint.
+        d.toCanvas = overCanvas(x, y);
+        d.link = d.toCanvas ? linkUnder(x, y) : null;
+        if (d.link) showLinkMarker(d.link);
+        else nodeDrag.marker?.remove();
+        d.ghost.classList.toggle("ere-no-drop", !d.toCanvas);
+        setRowCopyMode(d, d.toCanvas && d.alt);
         return;
     }
+    d.toCanvas = false;
+    d.link = null;
+    nodeDrag.marker?.remove();
     d.ghost.classList.remove("ere-no-drop");
     // Alt copies, but only into another Composer: a copy in place would sit next to the category it came from with the same name and contents.
     setRowCopyMode(d, d.alt && list._ereComposerNode !== d.node);
@@ -789,7 +1187,8 @@ function onRowPointerMove(e) {
     if (!p) return;
     p.x = e.clientX;
     p.y = e.clientY;
-    if (Math.hypot(e.clientX - p.startX, e.clientY - p.startY) > MOVE_THRESHOLD) startRowDrag();
+    if (p.touch) onRowTouchMove(p, e);
+    else if (Math.hypot(e.clientX - p.startX, e.clientY - p.startY) > MOVE_THRESHOLD) startRowDrag();
 }
 
 function teardownRowDrag() {
@@ -797,6 +1196,7 @@ function teardownRowDrag() {
     if (!d) return null;
     d.ghost.remove();
     d.placeholder.remove();
+    nodeDrag.marker?.remove();
     for (const el of d.rowEls) el.classList.remove("ere-drag-source", "ere-drag-copy");
     document.body.classList.remove("ere-dragging-active");
     rowDrag.active = null;
@@ -806,10 +1206,18 @@ function teardownRowDrag() {
 }
 
 function onRowPointerUp(e) {
+    // A hold that selected ends in a click, which would fold the category it just selected.
+    if (rowDrag.pending?.touch && rowDrag.pending.held) swallowNextClick();
     const d = rowDrag.active;
     if (d) d.alt = e.altKey;
     teardownRowDrag();
     endRowSession();
+    if (d?.toCanvas) {
+        e.stopPropagation();
+        // Where the ghost was, not the pointer: the node lands where the category was seen, as a dragged node does.
+        rowsToNodes(d.node, d.indices, d.lastX - d.grabX, d.lastY - d.grabY, d.alt, d.link);
+        return;
+    }
     if (!d || !d.target) return;
     e.stopPropagation();
     moveRows(d.node, d.indices, d.target, d.index, d.alt && d.target !== d.node);
@@ -989,6 +1397,11 @@ function renderRow(node, row, index, slide) {
         // The press already answered a modified click — folding here would undo it.
         if (e.ctrlKey || e.metaKey || e.shiftKey) return;
         if (consumeRowClick()) return;
+        // On touch a Composer holding a selection is in selection mode: a tap picks, as Ctrl+click does.
+        if (lastPressWasTouch() && selectionNode === node) {
+            toggleRowSelected(node, index);
+            return;
+        }
         // A plain click drops the selection and folds just this one, as it does for a pill.
         clearRowSelection();
         toggleRow(node, index, "open");

@@ -47,3 +47,19 @@ LoRA trigger words are listed in the LoRA's quick edit; the selected ones are wr
 - **Esc** or a click outside clears the selection.
 
 A drag started on a selected pill carries the whole selection. Right-click a selected pill for **Strength**, which shifts every selected tag by the same amount and resets them all to 1 on a middle-click (tag groups have none), then **Enable**, **Disable**, **Toggle**, **Remove Selected**, **Save Selected as Tag Group** and **Export Selected (.json)**.
+
+## Touch screens
+
+Phones and tablets have no right button or Ctrl, so how long you hold stands in for them. The mouse works as described above.
+
+| Gesture | What it does |
+|---|---|
+| Tap | Toggle the tag on or off |
+| Hold (about half a second) | Select the pill and start selection mode |
+| Keep holding (about a second) | Quick edit, or the bulk menu for a pill in a selection |
+| Touch and move at once | Drag the pill |
+| Hold, then move | Drag the pill; a pill that was already selected drags the whole selection |
+
+In selection mode a tap adds or removes a pill, and a quick swipe draws a selection band, as Ctrl+drag does. Tap empty space in the tag area to leave selection mode. A second finger (ComfyUI's pinch and pan) cancels whatever the first one started.
+
+Composer category headers and sidebar entries work the same way, without the menu: a hold selects, a move drags, and in selection mode a tap picks. In the sidebar a quick swipe scrolls the list instead of dragging.

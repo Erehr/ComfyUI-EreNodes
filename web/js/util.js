@@ -198,6 +198,62 @@ export function bindImageDrop(pane, onFile) {
 export const HOLD_MS = 200;
 export const MOVE_THRESHOLD = 5;
 
+// Touch has no right button and no modifier keys, so time stands in for them: a hold selects, holding on opens the menu, and a drag needs a hold first, since a finger that moves at once is scrolling or sweeping a selection.
+// The select delay matches Android's long-press; the menu one leaves time to see the selection land and decide to drag instead.
+export const TOUCH_SELECT_MS = 400;
+export const TOUCH_MENU_MS = 1000;
+// A finger is never perfectly still.
+export const TOUCH_SLOP = 10;
+
+export const isTouch = (e) => e?.pointerType === "touch" || e?.pointerType === "pen";
+
+// Click events carry no pointer type in every browser, so the press that led to one is remembered.
+let lastPressTouch = false;
+// Fingers down, so a second one can end our gesture: two fingers are ComfyUI's pinch and pan, never ours.
+const fingers = new Set();
+window.addEventListener("pointerdown", (e) => {
+    lastPressTouch = isTouch(e);
+    if (lastPressTouch) fingers.add(e.pointerId);
+}, true);
+for (const type of ["pointerup", "pointercancel"]) {
+    window.addEventListener(type, (e) => fingers.delete(e.pointerId), true);
+}
+export const lastPressWasTouch = () => lastPressTouch;
+export const isSecondFinger = (e) => isTouch(e) && fingers.size > 1;
+
+export function touchFeedback() {
+    try { navigator.vibrate?.(15); } catch { /* not every browser allows it */ }
+}
+
+// While one of our touch gestures owns the finger (a hold, a drag, a sweep) the page must not scroll under it, and a non-passive touchmove is the one thing that can still stop a pan the element's touch-action allows.
+let touchClaimed = false;
+export function claimTouch(on) {
+    touchClaimed = on;
+}
+window.addEventListener("touchmove", (e) => {
+    if (touchClaimed && e.cancelable) e.preventDefault();
+}, { capture: true, passive: false });
+
+// A hold that selected or opened a menu still ends in a click, which would toggle what was just selected.
+let swallowClickUntil = 0;
+export function swallowNextClick() {
+    swallowClickUntil = performance.now() + 600;
+}
+window.addEventListener("click", (e) => {
+    if (performance.now() > swallowClickUntil) return;
+    swallowClickUntil = 0;
+    e.preventDefault();
+    e.stopPropagation();
+}, true);
+
+// The browser's own long-press menu (Android) would race ours. Ours is dispatched, so it is not trusted, and passes.
+window.addEventListener("contextmenu", (e) => {
+    if (!e.isTrusted || !lastPressTouch) return;
+    if (!e.target?.closest?.(".erenodes-dom, .ere-sidebar, #erenodes-hover-preview, .litecontextmenu")) return;
+    e.preventDefault();
+    e.stopPropagation();
+}, true);
+
 /**
  * A press that becomes a rubber band once it moves.
  * @param {object} opts
@@ -235,6 +291,7 @@ export function trackMarquee(e, { items, base = [], onChange, onClick, onMove, b
             band = document.createElement("div");
             band.className = `ere-marquee ${bandClass}`.trim();
             document.body.appendChild(band);
+            claimTouch(true);
             if (markBody) document.body.classList.add("ere-marquee-active");
         }
         if (band) { ev.preventDefault(); update(ev.clientX, ev.clientY); }
@@ -244,6 +301,8 @@ export function trackMarquee(e, { items, base = [], onChange, onClick, onMove, b
         window.removeEventListener("pointerup", onUp, true);
         window.removeEventListener("pointercancel", finish, true);
         window.removeEventListener("keydown", onKey, true);
+        window.removeEventListener("pointerdown", onFinger, true);
+        if (band) claimTouch(false);
         band?.remove();
         band = null;
         if (markBody) document.body.classList.remove("ere-marquee-active");
@@ -260,20 +319,29 @@ export function trackMarquee(e, { items, base = [], onChange, onClick, onMove, b
         finish();
         if (!banded) onClick?.();
     };
+    // A second finger is ComfyUI's pinch: the band gives way, as Escape would.
+    const onFinger = (ev) => {
+        if (!isSecondFinger(ev)) return;
+        if (band) onChange?.(new Set(baseKeys));
+        finish();
+    };
 
     window.addEventListener("pointermove", onPointerMove, true);
     window.addEventListener("pointerup", onUp, true);
     window.addEventListener("pointercancel", finish, true);
     window.addEventListener("keydown", onKey, true);
+    window.addEventListener("pointerdown", onFinger, true);
 }
 
 /**
  * A press that becomes a drag on hold or on movement, and a click otherwise.
  * `onDrag` receives the session; check `session.released` after every await, since a press can end while the payload is still being read.
+ * On touch `onHold` runs at TOUCH_SELECT_MS and a release after it is no click; a move after the hold is the drag, and a move before it is `onSwipe(ev, start)` (a list scrolls on it, so it is not a drag here).
  */
-export function trackPress(e, { onDrag, onClick, holdMs = HOLD_MS } = {}) {
+export function trackPress(e, { onDrag, onClick, onHold, onSwipe, holdMs = HOLD_MS } = {}) {
     const start = { x: e.clientX, y: e.clientY };
-    const session = { x: start.x, y: start.y, started: false, released: false };
+    const touch = isTouch(e);
+    const session = { x: start.x, y: start.y, started: false, released: false, held: false, touch };
 
     const begin = () => {
         if (session.started || session.released) return;
@@ -281,30 +349,54 @@ export function trackPress(e, { onDrag, onClick, holdMs = HOLD_MS } = {}) {
         clearTimeout(timer);
         onDrag?.(session);
     };
-    const timer = setTimeout(begin, holdMs);
+    const timer = touch
+        ? setTimeout(() => {
+            if (session.released) return;
+            session.held = true;
+            claimTouch(true);
+            touchFeedback();
+            onHold?.(session);
+        }, TOUCH_SELECT_MS)
+        : setTimeout(begin, holdMs);
 
     const onPointerMove = (ev) => {
         session.x = ev.clientX;
         session.y = ev.clientY;
         if (session.started) return;
-        if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) > MOVE_THRESHOLD) begin();
+        if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) <= (touch ? TOUCH_SLOP : MOVE_THRESHOLD)) return;
+        if (!touch || session.held) {
+            begin();
+            return;
+        }
+        detach();
+        onSwipe?.(ev, start);
     };
     const detach = () => {
         clearTimeout(timer);
+        if (session.held) claimTouch(false);
         session.released = true;
         window.removeEventListener("pointermove", onPointerMove, true);
         window.removeEventListener("pointerup", onUp, true);
         window.removeEventListener("pointercancel", detach, true);
+        window.removeEventListener("pointerdown", onFinger, true);
+    };
+    // A second finger is ComfyUI's pinch: the press gives way. A drag already started is the drag layer's to cancel.
+    const onFinger = (ev) => {
+        if (isSecondFinger(ev) && !session.started) detach();
     };
     const onUp = (ev) => {
         const dragging = session.started;
+        const held = session.held;
         detach();
-        if (!dragging) onClick?.(ev);
+        if (dragging) return;
+        if (held) swallowNextClick();
+        else onClick?.(ev);
     };
 
     window.addEventListener("pointermove", onPointerMove, true);
     window.addEventListener("pointerup", onUp, true);
     window.addEventListener("pointercancel", detach, true);
+    window.addEventListener("pointerdown", onFinger, true);
     return session;
 }
 

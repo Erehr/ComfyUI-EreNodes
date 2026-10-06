@@ -16,6 +16,8 @@ The Composer holds several categories in one node: character, outfit, background
 - **Collapse** a category by clicking its header. The layout is saved with the workflow. ≡ → **Expand All** / **Collapse All** handles every category.
 - **Bypass** a category with the switch on its header. Its tags stay exactly as they were and come back when it is switched on.
 - **Reorder** categories by dragging the header, or drag a category into another Composer. Hold **Alt** over the other Composer to copy it instead.
+- **Category to node**: drop a category on empty canvas and it becomes a prompt node of its layout (Cloud, Toggle, MultiSelect, Gallery or Multiline) with its title and tags. A switched-off category becomes a bypassed node. Hold **Alt** to copy it instead of moving it out.
+- **Node to category**: drag a prompt node by its title over a Composer's categories. When the drop placeholder appears and the node fades, release and the node becomes a category there. Its prefix input is reconnected to whatever its output fed, as deleting a node does. A Randomizer arrives as a MultiSelect category and an Extractor as a Cloud; a whole Composer brings all of its categories. A bypassed or muted node arrives switched off. Several selected prompt nodes go in together, left to right; a selection with any other node in it only moves. Prompt Lora Loader stays a node.
 
 ## Layouts per category
 

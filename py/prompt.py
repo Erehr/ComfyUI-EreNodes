@@ -76,6 +76,12 @@ class ErePromptRandomizer(ErePrompt):
             "tooltip": "Decides the tag arrangement. The same seed always produces "
                        "the same order and the same active tags.",
         })
+        # After the seed for the same reason: a workflow saved without it loads it at its default.
+        spec["optional"]["sequential"] = ("BOOLEAN", {
+            "default": False,
+            "tooltip": "Each seed enables the next tags in order instead of a random pick, "
+                       "so increment steps through them without repeats.",
+        })
         return spec
 
 

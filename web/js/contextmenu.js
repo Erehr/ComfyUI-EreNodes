@@ -965,6 +965,11 @@ export class TagContextMenu extends DynamicContextMenu {
         return generation === this.searchGeneration;
     }
 
+    /** Overridden where a search box gives a leading character its own meaning. */
+    parseQuery(query) {
+        return parseTagQuery(query);
+    }
+
     close(e = null, ignoreParent = false) {
         this.searchGeneration++;
         this.searchAbortController?.abort();
@@ -976,7 +981,7 @@ export class TagContextMenu extends DynamicContextMenu {
         this.currentWord = query;
         // renderItems leaves a focused box alone, so a reset to empty has to clear it here.
         if (!query && this.filterBox) this.filterBox.value = "";
-        const parsed = parseTagQuery(query);
+        const parsed = this.parseQuery(query);
         this.plainQuery = parsed.query;
         this.insertPrefix = parsed.insertPrefix;
         const { generation, signal } = this.beginSearch();
@@ -1450,11 +1455,14 @@ export class TagEditContextMenu extends DynamicContextMenu {
 
     show() {
         // This method creates the root element and sets up basic properties and listeners
+        // A rebuild, not the menu going away.
+        this.rebuilding = true;
         this.close(); // Close any existing menu
+        this.rebuilding = false;
         this.root = document.createElement("div");
         this.root.className = "litegraph litecontextmenu litemenubar-panel dark";
         this.root.close = (...args) => this.close(...args);
-        
+
         const { clientX: x, clientY: y } = this.event;
         const wide = this.tag.type === 'text';
         Object.assign(this.root.style, {
@@ -1735,7 +1743,10 @@ export class TagEditContextMenu extends DynamicContextMenu {
         if (nameInput && app.globalAutocompleteInstance.attachedElement === nameInput) {
              app.globalAutocompleteInstance.detach();
         }
+        const wasOpen = !!this.root;
         super.close();
+        // The drag layer highlights the pill being edited and drops the highlight on this (an event: it imports this module).
+        if (wasOpen && !this.rebuilding) window.dispatchEvent(new Event("erenodes:quick-edit-closed"));
     }
 
     updateTag() {

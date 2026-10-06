@@ -153,3 +153,15 @@
 .ere-surface .ere-composer-placeholder {
     width: 100%;
 }
+/* A prompt node dragged onto a link's midpoint goes between its ends: this ring on the marker is the cue that it will. */
+.ere-link-drop {
+    position: fixed;
+    z-index: 10000;
+    width: 22px;
+    height: 22px;
+    transform: translate(-50%, -50%);
+    border: 2px solid var(--primary-background);
+    border-radius: 50%;
+    box-shadow: 0 0 8px color-mix(in srgb, var(--primary-background) 60%, transparent);
+    pointer-events: none;
+}

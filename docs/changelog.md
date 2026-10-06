@@ -2,6 +2,10 @@
 
 [EreNodes](../README.md) › Changelog
 
+### Version 3.9
+- **Drag extended**: drag composer row to canvas to convert to prompt node, drag prompt node to composer to convert to a row, drag either to midpoint connection between prompt nodes to insert in middle.
+- **Touch support**
+
 ### Version 3.8
 - **Booru browser**: a sidebar tab searching Safebooru, Gelbooru and e621. Hover a post for its tags, click a tag to search for it, drag tags onto a node, or save them as a tag group. See [Booru browser](booru.md).
 

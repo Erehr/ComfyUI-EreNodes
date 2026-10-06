@@ -63,14 +63,21 @@ function mulberry32(seed) {
 /**
  * The arrangement a seed produces: which tags are on. The stored order is never touched — these nodes draw only their active tags, so randomizing is a question of which are enabled, and the order in `_tagDataJSON` stays the user's.
  * Two things come out of the one number, which is what lets a single native seed cover all four control modes: `seed / count` picks the enabled positions, `seed % count` rotates that selection — so `increment` slides every enabled tag one place along and `randomize` lands on a different selection entirely. How many are enabled is preserved.
+ * `sequential` instead enables the next `activeCount` tags in pill order for each step, so `increment` walks the list without repeats (comparing loras one by one) and `randomize` lands on a random window of it.
  */
-function arrangementForSeed(tags, seed) {
+function arrangementForSeed(tags, seed, sequential = false) {
     const count = tags.length;
     const activeCount = tags.filter(t => t.active).length;
     // Nothing to choose between: no tags, none enabled, or all of them. Each would otherwise burn a re-render per generation to produce what is already on screen.
     if (count < 2 || activeCount === 0 || activeCount === count) return tags;
 
     const value = normalizeSeed(seed);
+
+    if (sequential) {
+        // Modulo before multiplying: a 64-bit seed times activeCount would pass 2^53 and lose its low digits.
+        const start = ((value % count) * activeCount) % count;
+        return tags.map((tag, i) => ({ ...tag, active: (i - start + count) % count < activeCount }));
+    }
 
     // Partial Fisher-Yates over the positions: the first `activeCount` entries are a uniform sample without replacement, and it costs `activeCount` steps rather than shuffling the whole list to throw most of it away.
     const positions = [...Array(count).keys()];
@@ -652,7 +659,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         const tagData = getTags(node);
         if (tagData.length < 2) return;
         node._seedApplied = normalizeSeed(seed);
-        await setTags(node, arrangementForSeed(tagData, seed));
+        await setTags(node, arrangementForSeed(tagData, seed, !!node.widgets?.find(w => w.name === "sequential")?.value));
     };
 
     /** Re-lay the tags if the seed has moved. Idempotent by design, which is what lets the widget callback, `afterQueued` and the `execution_success` net all call it. */
