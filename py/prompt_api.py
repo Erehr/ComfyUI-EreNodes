@@ -8,6 +8,7 @@ import folder_paths
 from aiohttp import web
 from safetensors import safe_open
 from .prompt_csv import get_csv_path, invalidate_csv_caches, list_csv_files
+from .prompt_lora_stack import resolve_lora
 from .settings import get_erenodes_settings, save_erenodes_settings
 from . import paths
 from . import images
@@ -325,6 +326,10 @@ async def get_lora_metadata_handler(request):
 
     try:
         lora_path = folder_paths.get_full_path("loras", filename) or folder_paths.get_full_path("loras_old", filename)
+        # A lora written in a prompt (`<lora:name:1>`) has no extension and often no folder, as the loader accepts.
+        if not lora_path:
+            found = resolve_lora(filename)
+            lora_path = found and folder_paths.get_full_path("loras", found)
         if not lora_path:
             return web.json_response({"error": "Lora not found in any known folder"}, status=404)
 
@@ -334,22 +339,35 @@ async def get_lora_metadata_handler(request):
             return web.json_response({"error": "Forbidden path"}, status=403)
 
         # File reads (especially safetensors header reads on large files) are blocking - run them in a thread so the server event loop stays free.
-        tags = await asyncio.to_thread(_read_lora_tags, lora_path)
-        return web.json_response(tags)
+        words, civitai = await asyncio.to_thread(_read_lora_metadata, lora_path)
+        return web.json_response({"words": words, "civitai": civitai})
     except Exception as e:
         return web.json_response({"error": "Failed to read LoRA metadata: " + str(e)}, status=500)
 
 
-def _read_lora_tags(lora_path):
-    tags = []
+# Civitai page from the ids alone, never a URL taken from the file: civitai.com/models/<model>?modelVersionId=<version> resolves without the slug.
+def _civitai_url(civitai):
+    model, version = civitai.get('modelId'), civitai.get('id')
+    if not isinstance(model, int) or isinstance(model, bool):
+        return None
+    url = f"https://civitai.com/models/{model}"
+    return f"{url}?modelVersionId={version}" if isinstance(version, int) and not isinstance(version, bool) else url
 
-    # From companion JSON (<file>.metadata.json) -> civitai.trainedWords
+
+def _read_lora_metadata(lora_path):
+    tags = []
+    civitai_url = None
+
+    # From companion JSON (<file>.metadata.json), as written by LoRA Manager -> civitai.trainedWords and the model ids
     try:
         md_path = os.path.splitext(lora_path)[0] + ".metadata.json"
         if os.path.isfile(md_path):
             with open(md_path, 'r', encoding='utf-8') as jf:
                 data = json.loads(jf.read())
-            tags += data['civitai']['trainedWords']
+            civitai = data.get('civitai') or {}
+            if not data.get('civitai_deleted'):
+                civitai_url = _civitai_url(civitai)
+            tags += civitai.get('trainedWords') or []
     except Exception:
         pass
 
@@ -369,7 +387,7 @@ def _read_lora_tags(lora_path):
     except Exception:
         pass
 
-    return tags
+    return tags, civitai_url
 
 # Unified File Search API Endpoint
 
@@ -820,9 +838,25 @@ def _valid_bookmark(path):
     return paths.safe_rel(path) == path.replace('\\', '/').strip('/')
 
 
+# Tree file entries for the bookmarks that exist, so the sidebar can show them before the full tree walk finishes.
+def _bookmark_entries(bookmarks):
+    root = get_prompts_dir()
+    preview_exts = (*IMAGE_EXTENSIONS, *images.VIDEO_EXTENSIONS)
+    entries = []
+    for path in bookmarks:
+        target = safe_join(root, path)
+        if not target or not os.path.isfile(target + ".json"):
+            continue
+        folder, stem = os.path.split(target)
+        image = any(os.path.isfile(os.path.join(folder, stem + suffix + ext)) for suffix in ("", ".preview") for ext in preview_exts)
+        entries.append({"name": stem, "path": path, "extension": ".json", "type": "file", "image": image})
+    return entries
+
+
 @server.PromptServer.instance.routes.get("/erenodes/bookmarks")
 async def get_bookmarks_handler(request):
-    return web.json_response({"paths": _read_bookmarks()})
+    bookmarks = _read_bookmarks()
+    return web.json_response({"paths": bookmarks, "files": await asyncio.to_thread(_bookmark_entries, bookmarks)})
 
 
 @server.PromptServer.instance.routes.post("/erenodes/bookmarks")

@@ -2,7 +2,8 @@
 
 [EreNodes](../README.md) › LoRA loader
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="images/lora-loader-dark.webp"><source media="(prefers-color-scheme: light)" srcset="images/lora-loader-light.webp"><img src="images/lora-loader-dark.webp" alt="Prompt Lora Loader"></picture>
+![Prompt Lora Loader](images/lora-loader-light.webp#gh-light-mode-only)
+![Prompt Lora Loader](images/lora-loader-dark.webp#gh-dark-mode-only)
 
 LoRAs picked in EreNodes are written into the prompt as `<lora:name:strength>`. Three ways to apply them:
 

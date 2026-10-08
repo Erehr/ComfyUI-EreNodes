@@ -64,9 +64,9 @@ async function fetchJson(url) {
 async function loadTags(type, path, extension) {
     if (type === "group") return loadGroupTags(path, extension || ".json");
     if (type === "lora") {
-        const words = await fetchJson(
+        const words = (await fetchJson(
             `/erenodes/get_lora_metadata?filename=${encodeURIComponent(path + (extension || ""))}`
-        );
+        ))?.words;
         if (!Array.isArray(words)) return null;
         // Trained words are bare strings; wrap them so they render as tag pills.
         return [...new Set(words.map(w => String(w).trim()).filter(Boolean))]

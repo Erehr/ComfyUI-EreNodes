@@ -53,10 +53,15 @@
     --ere-stroke: var(--node-component-border, #444);
     --ere-fg: var(--component-node-foreground);
     --ere-fg-muted: var(--component-node-foreground-secondary);
+    --ere-fg-label: var(--node-component-slot-text, var(--ere-fg));
     --ere-radius: var(--radius-md, 6px);
     /* 88% lands on #2b2c2f on the default dark palette, and keeps that step on the others. */
     --ere-inset-bg: color-mix(in srgb, var(--ere-widget-bg) 88%, #000);
-    --ere-fill-text: color-mix(in srgb, var(--ere-widget-bg) 78%, #000);
+    /* A text pill one step darker than the body it sits on (a Composer category); a node body takes the toggle row's fill instead, below. */
+    --ere-fill-text-inset: color-mix(in srgb, var(--ere-widget-bg) 78%, #000);
+    --ere-fill-text: var(--ere-fill-text-inset);
+    /* Every one-line control is this tall: pills, toggle rows, toolbar buttons. Nodes 2.0 raises it to its own widget height. */
+    --ere-row-h: 20px;
     font: 12px var(--ere-pill-font);
     box-sizing: border-box;
     color: var(--ere-fg);
@@ -124,23 +129,60 @@
 .ere-surface .ere-pill.ere-text {
     flex-basis: 100%;
     height: auto;
-    min-height: 20px;
+    min-height: var(--ere-row-h);
     white-space: pre-wrap;
+    /* The strength at the right edge, level with the first line, as a toggle row has it. */
+    display: flex;
+    align-items: baseline;
+}
+.ere-surface .ere-pill.ere-text .ere-label {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.ere-surface .ere-pill.ere-text .ere-strength {
+    flex: 0 0 auto;
+    margin-left: auto;
+    padding-left: 8px;
+}
+/* Settings → EreNodes → Text pills on one line: on a node a text pill or text toggle row keeps one line and ends in an ellipsis. */
+.ere-text-oneline .erenodes-dom :is(.ere-pill.ere-text, .ere-toggle-row.ere-text) {
+    height: var(--ere-row-h);
+    align-items: center;
+}
+.ere-text-oneline .erenodes-dom :is(.ere-pill.ere-text, .ere-toggle-row.ere-text) .ere-label {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.ere-text-oneline .erenodes-dom .ere-toggle-row.ere-text .ere-switch {
+    align-self: center;
+    margin-top: 0;
 }
 .ere-surface .ere-toggle-row.ere-text {
     height: auto;
-    min-height: 20px;
+    min-height: var(--ere-row-h);
 }
 .ere-surface .ere-toggle-row.ere-text .ere-label {
     white-space: pre-wrap;
 }
-/* Beside the first line rather than centred on the paragraph: 4px puts a 10px switch on the
-   middle of an 18px line, which is where it sits in every other row. */
+/* Beside the first line rather than centred on the paragraph: the 10px switch on the middle of the first line, which is where it sits in every other row. */
 .ere-surface .ere-toggle-row.ere-text .ere-switch {
     align-self: flex-start;
-    margin-top: 4px;
+    margin-top: calc(var(--ere-row-h) / 2 - 6px);
 }
 
+/* On a node's own body the darker text pill reads like a disabled one, so it takes the toggle row's fill there. */
+.ere-surface.erenodes-dom {
+    --ere-fill-text: var(--ere-widget-bg);
+}
+/* A tag area on a node is never shorter than one row of tags, so an empty one is still something to drop on or click. */
+.erenodes-dom :is(.ere-flow, .ere-column) {
+    min-height: var(--ere-row-h);
+}
+/* The MultiSelect panel's row plus its own padding and border. */
+.erenodes-dom .ere-panel {
+    min-height: calc(var(--ere-row-h) + 12px);
+}
 /* Toggle rows: one per line, full width. */
 .ere-surface .ere-column {
     display: flex;
@@ -148,8 +190,8 @@
     gap: 5px;
 }
 .ere-surface .ere-btn {
-    width: 20px;
-    height: 20px;
+    width: var(--ere-row-h);
+    height: var(--ere-row-h);
     flex: 0 0 auto;
     padding: 0;
     border-radius: var(--ere-radius);
@@ -158,13 +200,19 @@
     align-items: center;
     justify-content: center;
     background: var(--ere-widget-bg);
-    color: var(--ere-fg-muted);
+    color: var(--ere-fg);
     cursor: pointer;
     user-select: none;
     font: inherit;
-    line-height: 18px;
+    line-height: calc(var(--ere-row-h) - 2px);
 }
-/* A button whose label is a word rather than a glyph: the 20px box is sized for one character. */
+
+.ere-surface .ere-composer-head .ere-btn {
+    border: none;
+}
+
+
+/* A button whose label is a word rather than a glyph: the square box is sized for one character. */
 .ere-surface .ere-btn.ere-btn-text {
     width: auto;
     padding: 0 8px;
@@ -208,8 +256,8 @@
     display: block;
 }
 .ere-surface .ere-pill {
-    height: 20px;
-    line-height: 18px;
+    height: var(--ere-row-h);
+    line-height: calc(var(--ere-row-h) - 2px);
     max-width: 100%;
     border-radius: var(--ere-radius);
     border: 1px solid transparent;
@@ -258,7 +306,7 @@
     display: flex;
     align-items: center;
     width: 100%;
-    height: 20px;
+    height: var(--ere-row-h);
     border-radius: var(--ere-radius);
     border: 1px solid var(--ere-stroke);
     background: var(--ere-widget-bg);
@@ -298,6 +346,42 @@
     padding: 0 8px 0 6px;
     white-space: nowrap;
     color: var(--ere-fg);
+}
+/* A toggle row's strength stepper (renderer.js attachStrengthStepper): the value drags, the arrows step. */
+.ere-surface .ere-stepper {
+    display: flex;
+    align-items: center;
+    align-self: stretch;
+}
+.ere-surface .ere-stepper-value {
+    min-width: 5ch;
+    padding: 0 4px;
+    text-align: center;
+    cursor: ew-resize;
+}
+.ere-surface .ere-step {
+    width: 18px;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--ere-fg);
+    opacity: .7;
+    cursor: pointer;
+    font: inherit;
+    line-height: 1;
+}
+.ere-surface .ere-step:hover {
+    opacity: 1;
+}
+/* The Nodes 2.0 icon is hidden here and a glyph drawn instead; text presentation, not the emoji some platforms draw for a bare triangle. */
+.ere-surface .ere-step > i {
+    display: none;
+}
+.ere-surface .ere-step-dec::before {
+    content: "\25C0\FE0E";
+}
+.ere-surface .ere-step-inc::before {
+    content: "\25B6\FE0E";
 }
 .ere-surface .ere-switch {
     position: relative;
@@ -428,7 +512,7 @@
 }
 .ere-surface .ere-split-tags {
     align-content: flex-start;
-    min-height: 20px;
+    min-height: var(--ere-row-h);
 }
 .ere-surface .ere-extract-pane {
     position: relative;
@@ -578,4 +662,73 @@
 .litecontextmenu textarea.comfy-context-menu-filter {
     background: var(--comfy-input-bg);
     color: var(--input-text);
+}
+
+/* --- Renderer-specific look ------------------------------------------- */
+/* On a node only: the sidebar and menu previews keep the shared look above.
+   Nodes 2.0 mounts the widget inside its .lg-node; the classic canvas floats it in a .dom-widget.
+   A missing-file border is kept in both. */
+
+/* Nodes 2.0: borderless, on the native widget height (h-6). */
+.lg-node .ere-surface {
+    --ere-row-h: 24px;
+}
+.lg-node .ere-surface :is(.ere-btn, .ere-toggle-row, .ere-panel, .ere-tile, .ere-pill):not(.ere-missing) {
+    border-color: transparent;
+}
+.lg-node .ere-surface .ere-btn.ere-btn-on {
+    background: var(--component-node-widget-background-selected, var(--ere-widget-bg-hover));
+}
+.lg-node .ere-surface .ere-drop-placeholder {
+    border-color: transparent;
+}
+/* The native number input (ScrubableNumberInput.vue): square buttons the row's full height, muted icons at 14px, a fill on hover, the value in Inter at text-xs. The last button sits at the row's edge. */
+.lg-node .ere-surface .ere-toggle-row .ere-meta {
+    align-self: stretch;
+    align-items: center;
+    padding-right: 0;
+}
+.lg-node .ere-surface .ere-step {
+    width: auto;
+    height: 100%;
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted-foreground, var(--ere-fg-muted));
+    opacity: 1;
+    font-size: 14px;
+}
+.lg-node .ere-surface .ere-step:hover {
+    background: var(--ere-widget-bg-hover);
+}
+.lg-node .ere-surface .ere-step > i {
+    display: inline-block;
+}
+.lg-node .ere-surface .ere-step::before {
+    content: none;
+}
+/* The count beside it in the buttons' muted colour; its brackets sit low in the monospace face, so it is lifted to look centred. */
+.lg-node .ere-surface .ere-toggle-row .ere-badge {
+    margin-top: -2px;
+    color: var(--muted-foreground, var(--ere-fg-muted));
+}
+.lg-node .ere-surface .ere-stepper-value {
+    min-width: 6ch;
+    padding: 0 8px;
+    font-family: Inter, Arial, sans-serif;
+    font-size: var(--text-xs, 12px);
+}
+
+/* Classic canvas: the shared look on a darker fill, the one litegraph gives a disabled widget (its widget colour at half strength over the node).
+   The colours come from the active palette (syncCanvasWidgetColors), with the default palette's as fallback. */
+.dom-widget .ere-surface {
+    --ere-canvas-bg: color-mix(in srgb, var(--ere-lg-widget-bg, #222) 50%, var(--ere-lg-node-bg, #353535));
+}
+.dom-widget .ere-surface :is(.ere-btn, .ere-toggle-row, .ere-panel, .ere-tile) {
+    background: var(--ere-canvas-bg);
+}
+.dom-widget .ere-surface :is(.ere-btn, .ere-toggle-row, .ere-tile):hover,
+.dom-widget .ere-surface .ere-btn.ere-btn-on {
+    background: color-mix(in srgb, var(--ere-canvas-bg) 88%, var(--contrast-mix-color, #fff));
 }

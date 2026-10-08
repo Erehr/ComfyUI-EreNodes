@@ -2,7 +2,8 @@
 
 [EreNodes](../README.md) › Autocomplete
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="images/autocomplete-dark.webp"><source media="(prefers-color-scheme: light)" srcset="images/autocomplete-light.webp"><img src="images/autocomplete-dark.webp" alt="Autocomplete"></picture>
+![Autocomplete](images/autocomplete-light.webp#gh-light-mode-only)
+![Autocomplete](images/autocomplete-dark.webp#gh-dark-mode-only)
 
 Tag suggestions in every textarea, in the + search of prompt nodes, and in the sidebar search boxes.
 
@@ -42,7 +43,8 @@ Settings → EreNodes → Autocomplete → **Alias handling**:
 
 ## LoRAs, embeddings and tag groups inline
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="images/autocomplete-files-dark.webp"><source media="(prefers-color-scheme: light)" srcset="images/autocomplete-files-light.webp"><img src="images/autocomplete-files-dark.webp" alt="File browser"></picture>
+![File browser](images/autocomplete-files-light.webp#gh-light-mode-only)
+![File browser](images/autocomplete-files-dark.webp#gh-dark-mode-only)
 
 Type `<lora:` or `lora:`, `embedding:` or `group:` and the menu switches to a file browser with folders and preview images. The pick is written as `<lora:name:1.0>`, `embedding:name`, or, for a tag group, a pill in tag nodes and its tags in a textarea.
 

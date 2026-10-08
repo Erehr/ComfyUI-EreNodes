@@ -288,6 +288,11 @@ export class GlobalAutocomplete {
         // Only the prompt's own autocomplete: a caller with its own menu (the sidebar search) is not writing a prompt.
         const file = !this.attachOptions?.menuClass && parseFilePrefix(currentWord);
         if (file) {
+            // Only a prefix being typed opens the browser: with the caret inside an existing token (a lora's strength being edited) it would cut the token in half.
+            if (/^[^,;"|}()\n\s]/.test(this.helper.getAfterCursor() ?? "")) {
+                this.closeMenu();
+                return;
+            }
             this.openFileBrowser(file.type, file.query);
             return;
         }

@@ -2,7 +2,8 @@
 
 [EreNodes](../README.md) › Booru browser
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="images/booru-dark.webp"><source media="(prefers-color-scheme: light)" srcset="images/booru-light.webp"><img src="images/booru-dark.webp" alt="Booru browser"></picture>
+![Booru browser](images/booru-light.webp#gh-light-mode-only)
+![Booru browser](images/booru-dark.webp#gh-dark-mode-only)
 
 The sidebar's Booru tab searches image boards for posts and hands you their tags. It is a tag source, not a downloader: only thumbnails are loaded.
 

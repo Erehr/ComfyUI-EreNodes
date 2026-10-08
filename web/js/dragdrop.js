@@ -1,7 +1,8 @@
 import { app } from "../../../scripts/app.js";
 import { beginUndoTransaction, endUndoTransaction, loadStyle, insertTagsAsText, caretIndexFromPoint, getElementOrCursorCoords, getTags, setTags, textareaOf, toast, HOLD_MS, MOVE_THRESHOLD, TOUCH_SELECT_MS, TOUCH_MENU_MS, TOUCH_SLOP, isTouch, lastPressWasTouch, touchFeedback, swallowNextClick, claimTouch, isSecondFinger } from "./util.js";
 import { ActionContextMenu, stepStrength } from "./contextmenu.js";
-import { accentForTags, TYPE_FILL, DEFAULT_FILL, injectTagStyles, renderTagPill } from "./tagview.js";
+import { accentForTags, TYPE_FILL, DEFAULT_FILL, injectTagStyles, renderTagPill, rowHeight } from "./tagview.js";
+import { parseClipboardTags } from "./parser.js";
 
 const PILL_SELECTOR = ".ere-pill, .ere-toggle-row, .ere-tile";
 const SCROLL_EDGE = 24;       // auto-scroll band inside a scrollable tag area
@@ -750,8 +751,8 @@ function updateDrag(x, y) {
         d.replace = false;
         d.dropIndex = null;
         d.lastKey = null;
-        setCopyMode(d, d.alt && !d.variants && !!d.sourceNode
-            && textZone._ereTextNode !== d.sourceNode);
+        setCopyMode(d, d.alt && !d.variants
+            && (d.sourceNode ? textZone._ereTextNode !== d.sourceNode : !!d.origin?.textSource));
         return;
     }
     setTextTarget(d, null);
@@ -921,12 +922,23 @@ async function dropIntoText(d) {
     // Text has no on/off, so a disabled pill dropped here arrives enabled. Emitting nothing for it
     // would make the drop look broken, and refusing the drop loses a tag the user aimed at a field.
     const tags = dragged.map(tag => ({ ...tag, active: true }));
+    const source = !d.alt ? d.origin?.textSource : null;
+    let at = d.textIndex;
+    // Back into its own field: onto itself is nothing, anywhere else the text is cut first and the drop point moves with what was cut.
+    if (source?.el === el) {
+        if (at > source.start && at < source.end) return;
+    }
 
     beginUndoTransaction();
     try {
+        if (source?.el === el) {
+            const cut = cutTextSource(source);
+            if (cut) at = at <= cut.start ? at : at >= cut.end ? at - (cut.end - cut.start) : cut.start;
+        }
         const inserted = await insertTagsAsText(
-            el, tags, node?.properties?._tagSeparator, d.textIndex);
+            el, tags, node?.properties?._tagSeparator, at);
         if (!inserted) return;
+        if (source && source.el !== el) cutTextSource(source);
         // A drag out of a node is a move unless Alt says otherwise; an external payload has no source.
         if (d.sourceNode && !d.alt) {
             const moved = new Set(d.indices);
@@ -936,6 +948,68 @@ async function dropIntoText(d) {
     } finally {
         endUndoTransaction();
     }
+}
+
+/**
+ * Selected text dragged out of one of our textareas (Prompt Multiline, a Composer multiline row) leaves as tags, parsed as a paste would be.
+ * The press is taken before the browser sees it: its own text drag goes nowhere in ComfyUI, and cancelling that hands the held button back to text selection, which then follows the pointer.
+ * A press that never moves stays a click, and places the caret where it landed.
+ * @returns {boolean} true when the press was taken.
+ */
+function beginTextSelectionPress(e) {
+    const el = e.target;
+    if (e.button !== 0 || isTouch(e) || el?.tagName !== "TEXTAREA" || el !== document.activeElement || !textDropZoneAt(el)) return false;
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    if (start == null || end <= start) return false;
+    const at = caretIndexFromPoint(el, e.clientX, e.clientY);
+    if (at < start || at > end) return false;
+    const text = el.value.slice(start, end);
+    const tags = parseClipboardTags(text);
+    if (!tags.length) return false;
+    e.preventDefault();
+
+    const x0 = e.clientX;
+    const y0 = e.clientY;
+    const done = () => {
+        window.removeEventListener("pointermove", onMove, true);
+        window.removeEventListener("pointerup", onUp, true);
+        window.removeEventListener("pointercancel", done, true);
+    };
+    const onMove = (ev) => {
+        if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < MOVE_THRESHOLD) return;
+        done();
+        // The label also sizes the drop placeholder in a tag node.
+        const label = tags.length === 1 ? tags[0].name : `${tags.length} tags`;
+        startExternalDrag({ tags, label, x: ev.clientX, y: ev.clientY, origin: { textSource: { el, start, end, text } } });
+    };
+    const onUp = () => {
+        done();
+        el.setSelectionRange(at, at);
+    };
+    window.addEventListener("pointermove", onMove, true);
+    window.addEventListener("pointerup", onUp, true);
+    window.addEventListener("pointercancel", done, true);
+    return true;
+}
+
+/**
+ * Take a dragged selection out of its field, with one separator beside it, so "a, b, c" loses "b, " rather than leaving "a, , c".
+ * @returns {{start: number, end: number}|null} the range removed, in the field's coordinates before the cut; null when the text has moved since the drag began.
+ */
+function cutTextSource({ el, start, end, text }) {
+    const value = el.value;
+    if (value.slice(start, end) !== text) return null;
+    const after = /^\s*,\s*/.exec(value.slice(end));
+    const before = /\s*,\s*$/.exec(value.slice(0, start));
+    if (after) end += after[0].length;
+    else if (before) start -= before[0].length;
+    // Mid-sentence: one of the two spaces either side goes with it.
+    else if (/\s$/.test(value.slice(0, start)) && /^\s/.test(value.slice(end))) end += 1;
+    el.setRangeText("", start, end, "start");
+    // The widget (or the Composer row) stores its value off this event, as typing does.
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    return { start, end };
 }
 
 /** Track (and highlight) a sidebar folder row as the drop target. */
@@ -1067,7 +1141,7 @@ function sizePlaceholder(d, targetNode, container, mode) {
 
     if (container.dataset.ereLayout === "column") {
         ph.style.width = "";                 // flex column stretches it full width
-        ph.style.height = `${PILL_ROW_H}px`;
+        ph.style.height = `${rowHeight(container)}px`;
         return;
     }
 
@@ -1081,7 +1155,7 @@ function sizePlaceholder(d, targetNode, container, mode) {
     // wrong thing entirely — it asks how wide the words are.
     if (draggedTags(d).some(tag => tag?.type === "text")) {
         ph.style.width = "100%";
-        ph.style.height = `${PILL_ROW_H}px`;
+        ph.style.height = `${rowHeight(container)}px`;
         return;
     }
 
@@ -1091,8 +1165,8 @@ function sizePlaceholder(d, targetNode, container, mode) {
     probe.style.visibility = "hidden";
     probe.textContent = d.label;
     container.appendChild(probe);
-    ph.style.width = `${probe.offsetWidth || PILL_ROW_H}px`;
-    ph.style.height = `${probe.offsetHeight || PILL_ROW_H}px`;
+    ph.style.width = `${probe.offsetWidth || rowHeight(container)}px`;
+    ph.style.height = `${probe.offsetHeight || rowHeight(container)}px`;
     probe.remove();
 }
 
@@ -1235,6 +1309,7 @@ async function dropExternal(d) {
             targetTags.splice(insertAt, 0, ...accepted);
             // Not selected afterwards: tags brought in from outside the graph were never a selection, unlike a set moved between nodes.
             await setTags(d.target, targetTags);
+            if (!d.alt && d.origin?.textSource) cutTextSource(d.origin.textSource);
         } finally {
             endUndoTransaction();
         }
@@ -1340,7 +1415,11 @@ function selectionSubset(node) {
 
 // The pill quick edit is open on, highlighted for as long as the menu is up.
 let editing = null;
+// A right-click on a pill while its quick edit is open replaces the menu, and the old one closes only once the new one shows.
+let openEdits = 0;
 window.addEventListener("erenodes:quick-edit-closed", () => {
+    if (--openEdits > 0) return;
+    openEdits = 0;
     const e = editing;
     editing = null;
     // Unless the selection has moved on since (a tag picked in another node), it was only ever the edit's.
@@ -1359,6 +1438,7 @@ export function handlePillContextMenu(node, index, e, anchorEvent) {
     if (!selected.includes(index) || selected.length < 2) {
         selectIndices(node, [index]);
         editing = { node, index };
+        openEdits++;
         return false;
     }
 
@@ -1423,6 +1503,7 @@ function onGlobalPointerDown(e) {
     }
     // Menus live outside the widget, so a press in one reads as "somewhere else" and would clear the selection out from under the bulk action being clicked.
     if (e.target?.closest?.(".litecontextmenu")) return;
+    if (beginTextSelectionPress(e)) return;
 
     const root = rootOf(e.target);
     const node = root?._ereNode;
@@ -1432,6 +1513,17 @@ function onGlobalPointerDown(e) {
     // Anywhere in a widget counts, including areas that are not tag areas (a Composer header).
     if (root && e.button === 0) {
         try { window.LiteGraph?.currentMenu?.close?.(); } catch {}
+    }
+    // A toggle row's strength stepper is a control of its own (renderer.js), not a press on the pill.
+    // Its middle-click reset is handled here, at the window: Nodes 2.0 takes a middle press for panning before it reaches the widget.
+    const stepper = e.target?.closest?.(".ere-stepper");
+    if (stepper) {
+        if (e.button === 1) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            stepper._ereReset?.();
+        }
+        return;
     }
 
     if (!root || !node || !DND_MODES.has(mode)) {

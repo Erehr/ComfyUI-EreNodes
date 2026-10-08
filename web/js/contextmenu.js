@@ -26,10 +26,12 @@ async function hasPreviewImage(tag) {
 }
 
 // Menus size to their content between these bounds.
-const MENU_MIN_WIDTH = 160;
-const MENU_MAX_WIDTH = 320;
+const MENU_MIN_WIDTH = 180;
+const MENU_MAX_WIDTH = 360;
+// Wider than other menus, so a short tag's quick edit does not come out narrower than a lora's with its trigger words.
+const QUICK_EDIT_MIN_WIDTH = 180;
 // Editing a sentence in a 320px column is editing it through a letterbox.
-const TEXT_MENU_WIDTH = 460;
+const TEXT_MENU_WIDTH = 480;
 
 // A group pill's `mode`: absent is "file", the tags as the group file has them on and off.
 const GROUP_MODES = [
@@ -1432,7 +1434,14 @@ export class TagEditContextMenu extends DynamicContextMenu {
                 callback: () => this.setPreview()
             });
         }
-        
+
+        if (this.civitaiUrl) {
+            this.options.push({
+                name: "View on CivitAI",
+                callback: () => { window.open(this.civitaiUrl, "_blank", "noopener"); this.close(); }
+            });
+        }
+
         if (this.tag.type === 'group') {
             this.options.push({
                 name: "Unpack",
@@ -1469,7 +1478,7 @@ export class TagEditContextMenu extends DynamicContextMenu {
             left: `${x}px`,
             top: `${y}px`,
             width: 'auto',
-            minWidth: `${wide ? TEXT_MENU_WIDTH : MENU_MIN_WIDTH}px`,
+            minWidth: `${wide ? TEXT_MENU_WIDTH : QUICK_EDIT_MIN_WIDTH}px`,
             maxWidth: `${wide ? TEXT_MENU_WIDTH : MENU_MAX_WIDTH}px`,
         });
 
@@ -1632,8 +1641,9 @@ export class TagEditContextMenu extends DynamicContextMenu {
     async fetchInfoPanelContent() {
         try {
             if (this.tag.type === 'lora') {
-                const words = await getCache(`/erenodes/get_lora_metadata?filename=${encodeURIComponent(this.tag.name + this.tag.extension)}`);
-                return this.processLoraMetadata(words);
+                const meta = await getCache(`/erenodes/get_lora_metadata?filename=${encodeURIComponent(this.tag.name + (this.tag.extension || ""))}`);
+                this.civitaiUrl = meta?.civitai;
+                return this.processLoraMetadata(meta?.words);
             } else if (this.tag.type === 'group') {
                 return this.processGroupTags(await loadGroupTags(this.tag.name, this.tag.extension));
             }

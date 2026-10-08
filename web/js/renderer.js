@@ -1,9 +1,9 @@
 import { app } from "../../../scripts/app.js";
 import { api } from "../../../scripts/api.js";
 import { attachPillDrag, markDropZone, markTextDropZone, injectDragStyles, installDragGlobals, pruneSelection,handlePillSelectClick,handlePillContextMenu,consumeDragClick } from "./dragdrop.js";
-import { SURFACE_CLASS, injectTagStyles, renderTagPill, renderToggleRowEl, renderTagTile } from "./tagview.js";
+import { SURFACE_CLASS, injectTagStyles, renderTagPill, renderToggleRowEl, renderTagTile, rowHeight } from "./tagview.js";
 import { parseTags, byTagName } from "./parser.js";
-import { ActionContextMenu } from "./contextmenu.js";
+import { ActionContextMenu, stepStrength } from "./contextmenu.js";
 import { isKnownMissing, ensureChecked, textareaOf, installTooltips, getSetting, getTags, setTags, bindImageDrop } from "./util.js";
 
 // Undo/redo restores graph state and fires "graphChanged", but Vue keeps the existing DOM widget instances, so nothing repaints on its own.
@@ -324,9 +324,71 @@ export function renderPill(node, tag, index, mode) {
 }
 
 function renderToggleRow(node, tag, index, slide) {
-    const row = renderToggleRowEl(tag, { slide });
+    const row = renderToggleRowEl(tag, { slide, stepper: true });
     attachPillEvents(node, row, tag, index, "toggle");
+    attachStrengthStepper(node, row, index);
     return markIfMissing(row, tag);
+}
+
+/** The toggle layout's spare width, used the way Power Lora Loader uses it: the strength as a stepper, as in quick edit. */
+function attachStrengthStepper(node, row, index) {
+    const stepper = row.querySelector(".ere-stepper");
+    if (!stepper) return;
+    const current = () => getTags(node)[index]?.strength ?? 1;
+    // 1.0 is the default and is not stored, as quick edit leaves it.
+    const withStrength = (value) => {
+        const tags = getTags(node);
+        if (!tags[index]) return null;
+        if (value === 1) delete tags[index].strength;
+        else tags[index].strength = value;
+        return tags;
+    };
+    const setStrength = (value) => {
+        const tags = withStrength(value);
+        if (tags) setTags(node, tags);
+    };
+    // Ours alone: a press here must not toggle the row, open quick edit or reach the node.
+    for (const type of ["click", "dblclick", "contextmenu"]) stepper.addEventListener(type, (e) => e.stopPropagation());
+    // Middle-click: the drag layer's window listener calls this (dragdrop.js onGlobalPointerDown).
+    stepper._ereReset = () => setStrength(1);
+    stepper.addEventListener("pointerdown", (e) => {
+        e.stopPropagation();
+        if (e.button !== 0) return;
+        e.preventDefault();
+        const step = e.target.closest(".ere-step");
+        if (step) {
+            const sign = step.classList.contains("ere-step-dec") ? -1 : 1;
+            setStrength(stepStrength(current(), sign * (e.shiftKey ? 0.1 : 0.05)));
+            return;
+        }
+        // Mid-drag only the stored value and the number change: re-rendering on every step swaps the row out from under the cursor, and its hover fill flickers.
+        // The release renders once, which is also the one undo step.
+        const valueEl = stepper.querySelector(".ere-stepper-value");
+        const startX = e.clientX;
+        const start = current();
+        let steps = 0;
+        let moved = false;
+        const onMove = (ev) => {
+            const next = Math.round((ev.clientX - startX) / 5);
+            if (next === steps) return;
+            steps = next;
+            const value = stepStrength(start, next * 0.05);
+            const tags = withStrength(value);
+            if (!tags) return;
+            moved = true;
+            node.properties._tagDataJSON = JSON.stringify(tags);
+            valueEl.textContent = value.toFixed(2);
+        };
+        const onUp = () => {
+            window.removeEventListener("pointermove", onMove, true);
+            window.removeEventListener("pointerup", onUp, true);
+            window.removeEventListener("pointercancel", onUp, true);
+            if (moved) setTags(node, getTags(node));
+        };
+        window.addEventListener("pointermove", onMove, true);
+        window.addEventListener("pointerup", onUp, true);
+        window.addEventListener("pointercancel", onUp, true);
+    });
 }
 
 function renderGalleryTile(node, tag, index, pillW, pillH) {
@@ -526,8 +588,8 @@ export function attachTagDomWidget(node, mode, layoutOf = null) {
         scroll.style.display = "none";
         el.style.gap = "0";
         const margin = widget.margin ?? 10;
-        // Slot height must include DomWidget margins or the 20px button clips.
-        const barH = () => (toolbar.offsetHeight || 20) + margin * 2;
+        // Slot height must include DomWidget margins or the button clips.
+        const barH = () => (toolbar.offsetHeight || rowHeight(el)) + margin * 2;
         if (widget.options) {
             widget.options.getMinHeight = () => barH();
             widget.options.getMaxHeight = () => barH();
@@ -561,7 +623,6 @@ export function attachTagDomWidget(node, mode, layoutOf = null) {
     }
 
     // Fit (default) locks height to content and leaves width free; Scroll lets the user size the node and scrolls the pills under a sticky toolbar.
-    const PILL_ROW_H = 20;
     const scrollEnabled = () =>
         getSetting("EreNodes.Nodes.TagAreaScroll", false);
 
@@ -569,12 +630,12 @@ export function attachTagDomWidget(node, mode, layoutOf = null) {
     const oneRowHeight = () => {
         if (mode === "multiline") return 0;
         if (mode === "gallery") return node.properties?._tagImageHeight ?? 100;
-        return PILL_ROW_H;
+        return rowHeight(el);
     };
 
     const scrollMinHeight = () => {
         const margin = widget.margin ?? 10;
-        const toolH = toolbar.offsetHeight || PILL_ROW_H;
+        const toolH = toolbar.offsetHeight || rowHeight(el);
         const rowH = oneRowHeight();
         // Toolbar + one row only: including the flex gap left the next row peeking.
         return toolH + rowH + margin * 2;
@@ -675,7 +736,7 @@ export function attachTagDomWidget(node, mode, layoutOf = null) {
             const bodyH = content.offsetHeight || 0;
             const bodyNatural = toolH + bodyH + (toolH && bodyH ? 5 : 0);
             const fitting = performance.now() < fitUntil;
-            const minScroll = oneRowHeight() || PILL_ROW_H;
+            const minScroll = oneRowHeight() || rowHeight(el);
             const scrollBudget = Math.max(minScroll, available - toolH - (toolH && bodyH ? 5 : 0));
             const shrunk = scrolls && !fitting && available > scrollMinHeight() && available < bodyNatural - 2;
             const maxH = shrunk ? `${Math.round(scrollBudget)}px` : "";

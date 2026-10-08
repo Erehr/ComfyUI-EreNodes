@@ -2,7 +2,8 @@
 
 [EreNodes](../README.md) › Tag pills
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="images/tag-pills-drag-dark.webp"><source media="(prefers-color-scheme: light)" srcset="images/tag-pills-drag-light.webp"><img src="images/tag-pills-drag-dark.webp" alt="Select them, drag them, drop them"></picture>
+![Select them, drag them, drop them](images/tag-pills-drag-light.webp#gh-light-mode-only)
+![Select them, drag them, drop them](images/tag-pills-drag-dark.webp#gh-dark-mode-only)
 
 Every prompt node, the sidebar previews and the Booru browser draw tags as the same pills, and they all follow the same rules.
 
@@ -22,8 +23,10 @@ LoRA, embedding and tag group pills get a red border when the file they name is 
 
 - **Click** a pill to toggle it. Disabled pills stay in the node but are not written to the prompt.
 - **Right-click** for quick edit: rename the tag or pick another file, set the strength (with the − / + buttons, by dragging across the value, or with Left/Right; middle-click resets it to 1), see a LoRA's trigger words or a group's contents, set a preview image, **Unpack** a group into its tags, or **Remove** it.
+- **Toggle rows** (Prompt Toggle, Prompt Lora Loader, Composer Toggle categories) carry the strength control on the row itself: click the arrows (− / + in Nodes 2.0) to step it, Shift+click for 0.1, drag across the value, middle-click to reset it to 1.
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="images/tag-pills-quick-edit-dark.webp"><source media="(prefers-color-scheme: light)" srcset="images/tag-pills-quick-edit-light.webp"><img src="images/tag-pills-quick-edit-dark.webp" alt="Quick edit"></picture>
+![Quick edit](images/tag-pills-quick-edit-light.webp#gh-light-mode-only)
+![Quick edit](images/tag-pills-quick-edit-dark.webp#gh-dark-mode-only)
 
 LoRA trigger words are listed in the LoRA's quick edit; the selected ones are written after the LoRA. The eye button on a node shows or hides its disabled tags.
 
@@ -35,9 +38,11 @@ LoRA trigger words are listed in the LoRA's quick edit; the selected ones are wr
 - **Shift** while dropping: replace the target's tags with the dropped ones. The target is highlighted red.
 - Tags already present in the target are skipped.
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="images/tag-pills-modifiers-dark.webp"><source media="(prefers-color-scheme: light)" srcset="images/tag-pills-modifiers-light.webp"><img src="images/tag-pills-modifiers-dark.webp" alt="Shift replaces, Alt copies"></picture>
+![Shift replaces, Alt copies](images/tag-pills-modifiers-light.webp#gh-light-mode-only)
+![Shift replaces, Alt copies](images/tag-pills-modifiers-dark.webp#gh-dark-mode-only)
 
 - Pills can also be dropped into a Prompt Multiline textarea, or onto a sidebar folder to save them as a new tag group.
+- The other way round works too: select text in a Prompt Multiline or Composer Multiline category and drag the selection out. It becomes tags on any prompt node, or text in another of those fields, and leaves its own field; hold **Alt** to copy it instead.
 
 ## Multi-select
 

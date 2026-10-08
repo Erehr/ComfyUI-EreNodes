@@ -212,7 +212,15 @@ export function renderTagPill(tag, opts = {}) {
     let name = labelFor(tag, !!opts.stripFolders);
     const badge = countBadge(tag);
     if (opts.showTriggers !== false && badge) name += ` ${badge}`;
-    pill.textContent = name;
+    if (tag.type === "text") {
+        // Its own element, so a one-line text pill can end in an ellipsis with the strength still at the right edge.
+        const label = document.createElement("span");
+        label.className = "ere-label";
+        label.textContent = name;
+        pill.appendChild(label);
+    } else {
+        pill.textContent = name;
+    }
 
     const st = strengthText(tag);
     if (st) {
@@ -236,7 +244,10 @@ export function renderSwitchEl(active, type, slide = false) {
     return sw;
 }
 
-/** A full-width toggle row (Prompt Toggle node). */
+/**
+ * A full-width toggle row (Prompt Toggle node).
+ * @param {object} [opts] slide (animate the knob), stepper (a strength stepper in place of the readout, for any tag with a strength).
+ */
 export function renderToggleRowEl(tag, opts = {}) {
     const row = document.createElement("div");
     row.className = "ere-toggle-row" + (tag.active ? "" : " inactive")
@@ -254,16 +265,20 @@ export function renderToggleRowEl(tag, opts = {}) {
     // Its own element rather than more label text: a row is name-left / numbers-right, and text
     // inside the ellipsised label cannot be pushed to the far edge.
     const badge = countBadge(tag);
+    const stepper = opts.stepper && tag.type !== "group";
     const st = strengthText(tag);
-    if (badge || st) {
+    if (badge || st || stepper) {
         const meta = document.createElement("span");
         meta.className = "ere-meta";
         if (badge) {
             const span = document.createElement("span");
+            span.className = "ere-badge";
             span.textContent = badge;
             meta.appendChild(span);
         }
-        if (st) {
+        if (stepper) {
+            meta.appendChild(renderStepperEl(tag.strength ?? 1));
+        } else if (st) {
             const span = document.createElement("span");
             span.className = "ere-strength";
             span.textContent = st;
@@ -272,6 +287,29 @@ export function renderToggleRowEl(tag, opts = {}) {
         row.appendChild(meta);
     }
     return row;
+}
+
+/** Strength stepper around the value: arrows on the classic canvas, the native number input's lucide icons in Nodes 2.0 (CSS picks one). */
+function renderStepperEl(strength) {
+    const stepper = document.createElement("span");
+    stepper.className = "ere-stepper";
+    const step = (cls, icon, tip) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = `ere-step ${cls}`;
+        btn.title = tip;
+        // The frontend's own icon class, so it is drawn exactly as on a native number input.
+        const i = document.createElement("i");
+        i.className = icon;
+        btn.appendChild(i);
+        return btn;
+    };
+    const value = document.createElement("span");
+    value.className = "ere-stepper-value";
+    value.textContent = Number(strength).toFixed(2);
+    value.title = "Drag to change the strength, middle-click to reset it";
+    stepper.append(step("ere-step-dec", "icon-[lucide--minus]", "Decrease (Shift: by 0.1)"), value, step("ere-step-inc", "icon-[lucide--plus]", "Increase (Shift: by 0.1)"));
+    return stepper;
 }
 
 /** A gallery tile (Prompt Gallery node, and the sidebar's grid view). */
@@ -339,4 +377,19 @@ export function renderTagCloud(tags, opts = {}) {
 // Stylesheet
 
 /** Inject the tag stylesheet. Idempotent — safe to call from every surface. */
-export function injectTagStyles() { loadStyle("tagview"); }
+export function injectTagStyles() {
+    loadStyle("tagview");
+    syncCanvasWidgetColors();
+}
+
+/** The height of one-line controls on this surface (--ere-row-h, which Nodes 2.0 raises to its widget height). */
+export const rowHeight = (el) => parseFloat(el ? getComputedStyle(el).getPropertyValue("--ere-row-h") : "") || 20;
+
+// The classic canvas draws its widgets in litegraph palette colours that have no CSS variable of their own.
+// ponytail: read whenever a node mounts, so a palette switch reaches the tag UI with the next node or reload.
+function syncCanvasWidgetColors() {
+    const lg = window.LiteGraph;
+    const root = document.documentElement.style;
+    if (typeof lg?.WIDGET_BGCOLOR === "string") root.setProperty("--ere-lg-widget-bg", lg.WIDGET_BGCOLOR);
+    if (typeof lg?.NODE_DEFAULT_BGCOLOR === "string") root.setProperty("--ere-lg-node-bg", lg.NODE_DEFAULT_BGCOLOR);
+}

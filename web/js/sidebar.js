@@ -98,6 +98,7 @@ const state = {
     editor: null,
     viewMenu: null,     // closes the view popover, while one is open
     bookmarks: [],      // tag group paths, in the order they were added
+    bookmarkFiles: [],  // the server's file entries for them, used until the full tree has loaded
     // `sort` and `startPage` are per site and last until ComfyUI is reloaded: a way of browsing, not a preference.
     booru: { site: "safebooru", query: "", posts: [], page: 0, done: false, loading: false, error: null, seq: 0, sort: {}, startPage: {} },
 };
@@ -123,6 +124,7 @@ async function loadBookmarks() {
     try {
         const data = await requestJson("/erenodes/bookmarks");
         state.bookmarks = Array.isArray(data?.paths) ? data.paths : [];
+        state.bookmarkFiles = Array.isArray(data?.files) ? data.files : [];
         bookmarkSet = new Set(state.bookmarks);
         bookmarksLoaded = true;
     } catch {
@@ -2012,7 +2014,8 @@ let bookmarkedCache = null;
 function bookmarkedFiles() {
     if (!bookmarksApply() || !state.bookmarks.length) return [];
     const tree = state.trees[state.tab];
-    if (!tree) return [];
+    // Only the full tree carries a version; the root-level first paint has no subfolders to find bookmarks in.
+    if (!tree || !state.treeVersions[state.tab]) return state.bookmarkFiles.filter(f => bookmarkSet.has(f.path));
     if (bookmarkedCache?.tree === tree && bookmarkedCache.list === state.bookmarks) return bookmarkedCache.files;
 
     const byPath = new Map();

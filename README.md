@@ -1,59 +1,69 @@
 <div align="center">
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/banner-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/images/banner-light.webp"><img src="docs/images/banner-dark.webp" alt="EreNodes"></picture>
+![EreNodes](docs/images/banner-light.webp#gh-light-mode-only)
+![EreNodes](docs/images/banner-dark.webp#gh-dark-mode-only)
 
 **Tag-based prompting for ComfyUI.** Build prompts from pills you can toggle, drag and reuse, with a built-in prompt library, tag autocomplete, a booru browser and a prompt-aware LoRA loader.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![ComfyUI](https://img.shields.io/badge/ComfyUI-Compatible-brightgreen)](https://github.com/comfyanonymous/ComfyUI) [![Ko-fi](https://img.shields.io/badge/Ko--fi-tip-F16061?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/erehr)
 
-[Features](#features) • [Installation](#installation) • [Settings](docs/settings.md) • [Changelog](docs/changelog.md)
+[Features](#features) • [Installation](#installation) • [Settings](docs/settings.md)
 
 </div>
 
 ## Features
 
 ### [Prompt nodes](docs/prompt-nodes.md)
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/prompt-nodes-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/images/prompt-nodes-light.webp"><img src="docs/images/prompt-nodes-dark.webp" alt="Prompt nodes" width="100%"></picture>
+![Prompt nodes](docs/images/prompt-nodes-light.webp#gh-light-mode-only)
+![Prompt nodes](docs/images/prompt-nodes-dark.webp#gh-dark-mode-only)
 
 Cloud, Toggle, MultiSelect, Gallery, Randomizer and Multiline: one tag list, drawn the way you want it. Convert between them any time; chain them through `prefix`.
 
 ### [Prompt Composer](docs/prompt-composer.md)
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/prompt-composer-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/images/prompt-composer-light.webp"><img src="docs/images/prompt-composer-dark.webp" alt="Prompt Composer" width="100%"></picture>
+![Prompt Composer](docs/images/prompt-composer-light.webp#gh-light-mode-only)
+![Prompt Composer](docs/images/prompt-composer-dark.webp#gh-dark-mode-only)
 
 *One Node to rule them all.* Character, outfit, background - or whatever else you can think of as collapsible, bypassable categories in a single node, each with customizable layout. 
 
 ### [Tag pills](docs/tag-pills.md)
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/tag-pills-drag-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/images/tag-pills-drag-light.webp"><img src="docs/images/tag-pills-drag-dark.webp" alt="Select, drag, drop" width="100%"></picture>
+![Select, drag, drop](docs/images/tag-pills-drag-light.webp#gh-light-mode-only)
+![Select, drag, drop](docs/images/tag-pills-drag-dark.webp#gh-dark-mode-only)
 
 Select them, drag them, drop them. Reorder, move or copy between nodes, replace with Shift, multi-select with Ctrl. Tags, text, LoRAs, embeddings and tag groups all as the same pills.
 
 ### [Tag groups](docs/tag-groups.md)
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/tag-groups-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/images/tag-groups-light.webp"><img src="docs/images/tag-groups-dark.webp" alt="Tag groups" width="100%"></picture>
+![Tag groups](docs/images/tag-groups-light.webp#gh-light-mode-only)
+![Tag groups](docs/images/tag-groups-dark.webp#gh-dark-mode-only)
 
 Save them, reuse them. Characters, styles and presets as files with cover images, used as one pill or unpacked into tags.
 
 ### [Autocomplete](docs/autocomplete.md)
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/autocomplete-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/images/autocomplete-light.webp"><img src="docs/images/autocomplete-dark.webp" alt="Autocomplete" width="100%"></picture>
+![Autocomplete](docs/images/autocomplete-light.webp#gh-light-mode-only)
+![Autocomplete](docs/images/autocomplete-dark.webp#gh-dark-mode-only)
 
 Danbooru and e621 tags in every textarea, with aliases, category filters (`artist:`, `char:`, `@`) and colours, plus `lora:`, `embedding:` and `group:` with previews.
 
 ### [Sidebar](docs/sidebar.md)
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/sidebar-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/images/sidebar-light.webp"><img src="docs/images/sidebar-dark.webp" alt="Sidebar" width="100%"></picture>
+![Sidebar](docs/images/sidebar-light.webp#gh-light-mode-only)
+![Sidebar](docs/images/sidebar-dark.webp#gh-dark-mode-only)
 
 Your tag groups, LoRAs and embeddings in a native sidebar tab. Hover for tags, drag onto nodes, search the tags inside every group, bookmark the ones you use daily.
 
 ### [Booru browser](docs/booru.md)
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/booru-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/images/booru-light.webp"><img src="docs/images/booru-dark.webp" alt="Booru browser" width="100%"></picture>
+![Booru browser](docs/images/booru-light.webp#gh-light-mode-only)
+![Booru browser](docs/images/booru-dark.webp#gh-dark-mode-only)
 
 Search Safebooru, Gelbooru or e621 from the sidebar. Hover a post for its tags, click one to search it, drag them into your prompt or save them as a tag group.
 
 ### [LoRA loader](docs/lora-loader.md)
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/lora-loader-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/images/lora-loader-light.webp"><img src="docs/images/lora-loader-dark.webp" alt="Prompt Lora Loader" width="100%"></picture>
+![Prompt Lora Loader](docs/images/lora-loader-light.webp#gh-light-mode-only)
+![Prompt Lora Loader](docs/images/lora-loader-dark.webp#gh-dark-mode-only)
 
 The Prompt Lora Loader applies its own LoRAs and every `<lora:...>` in the incoming prompt, keeps the selected trigger words, and remaps older Anima LoRAs automatically.
 
 ### [Prompt Extractor](docs/prompt-nodes.md#prompt-extractor)
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/prompt-extractor-dark.webp"><source media="(prefers-color-scheme: light)" srcset="docs/images/prompt-extractor-light.webp"><img src="docs/images/prompt-extractor-dark.webp" alt="Prompt Extractor" width="100%"></picture>
+![Prompt Extractor](docs/images/prompt-extractor-light.webp#gh-light-mode-only)
+![Prompt Extractor](docs/images/prompt-extractor-dark.webp#gh-dark-mode-only)
 
 Drop a generated image, get its positive prompt back as pills, including tags that were switched off.
 

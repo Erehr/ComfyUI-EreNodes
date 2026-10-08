@@ -240,5 +240,17 @@ app.registerExtension({
                 app.graph?.setDirtyCanvas?.(true, true);
             },
         },
+        {
+            id: "EreNodes.Nodes.TextPillsOneLine",
+            name: "Text pills on one line",
+            tooltip: "When on, a text pill (a whole sentence) on a node shows only what fits on one line, ending in …; quick edit still shows all of it. When off (default), it wraps to show the whole text.",
+            type: "boolean",
+            defaultValue: false,
+            // A page class rather than a re-render: the cut is pure CSS (tagview.css). Nodes still re-render, since their height changes.
+            onChange: (value) => {
+                document.documentElement.classList.toggle("ere-text-oneline", !!value);
+                for (const node of app.graph?._nodes ?? []) node._ereDom?.render?.();
+            },
+        },
     ],
 });

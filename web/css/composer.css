@@ -25,7 +25,7 @@
     display: flex;
     align-items: center;
     gap: 5px;
-    min-height: 20px;
+    min-height: var(--ere-row-h);
     padding: 5px;
     cursor: pointer;
     user-select: none;
@@ -37,7 +37,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: var(--ere-fg);
+    color: var(--ere-fg-label);
 }
 /* Prompt Toggle's knob, mirrored to the right-hand side of the row. */
 .ere-surface .ere-composer-switch {
@@ -62,6 +62,10 @@
 .ere-surface .ere-composer-body .ere-toggle-row:hover {
     background: color-mix(in srgb, var(--ere-inset-bg) 88%, var(--contrast-mix-color, #fff));
 }
+/* A Composer category's body is the fill a text pill takes on a node, so here it goes back to one step darker. */
+.ere-surface .ere-composer-body {
+    --ere-fill-text: var(--ere-fill-text-inset);
+}
 /* Multiline: the field *is* the body, so the tint goes edge to edge and the padding with it. */
 .ere-surface .ere-composer-body.ere-composer-text {
     padding: 0;
@@ -72,7 +76,7 @@
 /* Empty is a drop area one pill row tall, not a sentence a drop placeholder has to
    appear after. */
 .ere-surface .ere-composer-tags {
-    min-height: 20px;
+    min-height: var(--ere-row-h);
     align-content: flex-start;
 }
 /* Folded-row counts: the drag ghost's badges, muted the way a disabled pill is, so they
@@ -164,4 +168,34 @@
     border-radius: 50%;
     box-shadow: 0 0 8px color-mix(in srgb, var(--primary-background) 60%, transparent);
     pointer-events: none;
+}
+
+/* --- Renderer-specific look (see the same section in tagview.css) ---- */
+/* Nodes 2.0: no row border, and the multiline field on the row's own fill, as a native textarea sits on the node. */
+.lg-node .ere-surface .ere-composer-row:not(.ere-drop-target) {
+    border-color: transparent;
+}
+.lg-node .ere-surface .ere-composer-body > .ere-textarea {
+    background: var(--ere-widget-bg);
+}
+.lg-node .ere-surface .ere-composer-head .ere-drag-count {
+    border-color: transparent;
+}
+/* The header keeps the classic row height: at the node's 24px its buttons outweigh the category they belong to. */
+.lg-node .ere-surface .ere-composer-head {
+    --ere-row-h: 20px;
+}
+/* Without a border the header's buttons would vanish into the row they share a fill with. */
+.lg-node .ere-surface .ere-composer-head .ere-btn {
+    /* background: var(--ere-inset-bg); */
+}
+.lg-node .ere-surface .ere-composer-head .ere-btn:hover {
+    background: color-mix(in srgb, var(--ere-inset-bg) 88%, var(--contrast-mix-color, #fff));
+}
+/* Classic canvas: rows, the controls inside them and the multiline field all on the darker canvas fill. */
+.dom-widget .ere-surface :is(.ere-composer-row, .ere-composer-body .ere-panel, .ere-composer-body .ere-toggle-row, .ere-composer-body > .ere-textarea) {
+    background: var(--ere-canvas-bg);
+}
+.dom-widget .ere-surface .ere-composer-body .ere-toggle-row:hover {
+    background: color-mix(in srgb, var(--ere-canvas-bg) 88%, var(--contrast-mix-color, #fff));
 }
