@@ -7,7 +7,7 @@ import { startExternalDrag, isDragActive, injectDragStyles, clientToGraph } from
 import { ActionContextMenu, TagContextMenu, TagIndexContextMenu } from "./contextmenu.js";
 import { GlobalAutocomplete } from "../prompt_autocomplete.js";
 import { createTagEditor } from "./tageditor.js";
-import { dedupeTags, tagKey } from "./parser.js";
+import { dedupeTags, tagKey, sortByCategory } from "./parser.js";
 
 // Verbatim from the frontend's Button.vue output, so these match the buttons in the core sidebars: base, then one variant per line.
 const BUTTON_BASE = "relative inline-flex items-center justify-center gap-2 cursor-pointer touch-manipulation whitespace-nowrap appearance-none border-none rounded-md text-sm font-medium font-inter transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border-default disabled:pointer-events-none disabled:opacity-50";
@@ -454,6 +454,11 @@ let searchAutocomplete = null;
 
 /** A booru search excludes a tag written `-tag`, so the minus completes like `@` does: the rest is searched, and the picked tag keeps it. */
 class BooruTagContextMenu extends TagContextMenu {
+    // The site's own tags, whatever list the autocomplete setting names: Safebooru and Gelbooru tag as Danbooru does.
+    get csv() {
+        return state.booru.site === "e621" ? "e621.csv" : "danbooru.csv";
+    }
+
     parseQuery(query) {
         const text = String(query ?? "").trim();
         if (!text.startsWith("-")) return super.parseQuery(text);
@@ -558,6 +563,11 @@ function hiddenBooruTags() {
 /** A post as the sidebar uses it: pills for its tags, less the hidden ones, and relayed thumbnails pointed at the relay. */
 const relayUrl = url => apiUrl(`/erenodes/booru/image?${new URLSearchParams({ url })}`);
 
+// The site's category colours and sorts the post's pills, but is not enumerable: a copy or a save of the tag (a drop, a group, the workflow) leaves it behind, and a node looks its tags up in the tag list instead.
+function booruTag(tag) {
+    return Object.defineProperty({ name: tag.name, type: "tag", active: true }, "category", { value: tag.category });
+}
+
 function booruPost(post, hidden) {
     const relay = url => (post.relay ? relayUrl(url) : url);
     return {
@@ -565,7 +575,7 @@ function booruPost(post, hidden) {
         thumb: relay(post.thumb),
         // Readable by the page, which a cover upload needs; the grid shows the direct URL where it can.
         coverSource: relayUrl(post.thumb),
-        tags: (post.tags ?? []).filter(tag => !hidden.has(tagKey(tag.name))).map(tag => ({ name: tag.name, type: "tag", active: true, category: tag.category })),
+        tags: sortByCategory((post.tags ?? []).filter(tag => !hidden.has(tagKey(tag.name))).map(booruTag)),
     };
 }
 

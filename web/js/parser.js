@@ -99,6 +99,28 @@ export function dedupeTags(tags) {
     return out;
 }
 
+// As the booru sites list them; species is e621's, and anything else, unknown included, sorts with general.
+const CATEGORY_ORDER = ["artist", "character", "copyright", "species", "meta"];
+const categoryRank = tag => {
+    const rank = CATEGORY_ORDER.indexOf(tag.category);
+    return rank < 0 ? CATEGORY_ORDER.length : rank;
+};
+
+/** Tag pills sorted by category, then name; loras, embeddings, groups and text keep their places. */
+export function sortByCategory(tags) {
+    const slots = [];
+    const sorted = [];
+    tags.forEach((tag, i) => {
+        if (tag.type !== "tag") return;
+        slots.push(i);
+        sorted.push(tag);
+    });
+    sorted.sort((a, b) => categoryRank(a) - categoryRank(b) || tagKey(a.name).localeCompare(tagKey(b.name)));
+    const out = [...tags];
+    slots.forEach((slot, i) => { out[slot] = sorted[i]; });
+    return out;
+}
+
 /**
  * Split prompt text into tag objects, carrying over active states by name.
  * Lines first, and a line that reads as prose becomes `text` tags rather than being cut up on its

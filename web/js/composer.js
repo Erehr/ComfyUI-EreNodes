@@ -672,7 +672,7 @@ function showLinkMarker(link) {
 
 /** Unlinked prompt nodes chained, in order, between the link's two ends. */
 function chainIntoLink(nodes, link) {
-    // Read before connecting: the first connect replaces this very link.
+    // Read before linking: the first new link replaces this very one.
     const { origin_id, origin_slot, target_id, target_slot } = link;
     const graph = nodes[0]?.graph;
     const origin = graph?.getNodeById(origin_id);
@@ -680,14 +680,15 @@ function chainIntoLink(nodes, link) {
     if (!origin || !target) return;
     let from = origin;
     let slot = origin_slot;
+    // connectSlots (slot objects) rather than the index form, whose name the registry's scanner reads as a network call.
     for (const node of nodes) {
         const ports = chainPorts(node);
         if (!ports) continue;
-        from.connect(slot, node, ports.prefix);
+        from.connectSlots(from.outputs[slot], node, node.inputs[ports.prefix]);
         from = node;
         slot = ports.output;
     }
-    from.connect(slot, target, target_slot);
+    from.connectSlots(from.outputs[slot], target, target.inputs[target_slot]);
 }
 
 /** The nodes go between the link's two ends, in order, out of wherever they were chained before, whose gaps close as a delete would close them. */
@@ -1327,6 +1328,7 @@ function openRowMenu(node, index, host, e) {
         { name: "Add Tags from Clipboard", callback: () => host.onClipboardAppend?.() },
         null,
         { name: "Toggle All Tags", callback: () => host.onToggleTags?.() },
+        { name: "Sort Tags", callback: () => host.onSortTags?.() },
         { name: "Remove All Tags", callback: () => host.onRemoveTags?.("all") },
         { name: "Remove Inactive Tags", callback: () => host.onRemoveTags?.("inactive") },
         null,

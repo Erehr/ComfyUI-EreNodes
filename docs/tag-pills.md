@@ -19,6 +19,8 @@ Every prompt node, the sidebar previews and the Booru browser draw tags as the s
 
 LoRA, embedding and tag group pills get a red border when the file they name is not on disk.
 
+With Settings → EreNodes → **Tag category colours** on, a tag's text is in Danbooru's category colour (artist, character, copyright, meta, and e621's species), looked up in your tag list. General tags and tags the list does not know stay plain.
+
 ## Click, strength, quick edit
 
 - **Click** a pill to toggle it. Disabled pills stay in the node but are not written to the prompt.

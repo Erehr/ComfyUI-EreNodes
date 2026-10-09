@@ -14,6 +14,57 @@ export const TYPE_FILL = {
     text: "var(--ere-fill-text)",
 };
 export const DEFAULT_FILL = "var(--ere-fill-tag)";
+// The categories with a --ere-cat-* colour.
+const COLORED_CATEGORIES = new Set(["artist", "copyright", "character", "meta", "species", "lore", "contributor"]);
+
+// Tag name -> category from the active tag list ("" when general or unknown), looked up rather than stored on the tags.
+const categoryCache = new Map();
+let pendingNames = new Set();
+
+/** The categories of these names, fetching only the ones not seen yet. */
+export async function lookupCategories(names) {
+    const missing = [...new Set(names)].filter(name => !categoryCache.has(name));
+    if (missing.length) {
+        let found = {};
+        try {
+            found = await requestJson("/erenodes/tag_categories", { body: { names: missing } }) ?? {};
+        } catch (error) {
+            console.error("[EreNodes] Tag categories failed:", error);
+        }
+        for (const name of missing) categoryCache.set(name, found[name] ?? "");
+    }
+    return categoryCache;
+}
+
+/** Dropped when the tag list changes; true when there was anything to drop. */
+export function forgetCategories() {
+    const had = categoryCache.size > 0;
+    categoryCache.clear();
+    return had;
+}
+
+function paintCategory(pill, category) {
+    if (COLORED_CATEGORIES.has(category)) pill.style.setProperty("--ere-cat-fg", `var(--ere-cat-${category})`);
+}
+
+/** One request for every pill rendered in the same pass; each is painted in place when it answers, so nothing re-renders. */
+function queueCategory(pill, name) {
+    pill.dataset.ereCategoryOf = name;
+    const first = pendingNames.size === 0;
+    pendingNames.add(name);
+    if (!first) return;
+    setTimeout(async () => {
+        const names = [...pendingNames];
+        pendingNames = new Set();
+        await lookupCategories(names);
+        for (const waiting of document.querySelectorAll(".ere-pill[data-ere-category-of]")) {
+            const category = categoryCache.get(waiting.dataset.ereCategoryOf);
+            if (category === undefined) continue;
+            delete waiting.dataset.ereCategoryOf;
+            paintCategory(waiting, category);
+        }
+    });
+}
 
 /** Toggle-row knob colour for an active tag, by type. */
 export const TOGGLE_KNOB = {
@@ -208,6 +259,12 @@ export function renderTagPill(tag, opts = {}) {
 
     // Fill only: the disabled look is a class, so it follows a palette change.
     if (tag.active !== false) pill.style.setProperty("--ere-fill", TYPE_FILL[tag.type] || DEFAULT_FILL);
+    // Text only, general stays plain, and only with the setting on (tagview.css). A booru post's tags bring their site's category; the rest are looked up.
+    if (tag.type === "tag" && tag.name) {
+        const category = tag.category ?? categoryCache.get(tag.name);
+        if (category !== undefined) paintCategory(pill, category);
+        else if (document.documentElement.classList.contains("ere-tag-colors")) queueCategory(pill, tag.name);
+    }
 
     let name = labelFor(tag, !!opts.stripFolders);
     const badge = countBadge(tag);

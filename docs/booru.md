@@ -22,7 +22,7 @@ Requests go through the ComfyUI server, since these sites do not answer browser 
 ## Searching
 
 - Type tags, comma separated, and press **Enter**. Spaces become underscores; `-tag` excludes a tag.
-- The search box autocompletes from your tag list; picking a suggestion searches straight away. A term started with `-` completes too, and keeps the `-` on the picked tag.
+- The search box autocompletes from the source's own tag list, whatever list Settings names: Danbooru's for Safebooru and Gelbooru, e621's for e621. Picking a suggestion searches straight away. A term started with `-` completes too, and keeps the `-` on the picked tag.
 - **Sort and page** button: **Latest**, **Top rated** or **Random**, and the page to start from. Remembered per source until ComfyUI restarts. Enter re-rolls a random sort.
 - More posts load as you scroll.
 
@@ -37,6 +37,8 @@ Requests go through the ComfyUI server, since these sites do not answer browser 
 - **Right-click → Save as tag group**: the post's tags become a [tag group](tag-groups.md), with its thumbnail as the cover. **Open on …** opens the post on its site.
 
 Tags arrive in the prompt form (`blue hair`, not `blue_hair`). Meta tags such as `highres` and `absurdres` are always left out.
+
+Tags are ordered artist, character, copyright (and species on e621), then general, each alphabetical, and with **Tag category colours** on, coloured by category. e621 sends its categories; for Safebooru and Gelbooru they come from the bundled Danbooru list, so a tag Danbooru does not have counts as general.
 
 ## Filtering
 

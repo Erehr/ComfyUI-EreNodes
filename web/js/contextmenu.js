@@ -915,6 +915,9 @@ const CATEGORY_PREFIXES = {
     meta: "meta", species: "species", lore: "lore",
 };
 
+/** A picked name with the search's prefix in front, once: a CSV that writes artists `@name` already carries the `@`. */
+const withPrefix = (prefix, name) => (prefix.endsWith("@") && name.startsWith("@") ? prefix.slice(0, -1) : prefix) + name;
+
 /** A typed search split into the text to match, the category a prefix narrows it to, and what goes in front of the inserted name: `@` filters to artists and stays on the tag, which is how Anima prompts an artist. */
 export function parseTagQuery(raw) {
     const query = String(raw ?? "").trim();
@@ -995,6 +998,7 @@ export class TagContextMenu extends DynamicContextMenu {
             // Asked for extra, since the ones already in the prompt are dropped from what comes back.
             const params = new URLSearchParams({ query: parsed.query, limit: String(Math.min(100, limit + present.size)) });
             if (parsed.category) params.set("category", parsed.category);
+            if (this.csv) params.set("csv", this.csv);
             if (parsed.query || parsed.category) {
                 const tags = await requestJson(`/erenodes/search_tags?${params}`, { signal });
                 suggestions = this.withoutPresent(tags, present).slice(0, limit);
@@ -1040,7 +1044,7 @@ export class TagContextMenu extends DynamicContextMenu {
         const query = tagKey(this.plainQuery ?? "");
         const options = [];
         for (const s of suggestions) {
-            const option = { ...s, type: 'tag', name: this.insertPrefix + s.name };
+            const option = { ...s, type: 'tag', name: withPrefix(this.insertPrefix, s.name) };
             option.callback = (e, index) => pick(option.name, e, index);
             if (mode === "grouped") {
                 options.push(option);
@@ -1048,14 +1052,14 @@ export class TagContextMenu extends DynamicContextMenu {
             }
             option.aliases = [];
             if (mode === "submenu" && s.aliases?.length) {
-                option.submenu = s.aliases.map(alias => ({ name: this.insertPrefix + alias, callback: (e) => pick(this.insertPrefix + alias, e, -1) }));
+                option.submenu = s.aliases.map(alias => ({ name: withPrefix(this.insertPrefix, alias), callback: (e) => pick(withPrefix(this.insertPrefix, alias), e, -1) }));
             }
             options.push(option);
             // Flat: only the aliases the query reached, or a popular tag's dozens of misspellings would bury everything else.
             if (mode === "flat" && query) {
                 for (const alias of s.aliases ?? []) {
                     if (!alias.includes(query)) continue;
-                    const aliasOption = { name: this.insertPrefix + alias, count: s.count, category: s.category, aliases: [], type: 'tag' };
+                    const aliasOption = { name: withPrefix(this.insertPrefix, alias), count: s.count, category: s.category, aliases: [], type: 'tag' };
                     aliasOption.callback = (e, index) => pick(aliasOption.name, e, index);
                     options.push(aliasOption);
                 }
@@ -1094,9 +1098,9 @@ export class TagContextMenu extends DynamicContextMenu {
             if (option.disabled) item.classList.add("disabled");
 
             const displayHTML = this.highlight(option.name, query);
-            // Danbooru's category colours, on the count only; general tags keep the plain one.
-            const category = option.category && option.category !== "general" ? ` ere-tag-count-${option.category}` : "";
-            let countHTML = option.count ? `<div class="ere-tag-count${category}" style="font-size: 0.8em; opacity: 0.7; margin-left: 10px;">(${option.count.toLocaleString()})</div>` : '';
+            // The name in its category's colour, with the tag colours setting on; general tags stay plain.
+            const category = option.category && option.category !== "general" ? ` class="ere-cat-${option.category}"` : "";
+            let countHTML = option.count ? `<div style="font-size: 0.8em; opacity: 0.7; margin-left: 10px;">(${option.count.toLocaleString()})</div>` : '';
             
             // Limit and prioritize aliases based on relevance to search term
             let aliasesHTML = '';
@@ -1108,7 +1112,7 @@ export class TagContextMenu extends DynamicContextMenu {
                 aliasesHTML = `<div style="font-size: 0.8em; opacity: 0.7;">${aliasesText}${moreText}</div>`;
             }
             
-            item.innerHTML = `<div style="display: flex; justify-content: space-between; align-items: center;"><div>${displayHTML}</div>${countHTML}</div>${aliasesHTML}`;
+            item.innerHTML = `<div style="display: flex; justify-content: space-between; align-items: center;"><div${category}>${displayHTML}</div>${countHTML}</div>${aliasesHTML}`;
 
             if (option.submenu) {
                 item.classList.add("has_submenu");

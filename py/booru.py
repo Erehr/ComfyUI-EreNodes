@@ -14,9 +14,13 @@ import server
 from aiohttp import web
 from aiohttp import ClientSession
 
-from .prompt_csv import meta_tag_names
+from .prompt_csv import category_key, tag_categories
 
 PAGE = 60
+# The tag list for the sites that send no categories.
+DANBOORU_CSV = "danbooru.csv"
+
+
 def _version():
     try:
         with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pyproject.toml"), encoding="utf-8") as f:
@@ -214,11 +218,14 @@ async def booru_search(request):
     if status != 200:
         return web.json_response({"error": _refusal(site, status, data)})
     posts, more = source["parse"](data)
-    # Gelbooru and Safebooru send no tag categories, so meta tags are recognised through the autocomplete CSV, which has them. e621's are left out while parsing.
+    # Gelbooru and Safebooru send no tag categories, so they are read from the Danbooru list, whatever the autocomplete setting names; a tag it lacks stays general.
+    # Meta tags are dropped; e621's are left out while parsing.
     if site != "e621":
-        meta = await asyncio.to_thread(meta_tag_names)
+        categories = await asyncio.to_thread(tag_categories, DANBOORU_CSV)
         for post in posts:
-            post["tags"] = [tag for tag in post["tags"] if tag["name"].lower() not in meta]
+            for tag in post["tags"]:
+                tag["category"] = categories.get(category_key(tag["name"]), "general")
+            post["tags"] = [tag for tag in post["tags"] if tag["category"] != "meta"]
     return web.json_response({"posts": posts, "more": more})
 
 

@@ -35,6 +35,13 @@ def filter_prompt(prompt, csv_file, alias_handling):
     result_tags = []
     for token in tokens:
         token = _clean_token(token)
+        # An artist may be written `@name` in the prompt, in the CSV, or both: looked up either way, and the prompt's `@` kept.
+        at = token.startswith("@")
+        if token not in tag_set and token not in alias_map:
+            other = token[1:] if at else "@" + token
+            if other in tag_set or other in alias_map:
+                token = other
+        start = len(result_tags)
 
         base = alias_map.get(token, token)
         main = base if base in tag_set else None
@@ -47,6 +54,8 @@ def filter_prompt(prompt, csv_file, alias_handling):
             result_tags.extend([main, token])
         elif token in tag_set:
             result_tags.append(token)
+        if at:
+            result_tags[start:] = ["@" + tag.lstrip("@") for tag in result_tags[start:]]
 
     return ', '.join(dict.fromkeys(result_tags))
 

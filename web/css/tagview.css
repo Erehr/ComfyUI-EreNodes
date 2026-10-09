@@ -19,7 +19,7 @@
     --ere-pill-font: monospace;
     /* Not per surface: a disabled pill is one colour everywhere. */
     --ere-inactive-bg: color-mix(in srgb, var(--component-node-widget-background) 88%, #000);
-    /* Danbooru's tag category colours (e621's for species, lore and contributor), on autocomplete counts. */
+    /* Danbooru's tag category colours (e621's for species, lore and contributor), on pills and autocomplete names. */
     --ere-cat-artist: #c00004;
     --ere-cat-copyright: #a800aa;
     --ere-cat-character: #00ab2c;
@@ -37,13 +37,13 @@
     --ere-pill-fg: #fff;
     --ere-knob-off: #888;
     --ere-switch-track: #4a4a4a;
-    --ere-cat-artist: #ff8a8b;
-    --ere-cat-copyright: #c797ff;
-    --ere-cat-character: #35c64a;
+    --ere-cat-artist: #d55e5e;
+    --ere-cat-copyright: #ae8ad8;
+    --ere-cat-character: #5fbf6a;
     --ere-cat-meta: #ead084;
-    --ere-cat-species: #ff8a4a;
-    --ere-cat-lore: #5fbf6a;
-    --ere-cat-contributor: #c0c0c0;
+    --ere-cat-species: #dc8c64;
+    --ere-cat-lore: #5fbfa9;
+    --ere-cat-contributor: #808080; 
 }
 
 .ere-surface {
@@ -157,6 +157,10 @@
 .ere-text-oneline .erenodes-dom .ere-toggle-row.ere-text .ere-switch {
     align-self: center;
     margin-top: 0;
+}
+/* Settings → EreNodes → Tag category colours: a tag pill's text in its category colour, which renderTagPill sets as --ere-cat-fg. */
+.ere-tag-colors .ere-surface .ere-pill:not(.inactive) {
+    color: var(--ere-cat-fg, var(--ere-pill-fg));
 }
 .ere-surface .ere-toggle-row.ere-text {
     height: auto;
@@ -625,14 +629,14 @@
     background: rgb(0 0 0 / .6);
     font-size: var(--text-2xs, 10px);
 }
-/* Full opacity: the dimmed count would wash the colour out. */
-.ere-tag-count-artist { color: var(--ere-cat-artist); opacity: 1 !important; }
-.ere-tag-count-copyright { color: var(--ere-cat-copyright); opacity: 1 !important; }
-.ere-tag-count-character { color: var(--ere-cat-character); opacity: 1 !important; }
-.ere-tag-count-meta { color: var(--ere-cat-meta); opacity: 1 !important; }
-.ere-tag-count-species { color: var(--ere-cat-species); opacity: 1 !important; }
-.ere-tag-count-lore { color: var(--ere-cat-lore); opacity: 1 !important; }
-.ere-tag-count-contributor { color: var(--ere-cat-contributor); opacity: 1 !important; }
+/* Settings → EreNodes → Tag category colours: an autocomplete suggestion's name. */
+.ere-tag-colors .ere-cat-artist { color: var(--ere-cat-artist); }
+.ere-tag-colors .ere-cat-copyright { color: var(--ere-cat-copyright); }
+.ere-tag-colors .ere-cat-character { color: var(--ere-cat-character); }
+.ere-tag-colors .ere-cat-meta { color: var(--ere-cat-meta); }
+.ere-tag-colors .ere-cat-species { color: var(--ere-cat-species); }
+.ere-tag-colors .ere-cat-lore { color: var(--ere-cat-lore); }
+.ere-tag-colors .ere-cat-contributor { color: var(--ere-cat-contributor); }
 .ere-mark {
     background: var(--ere-fill-tag);
     color: var(--ere-pill-fg);

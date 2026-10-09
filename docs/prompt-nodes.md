@@ -29,6 +29,7 @@ Every EreNodes prompt node outputs a `STRING` and shares the same [tag pills](ta
 - **Replace Tags from Clipboard** / **Add Tags from Clipboard**: paste a comma-separated prompt as pills.
 - **Fit Height to Tags**: shrink the node to its tags (with a scrollable tag area).
 - **Toggle All Tags**, **Remove All Tags**, **Remove Inactive Tags**.
+- **Sort Tags**: artists, characters, copyrights, (e621) species, meta, then general, each alphabetical. Categories come from your tag list; a tag it does not know sorts with general. LoRAs, embeddings, groups and text pills keep their places. Also in a Composer category's menu.
 - **Load Tag Group** (adds the group's tags) and **Save Tag Group**. See [Tag groups](tag-groups.md).
 - **Export Tags (.json)** / **Import Tags (.json)**.
 - **Options**: tag separator, node separator, and tile size and aspect for Gallery.

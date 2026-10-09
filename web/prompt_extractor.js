@@ -208,6 +208,7 @@ function attachExtractorBehaviour(node) {
             { name: "Remove All Tags", callback: () => node.onRemoveTags?.() },
             // With the option on there is never anything left for it to remove.
             { name: "Remove Inactive Tags", callback: () => node.onRemoveTags?.('inactive'), disabled: removeByDefault },
+            { name: "Sort Tags", callback: () => node.onSortTags?.() },
             null,
             { name: "Save Tag Group", callback: () => node.onSaveTagGroup?.(e),
               disabled: tagData.filter(t => t.type !== 'group').length < 2 },

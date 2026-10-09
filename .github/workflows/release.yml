@@ -1,0 +1,29 @@
+name: Release
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "pyproject.toml"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # pyproject.toml also changes without a version bump, so an existing release is skipped rather than failed.
+      - name: Release the version in pyproject.toml
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          if gh release view "$version" >/dev/null 2>&1; then
+            echo "$version is already released"
+            exit 0
+          fi
+          gh release create "$version" --target "$GITHUB_SHA" --title "$version" --notes ""

@@ -1,8 +1,8 @@
 import { app } from "../../scripts/app.js";
 import { TagContextMenuInsert, TagEditContextMenu, TagGroupContextMenu, ActionContextMenu } from "./js/contextmenu.js";
 import { getCache, clearGroupCache, captureUndoState, tagsToText, textareaOf, insertTagsAsText, getSetting, requestJson, apiFetch, toast, confirmDialog, promptDialog, pickFile, getTags, setTags, expandGroup, loadGroupTags } from "./js/util.js";
-import { bumpPreview, TILE_SIZES, TILE_RATIOS, tileBoxFor } from "./js/tagview.js";
-import { parseTags, parseTag, formatTag, parseTextToTagData, parseClipboardTags, stripNestedGroups, dedupeTags, DEFAULT_SEPARATOR } from "./js/parser.js";
+import { bumpPreview, TILE_SIZES, TILE_RATIOS, tileBoxFor, lookupCategories } from "./js/tagview.js";
+import { parseTags, parseTag, formatTag, parseTextToTagData, parseClipboardTags, stripNestedGroups, dedupeTags, sortByCategory, DEFAULT_SEPARATOR } from "./js/parser.js";
 
 // The dice button's range. ComfyUI's seed goes to 2^64, which a JS number cannot hold exactly and nothing here needs.
 const DICE_SEED_MAX = 0xFFFFFFFF;
@@ -415,6 +415,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
                 ? [{ name: "Fit Height to Tags", callback: () => node.onFitTagArea?.() }]
                 : []),
             { name: "Toggle All Tags", callback: () => node.onToggleTags?.() },
+            { name: "Sort Tags", callback: () => node.onSortTags?.() },
             { name: "Remove All Tags", callback: () => node.onRemoveTags?.() },
             { name: "Remove Inactive Tags", callback: () => node.onRemoveTags?.('inactive') },
             null,
@@ -429,7 +430,7 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         ];
 
         if (node.type === "ErePromptMultiline") {
-            actions = actions.filter(action => !action || action.name !== "Toggle All Tags");
+            actions = actions.filter(action => !action || (action.name !== "Toggle All Tags" && action.name !== "Sort Tags"));
         }
 
         new ActionContextMenu({ clientX: e.clientX, clientY: e.clientY }, node.title, actions);
@@ -582,6 +583,15 @@ export function initializeSharedPromptFunctions(node, textWidget) {
         await setTags(node, updatedTagData);
     };
     
+    // Categories from the active tag list.
+    node.onSortTags = async () => {
+        const tagData = getTags(node);
+        const names = tagData.filter(t => t.type === "tag" && t.name).map(t => t.name);
+        if (!names.length) return;
+        const categories = await lookupCategories(names);
+        await setTags(node, sortByCategory(tagData.map(tag => ({ ...tag, category: categories.get(tag.name) }))));
+    };
+
     node.onRemoveTags = (mode = 'all') => {
         if(node.properties._tagDataJSON !== undefined) {
             if (mode === 'all') {

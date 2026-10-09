@@ -1,6 +1,9 @@
 import { app } from "../../../scripts/app.js";
 import { requestJson, toast, confirmDialog } from "./util.js";
 import { DEFAULT_SEPARATOR } from "./parser.js";
+import { forgetCategories } from "./tagview.js";
+
+const rerenderNodes = () => { for (const node of app.graph?._nodes ?? []) node._ereDom?.render?.(); };
 
 // Fetch CSV options before registration so the combo can be populated.
 // (Top-level await is fine here: extension files are loaded as ES modules.)
@@ -123,7 +126,9 @@ app.registerExtension({
             onChange: (newVal) => {
                 if (!newVal) return;
                 // Also fires once on page load, which keeps the server's settings.json in sync with the settings store.
-                requestJson("/erenodes/set_setting", { body: { key: "autocomplete.csv", value: newVal } }).catch(() => {});
+                requestJson("/erenodes/set_setting", { body: { key: "autocomplete.csv", value: newVal } })
+                    .then(() => { if (forgetCategories()) rerenderNodes(); })
+                    .catch(() => {});
             },
         },
         {
@@ -249,7 +254,19 @@ app.registerExtension({
             // A page class rather than a re-render: the cut is pure CSS (tagview.css). Nodes still re-render, since their height changes.
             onChange: (value) => {
                 document.documentElement.classList.toggle("ere-text-oneline", !!value);
-                for (const node of app.graph?._nodes ?? []) node._ereDom?.render?.();
+                rerenderNodes();
+            },
+        },
+        {
+            id: "EreNodes.Nodes.TagColors",
+            name: "Tag category colours",
+            tooltip: "When on, tags on nodes, in the sidebar and in autocomplete suggestions have their text in Danbooru's category colour (artist, character, copyright, meta), looked up in your tag list. General tags stay plain. Off by default.",
+            type: "boolean",
+            defaultValue: false,
+            // A page class, as the colour is CSS (tagview.css); the re-render looks up the categories of tags already on nodes.
+            onChange: (value) => {
+                document.documentElement.classList.toggle("ere-tag-colors", !!value);
+                if (value) rerenderNodes();
             },
         },
     ],

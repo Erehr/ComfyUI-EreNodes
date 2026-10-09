@@ -176,7 +176,7 @@ def _category_scheme(raw_codes):
 # One CSV as a single string, a line per row of `name\talias\talias...`, plus each line's start offset, post count and category code.
 # Searching is then str.find in C over one buffer instead of a Python loop over 320k tuples, and one string costs far less memory than a tuple and list per row.
 class TagData:
-    __slots__ = ("hay", "starts", "counts", "cats", "subsets", "meta")
+    __slots__ = ("hay", "starts", "counts", "cats", "subsets", "categories")
 
     def __init__(self, hay, starts, counts, cats):
         self.hay = hay
@@ -184,7 +184,7 @@ class TagData:
         self.counts = counts
         self.cats = cats
         self.subsets = {}
-        self.meta = None
+        self.categories = None
 
     # The rows of one category as their own TagData, built on first use, so a filtered search is as fast as an unfiltered one.
     def subset(self, code):
@@ -272,20 +272,29 @@ def _load(csv_file):
     return cached
 
 
-# Every name and alias of the active CSV's meta tags (highres, commentary and the like), built once per load.
-# Blocking on a cold cache, like get_tag_data.
-def meta_tag_names():
-    data = get_tag_data()
+# Name or alias -> category for a CSV's non-general tags, built once per load; anything missing is general.
+# An `@name` artist is also listed as `name`. Blocking on a cold cache, like get_tag_data.
+def tag_categories(csv_file=None):
+    data = get_tag_data(csv_file)
     if data is None:
-        return frozenset()
-    if data.meta is None:
-        code = _CODE["meta"]
-        names = set()
+        return {}
+    if data.categories is None:
+        general = _CODE["general"]
+        categories = {}
         for row, line in enumerate(data.hay.split("\n")[:-1]):
-            if data.cats[row] == code:
-                names.update(line.split("\t"))
-        data.meta = frozenset(names)
-    return data.meta
+            if data.cats[row] != general:
+                category = CATEGORIES[data.cats[row]]
+                for name in line.split("\t"):
+                    categories.setdefault(name, category)
+                    if name.startswith("@"):
+                        categories.setdefault(name[1:], category)
+        data.categories = categories
+    return data.categories
+
+
+# A tag as the CSV spells it, as tagKey does on the page.
+def category_key(name):
+    return str(name).strip().lstrip("@").replace("\\(", "(").replace("\\)", ")").replace("_", " ").lower()
 
 
 def get_tag_data(active_csv=None):
@@ -300,26 +309,31 @@ _WORD_STARTS = (" ", "(", "-", "/", ":")
 
 
 # Rows with a name or alias that is exactly the query, in file order.
+# A CSV that writes artists the Anima way, `@name`, counts as exact for `name` too.
 def _exact_rows(data, query):
     hay = data.hay
     rows = []
-    if hay.startswith(query + "\t") or hay.startswith(query + "\n"):
-        rows.append(0)
-    for before in ("\n", "\t"):
-        for after in ("\t", "\n"):
-            pattern = before + query + after
-            position = 0
-            while (hit := hay.find(pattern, position)) >= 0:
-                rows.append(bisect_right(data.starts, hit + 1) - 1)
-                position = hit + 1
+    for term in (query, "@" + query):
+        if hay.startswith(term + "\t") or hay.startswith(term + "\n"):
+            rows.append(0)
+        for before in ("\n", "\t"):
+            for after in ("\t", "\n"):
+                pattern = before + term + after
+                position = 0
+                while (hit := hay.find(pattern, position)) >= 0:
+                    rows.append(bisect_right(data.starts, hit + 1) - 1)
+                    position = hit + 1
     return sorted(set(rows))
 
 
 # Every position where the query starts a word of a name or alias, in file order: one C-level find per kind of word start, merged, so a short query does not walk every mid-word hit in Python.
+# A name or alias written `@name` (an artist, the Anima way) is also matched from after its `@`.
 def _word_hits(hay, query):
     if hay.startswith(query):
         yield 0
-    patterns = [(sep + query, len(sep)) for sep in ("\n", "\t") + _WORD_STARTS]
+    elif hay.startswith("@" + query):
+        yield 1
+    patterns = [(sep + query, len(sep)) for sep in ("\n", "\t", "\n@", "\t@") + _WORD_STARTS]
     nexts = [hay.find(pattern) for pattern, _ in patterns]
     while True:
         live = [(hit, i) for i, hit in enumerate(nexts) if hit >= 0]
@@ -333,11 +347,11 @@ def _word_hits(hay, query):
 
 # Word-start match over tag names and their aliases, so that "eyes" finds `blue eyes`, with any exact name or alias first.
 # The CSVs are sorted by post count descending, so stopping at `limit` hands back the highest-count matches; an empty query with a category is simply its top rows.
-def _search_tags(query, limit, category=None):
+def _search_tags(query, limit, category=None, csv_file=None):
     # Either would match across field or row boundaries in the haystack.
     if "\t" in query or "\n" in query:
         return []
-    active_csv = get_erenodes_settings().get('autocomplete.csv')
+    active_csv = csv_file or get_erenodes_settings().get('autocomplete.csv')
     if not active_csv:
         return []
 
@@ -404,6 +418,10 @@ async def search_tags(request):
     category = request.query.get("category") or None
     if category not in _CODE and category is not None:
         return web.json_response([])
+    # The booru browser completes from its site's own list, whatever the autocomplete setting names.
+    csv_file = request.query.get("csv") or None
+    if csv_file is not None and get_csv_path(csv_file) is None:
+        return web.json_response([])
 
     if not query and category is None:
         return web.json_response([])
@@ -411,9 +429,24 @@ async def search_tags(request):
     # In a thread: inline, the first search after a restart froze the whole server for the length of the CSV parse, which reads as a stutter somewhere else entirely.
     # Pure Python holds the GIL between switch intervals, so this turns one long freeze into a series of short ones rather than removing them.
     try:
-        results = await asyncio.to_thread(_search_tags, query, limit, category)
+        results = await asyncio.to_thread(_search_tags, query, limit, category, csv_file)
     except Exception as e:
         print(f"[EreNodes] search_tags failed: {e}")
         return web.json_response([])
     return web.json_response(results)
+
+
+# The non-general categories of the given names, from the active CSV, for Reorder Tags.
+@server.PromptServer.instance.routes.post("/erenodes/tag_categories")
+async def tag_categories_handler(request):
+    try:
+        names = (await request.json()).get("names") or []
+    except Exception:
+        return web.json_response({})
+    categories = await asyncio.to_thread(tag_categories)
+    found = {}
+    for name in names:
+        if isinstance(name, str) and (category := categories.get(category_key(name))):
+            found[name] = category
+    return web.json_response(found)
 

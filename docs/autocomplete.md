@@ -29,9 +29,9 @@ A prefix narrows the search to one category:
 | `general:` `gen:` | General tags |
 | `meta:` | Meta tags |
 | `species:` `lore:` | e621 species and lore |
-| `@` | Artists, and the `@` stays on the inserted name, as Anima prompts an artist |
+| `@` | Artists, and the `@` stays on the inserted name, as Anima prompts an artist. A CSV whose artists are already written `@name` works too: they are found without typing the `@`, and never get a second one. |
 
-Post counts are coloured by category (artist, character, copyright, meta) with Danbooru's colours.
+With Settings → EreNodes → **Tag category colours** on, a suggestion's name is coloured by category (artist, character, copyright, meta) with Danbooru's colours.
 
 ## Aliases
 
