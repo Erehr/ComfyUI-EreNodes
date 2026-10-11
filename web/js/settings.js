@@ -190,6 +190,19 @@ app.registerExtension({
             defaultValue: "watermark, username, logo, signature",
         },
         {
+            id: "EreNodes.Sidebar.BooruArtists",
+            name: "Booru artists",
+            tooltip: "What happens to a post's artist tags, in its preview and in what a drag adds. Prepend @ writes them as @name, the way Anima models prompt an artist.",
+            type: "combo",
+            defaultValue: "keep",
+            options: [
+                { text: "Keep", value: "keep" },
+                // Option texts go through the frontend's vue-i18n, where a bare `@` starts a linked message and the whole setting fails to render; this is its literal form.
+                { text: "Prepend {'@'}", value: "at" },
+                { text: "Remove", value: "remove" },
+            ],
+        },
+        {
             id: "EreNodes.Sidebar.GelbooruUserId",
             name: "Gelbooru user ID",
             tooltip: "Gelbooru only answers API requests from an account. The user ID and API key are on gelbooru.com under My Account → Options.",

@@ -183,7 +183,7 @@ export class GlobalAutocomplete {
                 this.closeMenu();
                 return;
             }
-            this.scheduleUpdate();
+            this.scheduleUpdate(true);
             return;
         }
 
@@ -193,10 +193,10 @@ export class GlobalAutocomplete {
                 this.closeMenu();
                 return;
             }
-            this.scheduleUpdate();
+            this.scheduleUpdate(true);
             return;
         }
-        
+
         if (e.key.length === 1) {
             // Mid-composition `e.key` is the key struck, not the character being formed (a jamo, for Hangul). onInput picks it up once the composition settles.
             if (e.isComposing) return;
@@ -237,7 +237,9 @@ export class GlobalAutocomplete {
         }, 150);
     };
 
-    scheduleUpdate() {
+    /** @param {boolean} deleting  the edit was a Backspace or Delete */
+    scheduleUpdate(deleting = false) {
+        this.deleting = deleting;
         if (this.debounce) {
             clearTimeout(this.debounce);
         }
@@ -288,8 +290,9 @@ export class GlobalAutocomplete {
         // Only the prompt's own autocomplete: a caller with its own menu (the sidebar search) is not writing a prompt.
         const file = !this.attachOptions?.menuClass && parseFilePrefix(currentWord);
         if (file) {
-            // Only a prefix being typed opens the browser: with the caret inside an existing token (a lora's strength being edited) it would cut the token in half.
-            if (/^[^,;"|}()\n\s]/.test(this.helper.getAfterCursor() ?? "")) {
+            // Only a prefix being typed opens the browser, since opening takes the token out of the text.
+            // A written lora being edited is left alone: reached by deleting (its `>`), past its strength, or with the caret inside it.
+            if (this.deleting || file.query.includes(":") || /^[^,;"|}()\n\s]/.test(this.helper.getAfterCursor() ?? "")) {
                 this.closeMenu();
                 return;
             }

@@ -30,6 +30,7 @@ Everything under ComfyUI **Settings → EreNodes**.
 | Booru ratings | Up to sensitive | General only, up to sensitive, up to questionable, all. |
 | Booru blocked tags | (none) | Posts with these are not shown. |
 | Booru hidden tags | watermark, username, logo, signature | Left out of previews and drags. |
+| Booru artists | Keep | A post's artist tags: kept, written `@name` (as Anima prompts an artist), or removed. |
 | Gelbooru user ID | (none) | From gelbooru.com → My Account → Options. |
 | Gelbooru API key | (none) | Stored in ComfyUI's settings file and sent only to gelbooru.com. |
 | Gelbooru: show all content | Off | Gelbooru's opt-in to its full catalogue. |

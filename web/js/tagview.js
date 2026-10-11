@@ -43,13 +43,21 @@ export function forgetCategories() {
     return had;
 }
 
-function paintCategory(pill, category) {
-    if (COLORED_CATEGORIES.has(category)) pill.style.setProperty("--ere-cat-fg", `var(--ere-cat-${category})`);
+function paintCategory(el, category) {
+    if (COLORED_CATEGORIES.has(category)) el.style.setProperty("--ere-cat-fg", `var(--ere-cat-${category})`);
+}
+
+/** A tag's category on a pill or tile title: its own (a booru post's), the cached one, or queued for lookup while colours are on. */
+function colorByCategory(el, tag) {
+    if (tag.type !== "tag" || !tag.name) return;
+    const category = tag.category ?? categoryCache.get(tag.name);
+    if (category !== undefined) paintCategory(el, category);
+    else if (document.documentElement.classList.contains("ere-tag-colors")) queueCategory(el, tag.name);
 }
 
 /** One request for every pill rendered in the same pass; each is painted in place when it answers, so nothing re-renders. */
-function queueCategory(pill, name) {
-    pill.dataset.ereCategoryOf = name;
+function queueCategory(el, name) {
+    el.dataset.ereCategoryOf = name;
     const first = pendingNames.size === 0;
     pendingNames.add(name);
     if (!first) return;
@@ -57,7 +65,7 @@ function queueCategory(pill, name) {
         const names = [...pendingNames];
         pendingNames = new Set();
         await lookupCategories(names);
-        for (const waiting of document.querySelectorAll(".ere-pill[data-ere-category-of]")) {
+        for (const waiting of document.querySelectorAll("[data-ere-category-of]")) {
             const category = categoryCache.get(waiting.dataset.ereCategoryOf);
             if (category === undefined) continue;
             delete waiting.dataset.ereCategoryOf;
@@ -259,12 +267,8 @@ export function renderTagPill(tag, opts = {}) {
 
     // Fill only: the disabled look is a class, so it follows a palette change.
     if (tag.active !== false) pill.style.setProperty("--ere-fill", TYPE_FILL[tag.type] || DEFAULT_FILL);
-    // Text only, general stays plain, and only with the setting on (tagview.css). A booru post's tags bring their site's category; the rest are looked up.
-    if (tag.type === "tag" && tag.name) {
-        const category = tag.category ?? categoryCache.get(tag.name);
-        if (category !== undefined) paintCategory(pill, category);
-        else if (document.documentElement.classList.contains("ere-tag-colors")) queueCategory(pill, tag.name);
-    }
+    // Text only, general stays plain, and only with the setting on (tagview.css).
+    colorByCategory(pill, tag);
 
     let name = labelFor(tag, !!opts.stripFolders);
     const badge = countBadge(tag);
@@ -394,6 +398,7 @@ export function renderTagTile(tag, opts = {}) {
     const nameBar = document.createElement("div");
     nameBar.className = "ere-name";
     if (tag.active !== false) nameBar.style.setProperty("--ere-fill", TYPE_FILL[tag.type] || DEFAULT_FILL);
+    colorByCategory(nameBar, tag);
     nameBar.textContent = labelFor(tag, opts.stripFolders !== false);
     tile.appendChild(nameBar);
 

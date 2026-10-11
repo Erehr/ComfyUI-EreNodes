@@ -158,8 +158,8 @@
     align-self: center;
     margin-top: 0;
 }
-/* Settings → EreNodes → Tag category colours: a tag pill's text in its category colour, which renderTagPill sets as --ere-cat-fg. */
-.ere-tag-colors .ere-surface .ere-pill:not(.inactive) {
+/* Settings → EreNodes → Tag category colours: a tag pill's or tile title's text in its category colour, set as --ere-cat-fg. */
+.ere-tag-colors .ere-surface :is(.ere-pill:not(.inactive), .ere-tile:not(.inactive) .ere-name) {
     color: var(--ere-cat-fg, var(--ere-pill-fg));
 }
 .ere-surface .ere-toggle-row.ere-text {
@@ -432,7 +432,7 @@
     flex: 0 0 auto;
     overflow: hidden;
     border-radius: var(--ere-radius);
-    border: 1px solid var(--ere-stroke);
+    border: 1px solid transparent;
     background: var(--ere-widget-bg);
     cursor: pointer;
     user-select: none;
@@ -442,6 +442,9 @@
     min-height: 0;
     width: 100%;
     object-fit: cover;
+}
+.ere-surface .ere-tile.inactive {
+    border-color: var(--ere-stroke);
 }
 .ere-surface .ere-tile.inactive :is(img, video) {
     filter: grayscale(0.75);
@@ -464,6 +467,13 @@
     background: var(--ere-inactive-bg);
     color: var(--ere-fg);
     opacity: .5;
+}
+/* The title lifts as the matching pill does. */
+.ere-surface .ere-tile:hover .ere-name {
+    background: color-mix(in srgb, var(--ere-fill, var(--ere-fill-tag)) 88%, var(--contrast-mix-color, #fff));
+}
+.ere-surface .ere-tile.inactive:hover .ere-name {
+    background: color-mix(in srgb, var(--ere-inactive-bg) 88%, var(--contrast-mix-color, #fff));
 }
 .ere-surface .ere-tile .ere-info {
     position: absolute;
@@ -679,6 +689,10 @@
 }
 .lg-node .ere-surface :is(.ere-btn, .ere-toggle-row, .ere-panel, .ere-tile, .ere-pill):not(.ere-missing) {
     border-color: transparent;
+}
+/* A tile's fill shows only through its transparent border, so a lighter one on hover drew a ring. */
+.lg-node .ere-surface .ere-tile:hover {
+    background: var(--ere-widget-bg);
 }
 .lg-node .ere-surface .ere-btn.ere-btn-on {
     background: var(--component-node-widget-background-selected, var(--ere-widget-bg-hover));

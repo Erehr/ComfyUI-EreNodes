@@ -47,4 +47,5 @@ Settings → EreNodes → Sidebar:
 - **Booru ratings**: general only, up to sensitive (default), up to questionable, or all. Safebooru holds safe posts only.
 - **Booru blocked tags**: posts with any of these are not shown.
 - **Booru hidden tags**: posts still show, but these tags are left out of the preview and of drags. Default: `watermark, username, logo, signature`.
+- **Booru artists**: keep a post's artist tags (default), write them as `@name`, the way Anima models prompt an artist, or remove them. Shown that way in the preview too. On Safebooru and Gelbooru an artist is one the Danbooru list knows.
 - **Gelbooru: show all content**: Gelbooru hides part of its catalogue until a visitor opts in; this sends the same opt-in the site uses.

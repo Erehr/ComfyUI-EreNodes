@@ -94,6 +94,7 @@ const state = {
     flows: [],
     scrollTop: 0,       // tracked while open: a closing panel may already be out of layout, where it reads 0
     reopenScroll: null, // { tab, top } the next open goes back to
+    tabScroll: {},      // tab -> where it was left, for coming back to it
     press: null,
     editor: null,
     viewMenu: null,     // closes the view popover, while one is open
@@ -564,18 +565,20 @@ function hiddenBooruTags() {
 const relayUrl = url => apiUrl(`/erenodes/booru/image?${new URLSearchParams({ url })}`);
 
 // The site's category colours and sorts the post's pills, but is not enumerable: a copy or a save of the tag (a drop, a group, the workflow) leaves it behind, and a node looks its tags up in the tag list instead.
-function booruTag(tag) {
-    return Object.defineProperty({ name: tag.name, type: "tag", active: true }, "category", { value: tag.category });
+function booruTag(tag, artists) {
+    const name = artists === "at" && tag.category === "artist" ? `@${tag.name}` : tag.name;
+    return Object.defineProperty({ name, type: "tag", active: true }, "category", { value: tag.category });
 }
 
-function booruPost(post, hidden) {
+/** @param {string} artists  the Booru artists setting: "keep", "at" (written `@name`, as Anima prompts an artist) or "remove" */
+function booruPost(post, hidden, artists) {
     const relay = url => (post.relay ? relayUrl(url) : url);
     return {
         ...post,
         thumb: relay(post.thumb),
         // Readable by the page, which a cover upload needs; the grid shows the direct URL where it can.
         coverSource: relayUrl(post.thumb),
-        tags: sortByCategory((post.tags ?? []).filter(tag => !hidden.has(tagKey(tag.name))).map(booruTag)),
+        tags: sortByCategory((post.tags ?? []).filter(tag => !hidden.has(tagKey(tag.name)) && !(artists === "remove" && tag.category === "artist")).map(tag => booruTag(tag, artists))),
     };
 }
 
@@ -604,8 +607,10 @@ function searchBooru(query) {
 function searchBooruTag(tag) {
     hidePreviewPanel(true);
     const search = state.host?.querySelector(".ere-sb-search");
-    if (search) search.value = tag.name;
-    searchBooru(tag.name);
+    // The site knows the artist without the `@` the setting adds.
+    const name = tag.category === "artist" ? tag.name.replace(/^@/, "") : tag.name;
+    if (search) search.value = name;
+    searchBooru(name);
 }
 
 /** The next page, appended; called again by the scroll handler until a short page says there is no more. */
@@ -644,7 +649,8 @@ async function loadBooruPage() {
     } else {
         const seen = new Set(b.posts.map(post => post.id));
         const hidden = hiddenBooruTags();
-        const added = (data.posts ?? []).map(post => booruPost(post, hidden)).filter(post => !seen.has(post.id));
+        const artists = getSetting("EreNodes.Sidebar.BooruArtists", "keep");
+        const added = (data.posts ?? []).map(post => booruPost(post, hidden, artists)).filter(post => !seen.has(post.id));
         b.posts.push(...added);
         b.page = page;
         if (!data.more) b.done = true;
@@ -2905,7 +2911,12 @@ async function selectTab(id) {
     if (state.tab === id) return;
     // Unreachable while the editor is open, but a panel pointing into a hidden tree is not.
     closeEditor({ rebuild: false });
+    // A position in a filtered list means nothing once the filter is gone; a booru search is not one.
+    state.tabScroll[state.tab] = state.query ? 0 : state.scrollTop;
     state.tab = id;
+    // Set here too: a list that opens at its top fires no scroll event to replace the last tab's value.
+    state.scrollTop = state.tabScroll[id] ?? 0;
+    state.reopenScroll = { tab: id, top: state.scrollTop };
     state.query = "";
     // A booru search is kept across tab switches: it is a list fetched from elsewhere, not a filter on something already here.
     state.tagResults = null;
