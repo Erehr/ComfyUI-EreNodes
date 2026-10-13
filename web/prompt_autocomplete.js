@@ -431,9 +431,10 @@ export class GlobalAutocomplete {
         }
 
         // Parentheses are weighting syntax in a prompt, but in a search field the term is matched literally and a backslash would be part of what is looked up.
+        // 
         const escapedTag = this.attachOptions?.escapeParens === false
             ? tagName
-            : tagName.replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+            : escapeParentheses(tagName);
         
         this.helper.insertAtCursor(
             escapedTag + this.separatorAfterCaret(),
@@ -511,6 +512,11 @@ function isEreNodeTextarea(target) {
     }
 
     return false;
+}
+
+/** Escape `(` and `)` when `\` doesn't exist. */
+function escapeParentheses(input) {
+    return input.replace(/(?<!\\)([()])/g, "\\$1")
 }
 
 /** Textareas to keep out of, so another pack's autocomplete does not open a second menu. A setting, since we cannot know every pack that does this. */
