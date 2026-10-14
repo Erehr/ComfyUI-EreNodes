@@ -351,17 +351,27 @@
     white-space: nowrap;
     color: var(--ere-fg);
 }
-/* A toggle row's strength stepper (renderer.js attachStrengthStepper): the value drags, the arrows step. */
+/* A toggle row's strength stepper (renderer.js attachStrengthStepper): the value drags or is typed, the arrows step. */
 .ere-surface .ere-stepper {
     display: flex;
     align-items: center;
     align-self: stretch;
 }
+/* An input with nothing of its own, so it reads as part of the row. */
 .ere-surface .ere-stepper-value {
-    min-width: 5ch;
+    box-sizing: content-box;
+    width: 5ch;
     padding: 0 4px;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
     text-align: center;
     cursor: ew-resize;
+}
+.ere-surface .ere-stepper-value:not(:read-only) {
+    cursor: text;
 }
 .ere-surface .ere-step {
     width: 18px;
@@ -732,7 +742,7 @@
     color: var(--muted-foreground, var(--ere-fg-muted));
 }
 .lg-node .ere-surface .ere-stepper-value {
-    min-width: 6ch;
+    width: 6ch;
     padding: 0 8px;
     font-family: Inter, Arial, sans-serif;
     font-size: var(--text-xs, 12px);

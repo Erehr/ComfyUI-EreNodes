@@ -1,6 +1,6 @@
 import { app } from "../../../scripts/app.js";
 import { initializeSharedPromptFunctions, saveTagGroup } from "../prompt.js";
-import { loadStyle, isAcceptedImage, ACCEPTED_IMAGE_TYPES, isKnownMissing, ensureChecked, getTags, setTags, expandGroup, requestJson, toast, pickFile, bindImageDrop } from "./util.js";
+import { loadStyle, isAcceptedImage, ACCEPTED_IMAGE_TYPES, isKnownMissing, ensureChecked, getTags, setTags, expandGroup, requestJson, toast, pickFile, bindImageDrop, extractFromImage, tagsFromResult } from "./util.js";
 import { SURFACE_CLASS, injectTagStyles, renderTagPill, bumpPreview } from "./tagview.js";
 import { parseTags, dedupeTags } from "./parser.js";
 import { injectDragStyles, markDropZone, attachPillDrag, pruneSelection, handlePillSelectClick, handlePillContextMenu, consumeDragClick, clearAllSelections } from "./dragdrop.js";
@@ -98,6 +98,8 @@ export function createTagEditor(opts) {
     let pendingCover = coverFile;             // File, uploaded on save
     let objectUrl = null;                     // revoked on destroy
     let dropCover = false;                    // edit mode: remove the stored one
+    // The prompt read from the cover's file. Only an image set here has one: a stored cover is a re-encoded thumbnail, and one handed in was read by the caller, whose tags these are.
+    let coverTags = coverFile ? tags : [];
     // A cover handed in as a File is not on the server until Save, so show it from memory — the pane would otherwise read as empty right after the drop that filled it.
     if (coverFile) objectUrl = URL.createObjectURL(coverFile);
     let coverSrc = objectUrl || coverUrl;
@@ -170,6 +172,17 @@ export function createTagEditor(opts) {
         coverSrc = objectUrl;
         dropCover = false;
         renderCover();
+        coverTags = [];
+        extractFromImage(file)
+            .then((result) => { if (pendingCover === file) coverTags = tagsFromResult(result); })
+            .catch((err) => console.error("[EreNodes] Cover extraction failed.", err));
+    }
+
+    function addCoverTags() {
+        const existing = getTags(host);
+        const names = new Set(existing.map(t => t.name));
+        const added = coverTags.filter(t => !names.has(t.name)).map(t => ({ ...t }));
+        if (added.length) setTags(host, existing.concat(added));
     }
 
     async function pickCover() {
@@ -198,6 +211,7 @@ export function createTagEditor(opts) {
                 e.stopPropagation();
                 if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
                 pendingCover = null;
+                coverTags = [];
                 coverSrc = "";
                 dropCover = true;
                 renderCover();
@@ -229,6 +243,10 @@ export function createTagEditor(opts) {
             { clientX: e.clientX, clientY: e.clientY },
             "Tag Group",
             [
+                { name: "Replace Tags from Clipboard", callback: () => host.onClipboardReplace?.() },
+                { name: "Add Tags from Clipboard", callback: () => host.onClipboardAppend?.() },
+                ...(coverTags.length ? [{ name: "Add Tags from Image", callback: addCoverTags }] : []),
+                null,
                 { name: "Toggle All Tags", callback: () => host.onToggleTags?.() },
                 { name: "Remove Inactive Tags", callback: () => host.onRemoveTags?.("inactive") },
                 { name: "Remove All Tags", callback: () => host.onRemoveTags?.("all") },

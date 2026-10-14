@@ -330,40 +330,83 @@ function renderToggleRow(node, tag, index, slide) {
     return markIfMissing(row, tag);
 }
 
-/** The toggle layout's spare width, used the way Power Lora Loader uses it: the strength as a stepper, as in quick edit. */
+/**
+ * The toggle layout's spare width, used the way Power Lora Loader uses it: the strength as the frontend's own number field (ScrubableNumberInput.vue).
+ * The buttons step it, the value drags, a click on the value types into it, and Up/Down step it from the keyboard.
+ */
 function attachStrengthStepper(node, row, index) {
     const stepper = row.querySelector(".ere-stepper");
     if (!stepper) return;
+    const input = stepper.querySelector(".ere-stepper-value");
     const current = () => getTags(node)[index]?.strength ?? 1;
-    // 1.0 is the default and is not stored, as quick edit leaves it.
-    const withStrength = (value) => {
+    const typed = () => {
+        const value = parseFloat(input.value.replace(",", "."));
+        return Number.isFinite(value) ? parseFloat(value.toFixed(2)) : null;
+    };
+    // A change is stored and shown at once but rendered a moment later: rendering swaps the row out, which flickers its hover fill under a drag and would take the field a key is being held in.
+    let dirty = false;
+    let timer = 0;
+    const apply = (value) => {
         const tags = getTags(node);
-        if (!tags[index]) return null;
+        if (!tags[index]) return;
+        // 1.0 is the default and is not stored, as quick edit leaves it.
         if (value === 1) delete tags[index].strength;
         else tags[index].strength = value;
-        return tags;
+        node.properties._tagDataJSON = JSON.stringify(tags);
+        input.value = value.toFixed(2);
+        dirty = true;
     };
-    const setStrength = (value) => {
-        const tags = withStrength(value);
-        if (tags) setTags(node, tags);
+    const commit = () => {
+        clearTimeout(timer);
+        if (!dirty) return;
+        dirty = false;
+        // The render replaces this row; its successor takes the focus back (below).
+        if (document.activeElement === input) node._ereStepperFocus = index;
+        setTags(node, getTags(node));
     };
+    const step = (sign, shift) => {
+        apply(stepStrength((input.readOnly ? null : typed()) ?? current(), sign * (shift ? 0.1 : 0.05)));
+        clearTimeout(timer);
+        timer = setTimeout(commit, 250);
+    };
+    if (node._ereStepperFocus === index) {
+        node._ereStepperFocus = null;
+        requestAnimationFrame(() => input.focus({ preventScroll: true }));
+    }
     // Ours alone: a press here must not toggle the row, open quick edit or reach the node.
     for (const type of ["click", "dblclick", "contextmenu"]) stepper.addEventListener(type, (e) => e.stopPropagation());
     // Middle-click: the drag layer's window listener calls this (dragdrop.js onGlobalPointerDown).
-    stepper._ereReset = () => setStrength(1);
+    stepper._ereReset = () => { apply(1); commit(); };
+    input.addEventListener("keydown", (e) => {
+        if (e.key === "ArrowUp" || e.key === "ArrowDown") step(e.key === "ArrowUp" ? 1 : -1, e.shiftKey);
+        else if (e.key === "Enter") input.blur();
+        else if (e.key === "Escape") {
+            input.readOnly = true;
+            input.blur();
+        } else return;
+        e.preventDefault();
+        e.stopPropagation();
+    });
+    input.addEventListener("blur", () => {
+        const value = input.readOnly ? null : typed();
+        input.readOnly = true;
+        if (value !== null && value !== current()) apply(value);
+        else input.value = current().toFixed(2);
+        commit();
+    });
     stepper.addEventListener("pointerdown", (e) => {
         e.stopPropagation();
         if (e.button !== 0) return;
+        // Being typed in: the press places the caret.
+        if (e.target === input && !input.readOnly) return;
         e.preventDefault();
-        const step = e.target.closest(".ere-step");
-        if (step) {
-            const sign = step.classList.contains("ere-step-dec") ? -1 : 1;
-            setStrength(stepStrength(current(), sign * (e.shiftKey ? 0.1 : 0.05)));
+        const button = e.target.closest(".ere-step");
+        if (button) {
+            step(button.classList.contains("ere-step-dec") ? -1 : 1, e.shiftKey);
+            // Up and Down carry on from here.
+            input.focus({ preventScroll: true });
             return;
         }
-        // Mid-drag only the stored value and the number change: re-rendering on every step swaps the row out from under the cursor, and its hover fill flickers.
-        // The release renders once, which is also the one undo step.
-        const valueEl = stepper.querySelector(".ere-stepper-value");
         const startX = e.clientX;
         const start = current();
         let steps = 0;
@@ -372,18 +415,18 @@ function attachStrengthStepper(node, row, index) {
             const next = Math.round((ev.clientX - startX) / 5);
             if (next === steps) return;
             steps = next;
-            const value = stepStrength(start, next * 0.05);
-            const tags = withStrength(value);
-            if (!tags) return;
             moved = true;
-            node.properties._tagDataJSON = JSON.stringify(tags);
-            valueEl.textContent = value.toFixed(2);
+            apply(stepStrength(start, next * 0.05));
         };
         const onUp = () => {
             window.removeEventListener("pointermove", onMove, true);
             window.removeEventListener("pointerup", onUp, true);
             window.removeEventListener("pointercancel", onUp, true);
-            if (moved) setTags(node, getTags(node));
+            if (moved) return commit();
+            // A click, not a drag: the value is typed over.
+            input.readOnly = false;
+            input.focus({ preventScroll: true });
+            input.select();
         };
         window.addEventListener("pointermove", onMove, true);
         window.addEventListener("pointerup", onUp, true);

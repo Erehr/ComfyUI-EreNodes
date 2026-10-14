@@ -433,7 +433,8 @@ export class GlobalAutocomplete {
         // Parentheses are weighting syntax in a prompt, but in a search field the term is matched literally and a backslash would be part of what is looked up.
         const escapedTag = this.attachOptions?.escapeParens === false
             ? tagName
-            : tagName.replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+            // A tag list may already write them escaped.
+            : tagName.replace(/(?<!\\)[()]/g, '\\$&');
         
         this.helper.insertAtCursor(
             escapedTag + this.separatorAfterCaret(),

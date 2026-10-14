@@ -15,6 +15,8 @@ A tag group is a saved set of pills: tags, text, LoRAs with their strengths, and
 - **Drop a generated image on the sidebar** to build a group from its prompt, with the image as the cover.
 - **Booru browser**: save a post's tags as a group, with the post's thumbnail as the cover. See [Booru browser](booru.md).
 
+The tag group editor's ≡ menu has **Replace Tags from Clipboard** and **Add Tags from Clipboard**, as the nodes do. Drop or pick a generated image as the cover and **Add Tags from Image** adds its prompt; the entry shows only for an image set in that session that carries a prompt, since a stored cover is a thumbnail without one.
+
 ## Using
 
 - **≡ → Load Tag Group** adds the group's tags to the node.

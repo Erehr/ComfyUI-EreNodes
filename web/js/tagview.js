@@ -365,11 +365,17 @@ function renderStepperEl(strength) {
         btn.appendChild(i);
         return btn;
     };
-    const value = document.createElement("span");
+    // Read-only until clicked, so a press drags it instead of placing a caret.
+    const value = document.createElement("input");
     value.className = "ere-stepper-value";
-    value.textContent = Number(strength).toFixed(2);
-    value.title = "Drag to change the strength, middle-click to reset it";
-    stepper.append(step("ere-step-dec", "icon-[lucide--minus]", "Decrease (Shift: by 0.1)"), value, step("ere-step-inc", "icon-[lucide--plus]", "Increase (Shift: by 0.1)"));
+    value.type = "text";
+    value.inputMode = "decimal";
+    value.autocomplete = "off";
+    value.spellcheck = false;
+    value.readOnly = true;
+    value.tabIndex = -1;
+    value.value = Number(strength).toFixed(2);
+    stepper.append(step("ere-step-dec", "icon-[lucide--minus]", ""), value, step("ere-step-inc", "icon-[lucide--plus]", ""));
     return stepper;
 }
 
