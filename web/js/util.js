@@ -413,6 +413,10 @@ function getTracker() {
 
 /** Record an undo checkpoint now (no-op while a transaction is open). */
 export function captureUndoState() {
+    // While a graph is loading (tab switch, subgraphs created before the root graph is filled),
+    // the active workflow is still the one being left: capturing now would save an empty
+    // canvas over it.
+    if (app.configuringGraph || app.graphLoadSequence !== app.committedGraphLoadSequence) return;
     if (suppressed) {
         pendingWhileSuppressed = true;
         return;
