@@ -164,6 +164,17 @@ export function handlePillSelectClick(node, index, e) {
 
 // Helpers
 
+/** A toolbar's "Replace": shown only during a drag, and a drop on it replaces the node's tags as Shift does, for a drag made with the mouse alone. Null for a layout that takes no pill drops. */
+export function replaceDropButton(mode) {
+    if (!DND_MODES.has(mode)) return null;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "ere-btn ere-btn-text ere-replace-drop";
+    btn.textContent = "Replace";
+    btn.title = "Drop here to replace this node's tags";
+    return btn;
+}
+
 function rootOf(el) {
     const root = el?.closest?.(".erenodes-dom");
     // A multiline surface has no pills — it takes text drops instead. Read from the mode rather
@@ -202,6 +213,9 @@ function computeDropPosition(container, x, y) {
         }
         return { pos: items.length, items };
     }
+
+    // Below every pill is the end, which is also where an appended placeholder opens its own row: measured against the row above instead, it would move back up, overflow that row, and move down again.
+    if (y > Math.max(...rects.map(r => r.bottom))) return { pos: items.length, items };
 
     // Wrapping flow: find the row the pointer is on, then compare horizontal centres in it.
     let row = [];
@@ -720,7 +734,7 @@ function beginDrag() {
     };
     state.pending = null;
 
-    document.body.classList.add("ere-dragging-active");
+    document.body.classList.add("ere-dragging-active", "ere-tag-dragging");
     abortCanvasGesture();
     window.addEventListener("keydown", onDragKey, true);
     window.addEventListener("keyup", onDragKeyUp, true);
@@ -737,6 +751,12 @@ function updateDrag(x, y) {
     d.ghost.style.top = `${y - d.grabY}px`;
 
     const under = document.elementFromPoint(x, y);
+    const replaceBtn = under?.closest?.(".ere-replace-drop") ?? null;
+    if (d.replaceBtn !== replaceBtn) {
+        d.replaceBtn?.classList.remove("ere-btn-on");
+        replaceBtn?.classList.add("ere-btn-on");
+        d.replaceBtn = replaceBtn;
+    }
 
     // A textarea that opted in takes the tags as text. Checked first: a multiline surface is
     // deliberately invisible to rootOf(), so there is nothing else here to compete with.
@@ -801,7 +821,7 @@ function updateDrag(x, y) {
 
     d.ghost.classList.remove("ere-no-drop");
     // Shift replaces the target's tags; within the source node there is nothing to replace them with.
-    d.replace = d.shift && targetNode !== d.sourceNode;
+    d.replace = (d.shift || !!replaceBtn) && targetNode !== d.sourceNode;
     highlightTarget(targetNode === d.sourceNode ? null : root, d.replace);
     d.target = targetNode;
     d.targetMode = mode;
@@ -819,6 +839,11 @@ function updateDrag(x, y) {
     // Alt means copy only across nodes — a copy in place would collide with its own tag — and never when the drag has two payload variants, where Alt already means "unpack".
     setCopyMode(d, d.alt && !d.variants && targetNode !== d.sourceNode);
 
+    // Over the placeholder: it stays. Inserting it reflows the pills around it, and measured again from there the pointer can map back to where it came from.
+    if (d.placeholder.parentNode === container && d.dropIndex !== null) {
+        const r = d.placeholder.getBoundingClientRect();
+        if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return;
+    }
     const { pos, items } = computeDropPosition(container, x, y);
     const key = `${targetNode.id}:${pos}`;
     if (key !== d.lastKey || !d.placeholder.parentNode) {
@@ -1098,7 +1123,7 @@ export function startExternalDrag({ tags, label, altTags = null, altLabel = "", 
         raf: 0,
     };
 
-    document.body.classList.add("ere-dragging-active");
+    document.body.classList.add("ere-dragging-active", "ere-tag-dragging");
     abortCanvasGesture();
     window.addEventListener("keydown", onDragKey, true);
     window.addEventListener("keyup", onDragKeyUp, true);
@@ -1221,8 +1246,9 @@ function teardownDrag() {
     d.placeholder.remove();
     d.textCaret?.remove();
     d.sidebarZone?.classList.remove("ere-sb-drop-target");
+    d.replaceBtn?.classList.remove("ere-btn-on");
     clearDragAccent();
-    document.body.classList.remove("ere-dragging-active");
+    document.body.classList.remove("ere-dragging-active", "ere-tag-dragging");
     for (const el of document.querySelectorAll(".ere-drag-source")) el.classList.remove("ere-drag-source");
     highlightTarget(null);
     for (const el of document.querySelectorAll(".ere-drag-copy")) el.classList.remove("ere-drag-copy");

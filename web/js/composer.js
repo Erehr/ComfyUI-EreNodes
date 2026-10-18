@@ -3,7 +3,7 @@ import { initializeSharedPromptFunctions } from "../prompt.js";
 import { captureUndoState, beginUndoTransaction, endUndoTransaction, loadStyle, ensureChecked, tagsToText, insertTagsAsText, getTags, trackMarquee, HOLD_MS, MOVE_THRESHOLD, TOUCH_SELECT_MS, TOUCH_SLOP, isTouch, lastPressWasTouch, touchFeedback, swallowNextClick, claimTouch, isSecondFinger } from "./util.js";
 import { parseTags, parseTextToTagData, parseClipboardTags, joinPrompt, looksLikeProse, DEFAULT_SEPARATOR } from "./parser.js";
 import { SURFACE_CLASS, renderSwitchEl } from "./tagview.js";
-import { markTextDropZone, clearAllSelections, pruneSelection, buildCountBadges, isDragActive, clientToGraph, overCanvas } from "./dragdrop.js";
+import { markTextDropZone, clearAllSelections, pruneSelection, buildCountBadges, isDragActive, clientToGraph, overCanvas, replaceDropButton } from "./dragdrop.js";
 import { renderTagBody, hideNativeWidget } from "./renderer.js";
 import { ActionContextMenu, TagContextMenuInsert } from "./contextmenu.js";
 
@@ -1372,6 +1372,8 @@ function renderRow(node, row, index, slide) {
     head.appendChild(rowButton("+", "Add tag", (e) => (multiline
         ? addTextTag(node, index, e)
         : host.onAddTag?.(e, [0, 0]))));
+    const replace = replaceDropButton(row.layout);
+    if (replace) head.appendChild(replace);
 
     const title = document.createElement("span");
     title.className = "ere-composer-title";

@@ -1,6 +1,6 @@
 import { app } from "../../../scripts/app.js";
 import { api } from "../../../scripts/api.js";
-import { attachPillDrag, markDropZone, markTextDropZone, injectDragStyles, installDragGlobals, pruneSelection,handlePillSelectClick,handlePillContextMenu,consumeDragClick } from "./dragdrop.js";
+import { attachPillDrag, markDropZone, markTextDropZone, injectDragStyles, installDragGlobals, pruneSelection,handlePillSelectClick,handlePillContextMenu,consumeDragClick, replaceDropButton } from "./dragdrop.js";
 import { SURFACE_CLASS, injectTagStyles, renderTagPill, renderToggleRowEl, renderTagTile, rowHeight } from "./tagview.js";
 import { parseTags, byTagName } from "./parser.js";
 import { ActionContextMenu, stepStrength } from "./contextmenu.js";
@@ -302,6 +302,8 @@ function renderButtons(node, container, mode) {
         // Multiline has one too: it inserts the tag as text at the caret.
         container.appendChild(makeButton(node, "button_add_tag", "+", "Add tag"));
     }
+    const replace = replaceDropButton(mode);
+    if (replace) container.appendChild(replace);
 }
 
 /**

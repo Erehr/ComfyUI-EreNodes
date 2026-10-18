@@ -3029,6 +3029,8 @@ export function mountSidebar(hostEl) {
     // Lets a tag dragged out of a preview onto bare canvas still create a node.
     setPreviewHandlers({ startExternalDrag, onCanvasDrop });
 
+    // Switching to a core sidebar tab (Assets) reuses the frontend's slot without unmounting it, so destroy never ran for the host it took away.
+    if (state.host && state.host !== hostEl && !state.host.isConnected) unmountSidebar();
     state.host = hostEl;
     if (!hostEl._ereKeys) {
         hostEl._ereKeys = true;

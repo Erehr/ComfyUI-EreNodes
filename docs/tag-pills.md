@@ -38,6 +38,7 @@ LoRA trigger words are listed in the LoRA's quick edit; the selected ones are wr
 - **Move between nodes**: drag pills into any other prompt node or Composer category.
 - **Alt** while dropping: copy instead of move.
 - **Shift** while dropping: replace the target's tags with the dropped ones. The target is highlighted red.
+- **Replace**: while a drag is on, node and Composer category toolbars show a Replace button. Dropping on it does what Shift does, without the keyboard.
 - Tags already present in the target are skipped.
 
 ![Shift replaces, Alt copies](images/tag-pills-modifiers-light.webp#gh-light-mode-only)

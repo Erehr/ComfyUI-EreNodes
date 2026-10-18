@@ -160,3 +160,11 @@ body.ere-marquee-active * {
     background: var(--ere-drag-accent, var(--primary-background));
     box-shadow: 0 0 4px var(--ere-drag-accent, var(--primary-background));
 }
+
+/* A toolbar's "Replace" (replaceDropButton): only on the node or category a tag drag is over, and not the one it came from (highlightTarget marks neither). */
+.ere-surface .ere-btn.ere-replace-drop {
+    display: none;
+}
+.ere-tag-dragging .ere-drop-target .ere-btn.ere-replace-drop {
+    display: flex;
+}

@@ -413,6 +413,9 @@ function getTracker() {
 
 /** Record an undo checkpoint now (no-op while a transaction is open). */
 export function captureUndoState() {
+    // A loading graph (a tab switch) clears the canvas while the outgoing tab's tracker is still the active one, so a checkpoint then records an empty graph over that workflow.
+    // The sequence check also covers the stretch after the clear and before configure starts, which configuringGraph does not.
+    if (app.configuringGraph || app.graphLoadSequence !== app.committedGraphLoadSequence) return;
     if (suppressed) {
         pendingWhileSuppressed = true;
         return;
