@@ -125,7 +125,7 @@ class ErePromptComposer(ErePrompt):
         spec["optional"] = _AnyRow(spec["optional"])
         return spec
 
-    def process(self, text, prefix="", separator=None, **kwargs):
+    def process(self, text, prefix="", separator=None, category_separator="", **kwargs):
         rows = []
         for key, value in kwargs.items():
             match = ROW_NAME.match(key)
@@ -134,7 +134,8 @@ class ErePromptComposer(ErePrompt):
         rows.sort()
 
         # `text` mirrors the same join on the frontend, and stands in only when no row inputs arrived at all.
-        body = join_parts([value for _, value in rows], separator) if rows else text
+        # An empty category separator falls back to the node separator.
+        body = join_parts([value for _, value in rows], category_separator or separator) if rows else text
         return (combine_prompt(body, prefix, separator),)
 
 

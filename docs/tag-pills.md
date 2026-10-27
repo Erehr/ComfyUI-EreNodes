@@ -25,7 +25,7 @@ With Settings → EreNodes → **Tag category colours** on, a tag's text is in D
 
 - **Click** a pill to toggle it. Disabled pills stay in the node but are not written to the prompt.
 - **Right-click** for quick edit: rename the tag or pick another file, set the strength (with the − / + buttons, by dragging across the value, or with Left/Right; middle-click resets it to 1), see a LoRA's trigger words or a group's contents, set a preview image, **Unpack** a group into its tags, or **Remove** it.
-- **Toggle rows** (Prompt Toggle, Prompt Lora Loader, Composer Toggle categories) carry the strength control on the row itself, working as ComfyUI's own number field does: click the arrows (− / + in Nodes 2.0) to step it, Shift+click for 0.1, drag across the value, click the value to type one (Enter applies, Esc cancels), middle-click to reset it to 1. After a click on it, Up/Down step it from the keyboard, with Shift for 0.1.
+- **Toggle rows** (Prompt Toggle, Prompt Lora Loader, Composer Toggle categories) carry the strength control on the row itself (a text row shows its strength but sets it in quick edit), working as ComfyUI's own number field does: click the arrows (− / + in Nodes 2.0) to step it, Shift+click for 0.1, drag across the value, click the value to type one (Enter applies, Esc cancels), middle-click to reset it to 1. After a click on it, Up/Down step it from the keyboard, with Shift for 0.1.
 
 ![Quick edit](images/tag-pills-quick-edit-light.webp#gh-light-mode-only)
 ![Quick edit](images/tag-pills-quick-edit-dark.webp#gh-dark-mode-only)

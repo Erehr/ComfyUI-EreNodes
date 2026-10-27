@@ -326,7 +326,8 @@ export function renderToggleRowEl(tag, opts = {}) {
     // Its own element rather than more label text: a row is name-left / numbers-right, and text
     // inside the ellipsised label cannot be pushed to the far edge.
     const badge = countBadge(tag);
-    const stepper = opts.stepper && tag.type !== "group";
+    // A sentence wraps, and a stepper beside it takes width it needs; it is rarely weighted, so it shows the readout and is set in quick edit.
+    const stepper = opts.stepper && tag.type !== "group" && tag.type !== "text";
     const st = strengthText(tag);
     if (badge || st || stepper) {
         const meta = document.createElement("span");

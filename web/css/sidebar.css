@@ -42,6 +42,9 @@
     border-radius: var(--radius-sm, 4px);
 }
 
+.ere-sidebar .ere-sb-tabs {
+    scrollbar-width: none;
+}
 /* CSS grid, not flex-wrap: folder tiles and file tiles are different elements with different intrinsic widths, so a flex row packed them into different column counts and drifted further out of alignment the wider the panel got. */
 .ere-sidebar .ere-sb-grid + .ere-sb-grid {
     padding-top: 0;
@@ -49,17 +52,10 @@
 .ere-sidebar .ere-sb-grid {
     display: grid;
     gap: var(--ere-tile-gap, 8px);
-    padding: .5rem;
+    padding: .5rem 1rem;
     grid-template-columns: repeat(auto-fill, var(--ere-tile-w, 96px));
     justify-content: start;
     align-items: start;
-}
-/* Tailwind's 2xl, where the rows and the editor also widen their side padding. */
-@media (min-width: 96rem) {
-    .ere-sidebar .ere-sb-grid,
-    .ere-sidebar .ere-sb-crumbs {
-        padding-inline: 1rem;
-    }
 }
 /* Focused only so the keyboard reaches it; the selected row is what shows where you are. */
 /* A press on empty space starts the marquee, and must not start a text selection across the list as well. */
@@ -185,7 +181,7 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 2px;
-    padding: .5rem;
+    padding: .5rem 1rem;
     background: var(--comfy-menu-bg);
     border-bottom: 1px solid var(--comfy-input-bg);
     font-size: var(--text-xs, .75rem);
@@ -199,7 +195,7 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
-    padding: .5rem .75rem;
+    padding: .5rem 1rem;
     background: var(--comfy-menu-bg);
     border-bottom: 1px solid var(--comfy-input-bg);
     font-size: var(--text-xs, .75rem);

@@ -27,10 +27,10 @@ const TAB_INACTIVE = "bg-transparent text-text-secondary hover:bg-button-hover-s
 
 // Tree row classes, copied verbatim from the Nodes sidebar.
 // All static Tailwind — nothing lazily injected.
-const ROW_CLASS = "group/tree-node flex w-full min-w-0 cursor-pointer select-none items-center gap-3 overflow-hidden py-2 outline-none hover:bg-comfy-input rounded";
+const ROW_CLASS = "group/tree-node flex w-full min-w-0 cursor-pointer select-none items-center gap-3 overflow-hidden py-2 pr-2 outline-none hover:bg-secondary-background-hover rounded";
 const ROW_ICON = "size-4 shrink-0 text-muted-foreground";
 const ROW_LABEL = "text-foreground min-w-0 flex-1 truncate text-sm";
-const TREE_CLASS = "m-0 min-w-0 px-2 py-2 2xl:px-4";
+const TREE_CLASS = "m-0 min-w-0 px-2 py-2";
 // The Nodes tree has no counts, so this is built from its buttons' token vocabulary.
 const COUNT_CLASS = "shrink-0 rounded bg-secondary-background px-1.5 py-0.5 text-xs text-muted-foreground";
 
@@ -2481,7 +2481,7 @@ function buildChrome(host) {
 
     // Toolbar: title, plus one icon button.
     const toolbar = el("div",
-        "flex min-h-16 items-center justify-between border-b border-interface-stroke bg-transparent px-3 2xl:px-4", header);
+        "flex min-h-16 items-center justify-between border-b border-interface-stroke bg-transparent px-4", header);
     toolbar.setAttribute("role", "toolbar");
 
     const start = el("div", "flex min-w-0 flex-1 items-center overflow-hidden", toolbar);
@@ -2510,15 +2510,9 @@ function buildChrome(host) {
         refreshBtn.addEventListener("click", () => refresh({ rescan: true }));
     }
 
-    // First row: search, or the editor's name field — the same markup minus the magnifier, in the same slot, so the two line up when the panel opens.
-    if (editing) header.appendChild(state.editor.nameRow);
-    else buildSearchRow(header);
-
-    // A plain bordered div, as the Nodes tab does it: PrimeVue's Divider is lazily injected.
-    el("div", "border-t border-dashed border-comfy-input", header);
-
-    // Second row: the tabs, or the editor's cover — both between the same two separators, so the cover reads as its own band. Tabs go while editing: a stray click must not discard it.
+    // The editor's name field takes the search row's markup minus the magnifier; tabs go while editing, so a stray click cannot discard it.
     if (editing) {
+        header.appendChild(state.editor.nameRow);
         header.appendChild(state.editor.coverRow);
         const body = el("div", "comfy-vue-side-bar-body flex h-0 grow flex-col", host);
         body.appendChild(state.editor.body);
@@ -2526,8 +2520,14 @@ function buildChrome(host) {
         return;
     }
 
-    // Text tabs, not icon buttons: three abstract glyphs were unreadable.
-    const tabsRow = el("div", "border-b border-comfy-input p-2 2xl:px-4", header);
+    // Tabs above the search, as the Assets and Nodes tabs lay them out. Text tabs, not icon buttons: three abstract glyphs were unreadable.
+    const tabsRow = el("div", "ere-sb-tabs overflow-x-auto px-4 pt-2 pb-px", header);
+    // Four tabs overflow a narrow panel; with the scrollbar hidden, a plain wheel has to scroll the strip.
+    tabsRow.addEventListener("wheel", (e) => {
+        if (!e.deltaY || tabsRow.scrollWidth <= tabsRow.clientWidth) return;
+        tabsRow.scrollLeft += e.deltaY;
+        e.preventDefault();
+    }, { passive: false });
     const tablist = el("div", "flex w-full items-center gap-2", tabsRow);
     tablist.setAttribute("role", "tablist");
     for (const tab of TABS) {
@@ -2543,11 +2543,12 @@ function buildChrome(host) {
         button.addEventListener("click", () => selectTab(tab.id));
     }
 
+    buildSearchRow(header);
     buildTreeBody(host);
 }
 
 function buildSearchRow(header) {
-    const top = el("div", "flex items-center gap-2 p-2 2xl:px-4", header);
+    const top = el("div", "flex items-center gap-2 px-4 py-2", header);
     const searchOuter = el("div", "min-w-0 flex-1", top);
     const searchBox = el("div",
         "relative flex w-full cursor-text items-center rounded-lg bg-secondary-background text-base-foreground h-8 px-2 py-1.5",
@@ -2642,7 +2643,7 @@ function buildSearchRow(header) {
         sortBtn.title = "Sort and page";
         sortBtn.setAttribute("aria-label", "Sort and page");
         sortBtn.setAttribute("aria-haspopup", "menu");
-        el("i", "pi pi-sort-alt", sortBtn);
+        el("i", "icon-[lucide--list-filter] size-4", sortBtn);
         sortBtn.addEventListener("click", () => openBooruSortMenu(sortBtn));
     }
 

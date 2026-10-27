@@ -40,7 +40,7 @@ Everything under ComfyUI **Settings → EreNodes**.
 | Setting | Default | |
 |---------|---------|---|
 | Default tag separator | `, ` | For new nodes. `\n` is a line break. |
-| Default node separator | `,\n\n` | Between a node and its prefix, and between Composer categories. |
+| Default node separator | `,\n\n` | Between a node and its prefix, and between Composer categories unless the Composer sets its own category separator. |
 | Remove duplicate tags from output | On | A tag repeated in a node's prompt (as a pill, inside a tag group, or as a LoRA trigger word) is written once, where it first appears. Off restores the prompt exactly as the tags list it. |
 | Scrollable Tag Area | Off | On: a node smaller than its tags scrolls. Off: the node grows to fit. |
 | Text pills on one line | Off | On: a text pill on a node shows only what fits on one line, ending in …. Off: it wraps to show the whole text. |

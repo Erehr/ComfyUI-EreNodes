@@ -139,6 +139,11 @@
     flex: 1 1 auto;
     min-width: 0;
 }
+/* Tight lines, with the space a single line has above and below it in a row, so the first line sits where a toggle row's switch and the strength are. */
+.ere-surface :is(.ere-pill, .ere-toggle-row).ere-text .ere-label {
+    line-height: 1.3;
+    padding: calc((var(--ere-row-h) - 2px - 1.3em) / 2) 0;
+}
 .ere-surface .ere-pill.ere-text .ere-strength {
     flex: 0 0 auto;
     margin-left: auto;
@@ -168,6 +173,13 @@
 }
 .ere-surface .ere-toggle-row.ere-text .ere-label {
     white-space: pre-wrap;
+}
+/* The strength readout level with the first line, as a text pill has it. */
+.erenodes-dom.ere-surface .ere-toggle-row.ere-text .ere-meta {
+    align-self: flex-start;
+    align-items: center;
+    height: calc(var(--ere-row-h) - 2px);
+    padding-right: 5px;
 }
 /* Beside the first line rather than centred on the paragraph: the 10px switch on the middle of the first line, which is where it sits in every other row. */
 .ere-surface .ere-toggle-row.ere-text .ere-switch {

@@ -105,7 +105,7 @@ export function createTagEditor(opts) {
     let coverSrc = objectUrl || coverUrl;
 
     // SidebarTopArea + SearchInput markup, minus the magnifier and its `pl-8` offset.
-    const nameRow = el("div", "flex items-center gap-2 p-2 2xl:px-4");
+    const nameRow = el("div", "flex items-center gap-2 px-4 py-2");
     const nameOuter = el("div", "min-w-0 flex-1", nameRow);
     const nameBox = el("div",
         "relative flex w-full cursor-text items-center rounded-lg bg-secondary-background text-base-foreground h-8 px-2 py-1.5", nameOuter);
@@ -116,12 +116,12 @@ export function createTagEditor(opts) {
     nameInput.spellcheck = false;
     nameBox.addEventListener("click", () => nameInput.focus());
 
-    // Cover row: where the tab strip would be, between the same two separators.
-    const coverRow = el("div", `border-b border-comfy-input p-2 2xl:px-4 ${SURFACE_CLASS} ere-editor-cover`);
+    // Cover row: under the name field, ruled off from the scrolling body.
+    const coverRow = el("div", `border-0 border-b border-interface-stroke px-4 py-2 ${SURFACE_CLASS} ere-editor-cover`);
     const pane = el("div", "ere-extract-pane", coverRow);
 
     // Same padding scale as the name and cover rows above it, so pills and buttons line up with the inputs.
-    const body = el("div", `ere-editor p-2 2xl:px-4 ${SURFACE_CLASS}`);
+    const body = el("div", `ere-editor px-4 py-2 ${SURFACE_CLASS}`);
 
     // What the drag layer looks for: `erenodes-dom` (rootOf), then `_ereNode` / `_ereMode`.
     const dom = el("div", `erenodes-dom ${SURFACE_CLASS} ere-editor-dom`, body);

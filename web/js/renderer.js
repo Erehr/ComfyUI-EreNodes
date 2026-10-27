@@ -626,6 +626,8 @@ export function attachTagDomWidget(node, mode, layoutOf = null) {
         return null;
     }
     if (widget.options) widget.options.serialize = false;
+    // Out of widgets_values too: an extra slot there makes the frontend's forceInput migration (migrateWidgetsValues) mistake every save for a legacy one and drop the value after `text`, shifting the seed and control out of place.
+    widget.serialize = false;
 
     /** Multiline: ≡ button only, the textarea owns vertical resize. Shadowing computeLayoutSize with a non-function makes that row min-content — the Nodes 2.0 grid would otherwise split the height 50/50 with the textarea. */
     if (mode === "multiline") {

@@ -32,8 +32,19 @@ function openComposerMenu(node, e) {
         { name: "Remove All Categories", callback: () => removeAllRows(node) },
         null,
         // Tile controls only once a category is drawn as a gallery, which is the only thing they affect.
-        optionsMenuItem(node, getRows(node).some(r => r.layout === "gallery")
-            ? tileMenuItems(node) : []),
+        optionsMenuItem(node, [
+            {
+                type: "input",
+                name: "Category separator",
+                value: node.properties?._categorySeparator ?? "",
+                placeholder: node.properties?._prefixSeparator ?? "",
+                onInput: (value) => {
+                    node.properties._categorySeparator = value;
+                    node.onPropertyChanged?.("_categorySeparator", value);
+                },
+            },
+            ...(getRows(node).some(r => r.layout === "gallery") ? tileMenuItems(node) : []),
+        ]),
         convertMenuItem(node, convert),
     ]);
 }
@@ -65,11 +76,11 @@ app.registerExtension({
                 return origPillClick?.(e, pos, pill);
             };
 
-            // Rows are joined with the prefix separator, so editing it must re-join them.
+            // Rows join with the category separator, falling back to the prefix separator, so editing either must re-join them.
             const origPropertyChanged = node.onPropertyChanged;
             node.onPropertyChanged = function (name, value) {
                 origPropertyChanged?.apply(this, arguments);
-                if (name === "_prefixSeparator") node.onUpdateTextWidget(node);
+                if (name === "_prefixSeparator" || name === "_categorySeparator") node.onUpdateTextWidget(node);
             };
 
             // convertTo() replaces `properties` after onNodeCreated and never triggers onConfigure, so a node converted into a Composer gets its categories here.

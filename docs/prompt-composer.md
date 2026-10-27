@@ -30,4 +30,4 @@ Ctrl+click or Shift+click headers to select several. Right-click the selection f
 
 ## Output
 
-Categories are joined in order with the node separator (≡ → Options). Empty and bypassed categories are left out. Tags drag between categories and in and out of every other prompt node, exactly as between nodes. See [Tag pills](tag-pills.md).
+Categories are joined in order with the category separator (≡ → Options), or the node separator while it is left empty. The node separator still goes between the prefix and the categories. Empty and bypassed categories are left out. Tags drag between categories and in and out of every other prompt node, exactly as between nodes. See [Tag pills](tag-pills.md).

@@ -186,6 +186,8 @@ function textareaFor(node, index) {
         });
         // Belt and braces for anything bound below the window guard above.
         area.addEventListener("keydown", (e) => e.stopPropagation());
+        // Focused, a right-click is for the text: the browser's cut/copy/paste menu, as the frontend's own textarea widget leaves it (WidgetTextarea.vue). Unfocused, it reaches the node menu.
+        area.addEventListener("contextmenu", (e) => { if (document.activeElement === area) e.stopPropagation(); });
         markTextDropZone(area, node);
         // The resize grip writes `style.height` itself, which is how a dragged height is told from
         // one we set. Anything else that changes the box (the node's width, so the text re-wraps)
@@ -234,6 +236,21 @@ function joinRows(texts, separator) {
     return joinPrompt(texts.filter(t => t && t.trim()), separator || DEFAULT_SEPARATOR);
 }
 
+/** Empty means "same as the node separator", so workflows saved before the setting existed join as they did. */
+const categorySeparator = (node) => node.properties._categorySeparator || node.properties._prefixSeparator;
+
+/** Hidden `category_separator` transport widget, created before the first row widget so it keeps its position. */
+function syncCategorySeparatorWidget(node) {
+    node.widgets = node.widgets || [];
+    let widget = node.widgets.find(w => w.name === "category_separator");
+    if (!widget) {
+        widget = node.addWidget?.("text", "category_separator", "", () => {});
+        if (!widget) return;
+        hideNativeWidget(widget);
+    }
+    widget.value = node.properties._categorySeparator || "";
+}
+
 /** Recompute every category: its text, the flat mirror, the transport widgets and the node's combined text. */
 export async function updateComposer(node) {
     const rows = ensureRows(node);
@@ -262,9 +279,10 @@ export async function updateComposer(node) {
         }
         // A category holding an uncached group resolves after a newer pass; the newer one is what the rows show.
         if (gen !== node._textGen) return;
+        syncCategorySeparatorWidget(node);
         syncRowWidgets(node, texts);
         const textWidget = node.widgets?.find(w => w.name === "text");
-        if (textWidget) textWidget.value = joinRows(texts, node.properties._prefixSeparator);
+        if (textWidget) textWidget.value = joinRows(texts, categorySeparator(node));
         captureUndoState();
     } finally {
         endUndoTransaction();
@@ -382,6 +400,25 @@ function setRowText(node, index, text) {
     // to <body> and ComfyUI's keybindings answer it instead.
     node._ereDom?.markRendered?.();
     updateComposer(node);
+}
+
+/** Text written from outside the field: setRowText skips the re-render, so the textarea is updated here. */
+function writeRowText(node, index, text) {
+    const area = node._composerAreas?.get(index);
+    if (area) {
+        area.value = text;
+        fitTextarea(area);
+    }
+    setRowText(node, index, text);
+}
+
+async function rowTextFromClipboard(node, index, append) {
+    let text = "";
+    try { text = await navigator.clipboard.readText(); } catch { return; }
+    // An empty clipboard must not wipe the row.
+    if (!text || !text.trim()) return;
+    const current = getRows(node)[index]?.text || "";
+    writeRowText(node, index, append && current ? `${current}\n${text}` : text);
 }
 
 export function removeAllRows(node) {
@@ -1300,7 +1337,10 @@ function openRowMenu(node, index, host, e) {
         const textTags = parseTextToTagData(row.text || "");
         new ActionContextMenu(anchor, null, [
             ...head,
-            { name: "Clear Text", callback: () => setRowText(node, index, "") },
+            { name: "Replace Text from Clipboard", callback: () => rowTextFromClipboard(node, index, false) },
+            { name: "Add Text from Clipboard", callback: () => rowTextFromClipboard(node, index, true) },
+            null,
+            { name: "Clear Text", callback: () => writeRowText(node, index, "") },
             // The one way back from a height dragged by hand.
             { name: "Fit Height to Text", disabled: !row.height,
               callback: () => fitRowHeight(node, index) },

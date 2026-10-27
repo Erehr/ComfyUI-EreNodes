@@ -28,9 +28,10 @@ const CONTROL_MODES = ["fixed", "increment", "decrement", "randomize"];
  */
 export function realignLoadedWidgets({ separator, control, seed, hasControl = false, hasSeed = false }) {
     const out = { separator, control, seed };
+    const isMode = (value) => CONTROL_MODES.includes(value);
 
     // Saved before the separator widget: the control's value landed in the separator.
-    if (hasControl && (control === undefined || control === null) && CONTROL_MODES.includes(separator)) {
+    if (hasControl && !isMode(control) && isMode(separator)) {
         out.control = separator;
         out.separator = null;
     } else if (separator === "fake_button") {
@@ -38,14 +39,16 @@ export function realignLoadedWidgets({ separator, control, seed, hasControl = fa
     }
 
     if (hasSeed) {
-        // Saved before the seed widget: the control's value landed in the seed.
-        if (CONTROL_MODES.includes(out.seed)) {
-            if (out.control === undefined || out.control === null) out.control = out.seed;
+        // Saved before the tag widget took a slot: the control's value landed in the seed, and the `sequential` boolean in the control.
+        if (isMode(out.seed)) {
+            if (!isMode(out.control)) out.control = out.seed;
             out.seed = 0;
         }
         // Anything else non-numeric here (including the two-slot shift above, which leaves nothing in this slot at all) is not a seed.
         if (typeof out.seed !== "number" || !Number.isFinite(out.seed)) out.seed = 0;
     }
+    // A control holding anything but a mode never steps the seed, and a save would write the bad value back; Python's default is the safe fallback.
+    if (hasControl && !isMode(out.control)) out.control = "randomize";
     return out;
 }
 
@@ -431,6 +434,8 @@ export function initializeSharedPromptFunctions(node, textWidget) {
 
         if (node.type === "ErePromptMultiline") {
             actions = actions.filter(action => !action || (action.name !== "Toggle All Tags" && action.name !== "Sort Tags"));
+            actions[0].name = "Replace Text from Clipboard";
+            actions[1].name = "Add Text from Clipboard";
         }
 
         new ActionContextMenu({ clientX: e.clientX, clientY: e.clientY }, node.title, actions);
