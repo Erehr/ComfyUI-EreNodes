@@ -385,7 +385,7 @@ export class DynamicContextMenu {
             case 'input': {
                 // A labelled field that applies as it is typed. Not `filter`: that one is the menu's
                 // search box, singular by construction and rebuilt on every keystroke.
-                item.className = "litemenu-entry submenu ere-menu-input";
+                item.className = "litemenu-entry submenu ere-menu-input ere-menu-tall";
                 if (option.name !== undefined) {
                     const label = document.createElement("span");
                     label.textContent = option.name;
@@ -423,7 +423,7 @@ export class DynamicContextMenu {
             case 'dropzone': {
                 // Reuses the extractor's pane so a drop target looks the same wherever it appears.
                 // `skipNav` keeps it out of arrow-key navigation - it has nothing to activate.
-                item.className = `litemenu-entry submenu ${SURFACE_CLASS} ere-menu-dropzone`;
+                item.className = `litemenu-entry submenu ${SURFACE_CLASS} ere-menu-dropzone ere-menu-tall`;
                 const pane = document.createElement("div");
                 pane.className = "ere-extract-pane empty";
                 const label = document.createElement("div");
@@ -1093,8 +1093,8 @@ export class TagContextMenu extends DynamicContextMenu {
         const query = tagKey(this.plainQuery ?? this.currentWord);
 
         if (option.type === 'tag' && (option.count || option.aliases?.length > 0)) {
-            // This is a "rich" tag from the database
-            item.className = "litemenu-entry submenu";
+            // This is a "rich" tag from the database; its aliases make it two lines tall.
+            item.className = "litemenu-entry submenu ere-menu-tall";
             if (option.disabled) item.classList.add("disabled");
 
             const displayHTML = this.highlight(option.name, query);
@@ -1355,6 +1355,9 @@ export class TagContextMenuInsert extends TagContextMenu {
 }
 
 // For tag quick edit
+/** A pill panel longer than this gets a filter field above it. */
+const PILL_FILTER_MIN = 12;
+
 export class TagEditContextMenu extends DynamicContextMenu {
     constructor(event, tagObject, saveCallback, deleteCallback, imageCallback, unpackCallback, tagIndex = null, existingTags = []) {
         super(event, saveCallback); // The primary callback on save.
@@ -1412,6 +1415,17 @@ export class TagEditContextMenu extends DynamicContextMenu {
             const infoPanelContent = await this.fetchInfoPanelContent();
             if (infoPanelContent && infoPanelContent.length > 0) {
                 this.options.push({ type: 'separator' });
+                // A long panel gets a filter field; a lora with a few triggers does not need one.
+                if (infoPanelContent.length > PILL_FILTER_MIN) {
+                    this.options.push({
+                        type: 'input',
+                        value: this.pillFilter ?? "",
+                        placeholder: `Filter ${infoPanelContent.length} tags...`,
+                        onInput: (value) => { this.pillFilter = value; this.applyPillFilter(); },
+                        // Enter must not run the highlighted entry from inside the filter.
+                        onEnter: () => {},
+                    });
+                }
                 this.options.push({ type: 'info_panel', content: infoPanelContent, disabled: true });
             }
         }
@@ -1564,7 +1578,7 @@ export class TagEditContextMenu extends DynamicContextMenu {
         switch(option.type) {
             case 'info_panel':
                 // ere-surface so createPill's pills pick up the rules the nodes use.
-                item.className = `litemenu-entry submenu disabled ${SURFACE_CLASS}`;
+                item.className = `litemenu-entry submenu disabled ${SURFACE_CLASS} ere-menu-tall ere-menu-pills`;
                 item.style.cssText = "max-width: 100%; display: flex; flex-wrap: wrap; gap: 5px; opacity: 1;";
                 // Apply half opacity only for non-interactive group previews
                 if (this.tag.type === 'group' && !this.tag.mode) {
@@ -1573,12 +1587,25 @@ export class TagEditContextMenu extends DynamicContextMenu {
                 if (Array.isArray(option.content)) {
                     option.content.forEach(pill => item.appendChild(pill));
                 }
+                // A re-render keeps what was typed in the filter.
+                if (this.pillFilter) queueMicrotask(() => this.applyPillFilter());
                 break;
 
             default:
                 super.renderSingleItem(item, option, index);
                 break;
         }
+    }
+
+    /** Hide the pills that do not contain the filter text. Read from the DOM: a toggled trigger is a new element. */
+    applyPillFilter() {
+        const panel = this.root?.querySelector(".ere-menu-pills");
+        if (!panel) return;
+        const query = (this.pillFilter ?? "").trim().toLowerCase();
+        for (const pill of panel.children) {
+            pill.style.display = !query || pill.textContent.toLowerCase().includes(query) ? "" : "none";
+        }
+        panel.scrollTop = 0;
     }
 
     handleKeyboard(e) {
