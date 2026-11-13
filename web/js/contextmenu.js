@@ -1355,6 +1355,9 @@ export class TagContextMenuInsert extends TagContextMenu {
 }
 
 // For tag quick edit
+/** A pill panel longer than this gets a filter field above it. */
+const PILL_FILTER_MIN = 12;
+
 export class TagEditContextMenu extends DynamicContextMenu {
     constructor(event, tagObject, saveCallback, deleteCallback, imageCallback, unpackCallback, tagIndex = null, existingTags = []) {
         super(event, saveCallback); // The primary callback on save.
@@ -1412,6 +1415,17 @@ export class TagEditContextMenu extends DynamicContextMenu {
             const infoPanelContent = await this.fetchInfoPanelContent();
             if (infoPanelContent && infoPanelContent.length > 0) {
                 this.options.push({ type: 'separator' });
+                // A long panel gets a filter field; a lora with a few triggers does not need one.
+                if (infoPanelContent.length > PILL_FILTER_MIN) {
+                    this.options.push({
+                        type: 'input',
+                        value: this.pillFilter ?? "",
+                        placeholder: `Filter ${infoPanelContent.length} tags...`,
+                        onInput: (value) => { this.pillFilter = value; this.applyPillFilter(); },
+                        // Enter must not run the highlighted entry from inside the filter.
+                        onEnter: () => {},
+                    });
+                }
                 this.options.push({ type: 'info_panel', content: infoPanelContent, disabled: true });
             }
         }
@@ -1573,12 +1587,25 @@ export class TagEditContextMenu extends DynamicContextMenu {
                 if (Array.isArray(option.content)) {
                     option.content.forEach(pill => item.appendChild(pill));
                 }
+                // A re-render keeps what was typed in the filter.
+                if (this.pillFilter) queueMicrotask(() => this.applyPillFilter());
                 break;
 
             default:
                 super.renderSingleItem(item, option, index);
                 break;
         }
+    }
+
+    /** Hide the pills that do not contain the filter text. Read from the DOM: a toggled trigger is a new element. */
+    applyPillFilter() {
+        const panel = this.root?.querySelector(".ere-menu-pills");
+        if (!panel) return;
+        const query = (this.pillFilter ?? "").trim().toLowerCase();
+        for (const pill of panel.children) {
+            pill.style.display = !query || pill.textContent.toLowerCase().includes(query) ? "" : "none";
+        }
+        panel.scrollTop = 0;
     }
 
     handleKeyboard(e) {
