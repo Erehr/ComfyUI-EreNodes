@@ -1564,7 +1564,7 @@ export class TagEditContextMenu extends DynamicContextMenu {
         switch(option.type) {
             case 'info_panel':
                 // ere-surface so createPill's pills pick up the rules the nodes use.
-                item.className = `litemenu-entry submenu disabled ${SURFACE_CLASS} ere-menu-tall`;
+                item.className = `litemenu-entry submenu disabled ${SURFACE_CLASS} ere-menu-tall ere-menu-pills`;
                 item.style.cssText = "max-width: 100%; display: flex; flex-wrap: wrap; gap: 5px; opacity: 1;";
                 // Apply half opacity only for non-interactive group previews
                 if (this.tag.type === 'group' && !this.tag.mode) {
