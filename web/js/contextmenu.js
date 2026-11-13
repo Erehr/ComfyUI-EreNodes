@@ -385,7 +385,7 @@ export class DynamicContextMenu {
             case 'input': {
                 // A labelled field that applies as it is typed. Not `filter`: that one is the menu's
                 // search box, singular by construction and rebuilt on every keystroke.
-                item.className = "litemenu-entry submenu ere-menu-input";
+                item.className = "litemenu-entry submenu ere-menu-input ere-menu-tall";
                 if (option.name !== undefined) {
                     const label = document.createElement("span");
                     label.textContent = option.name;
@@ -423,7 +423,7 @@ export class DynamicContextMenu {
             case 'dropzone': {
                 // Reuses the extractor's pane so a drop target looks the same wherever it appears.
                 // `skipNav` keeps it out of arrow-key navigation - it has nothing to activate.
-                item.className = `litemenu-entry submenu ${SURFACE_CLASS} ere-menu-dropzone`;
+                item.className = `litemenu-entry submenu ${SURFACE_CLASS} ere-menu-dropzone ere-menu-tall`;
                 const pane = document.createElement("div");
                 pane.className = "ere-extract-pane empty";
                 const label = document.createElement("div");
@@ -1093,8 +1093,8 @@ export class TagContextMenu extends DynamicContextMenu {
         const query = tagKey(this.plainQuery ?? this.currentWord);
 
         if (option.type === 'tag' && (option.count || option.aliases?.length > 0)) {
-            // This is a "rich" tag from the database
-            item.className = "litemenu-entry submenu";
+            // This is a "rich" tag from the database; its aliases make it two lines tall.
+            item.className = "litemenu-entry submenu ere-menu-tall";
             if (option.disabled) item.classList.add("disabled");
 
             const displayHTML = this.highlight(option.name, query);
@@ -1564,7 +1564,7 @@ export class TagEditContextMenu extends DynamicContextMenu {
         switch(option.type) {
             case 'info_panel':
                 // ere-surface so createPill's pills pick up the rules the nodes use.
-                item.className = `litemenu-entry submenu disabled ${SURFACE_CLASS}`;
+                item.className = `litemenu-entry submenu disabled ${SURFACE_CLASS} ere-menu-tall`;
                 item.style.cssText = "max-width: 100%; display: flex; flex-wrap: wrap; gap: 5px; opacity: 1;";
                 // Apply half opacity only for non-interactive group previews
                 if (this.tag.type === 'group' && !this.tag.mode) {

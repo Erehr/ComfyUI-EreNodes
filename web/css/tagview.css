@@ -598,6 +598,16 @@
     line-height: 1.4;
 }
 
+/* Entries taller than one line: an input, the cover drop zone, a pill panel, a tag with its aliases.
+   Themes that size every `.submenu` row to one fixed line (ComfyUI-Easy-Use's context-menu style sets
+   `height` and `line-height` to --height) would cut them to 24px, and their content would spill over the
+   entries below. */
+.litegraph.litecontextmenu .litemenu-entry.ere-menu-tall {
+    height: auto !important;
+    min-height: var(--height, 0);
+    line-height: normal !important;
+}
+
 /* Inside a context menu the pane is compact and must not inherit the menu's hover highlight. */
 .litemenu-entry.ere-menu-dropzone {
     padding: 4px !important;
